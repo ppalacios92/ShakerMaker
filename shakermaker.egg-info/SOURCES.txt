@@ -46,6 +46,7 @@ shakermaker/stf_extensions/__init__.py
 shakermaker/stf_extensions/brune.py
 shakermaker/stf_extensions/dirac.py
 shakermaker/stf_extensions/discrete.py
+shakermaker/stf_extensions/gaussian.py
 shakermaker/stf_extensions/srf2.py
 shakermaker/tools/__init__.py
 shakermaker/tools/plotting.py
