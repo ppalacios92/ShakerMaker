@@ -25,15 +25,16 @@ else:
         ext1 = Extension(
             name='shakermaker.core',
             sources=srcs,
-            extra_f77_compile_args=["-ffixed-line-length-132", "-Wno-tabs", "-Wno-unused-dummy-argument", "-pg"],
-            extra_link_args=["-pg"]
+            extra_f77_compile_args=["-ffixed-line-length-132", "-Wno-tabs", "-Wno-unused-dummy-argument", "-pg", "-fopenmp"],
+            extra_link_args=["-pg",  "-fopenmp"]
         )
     else:
         ext1 = Extension(
             name='shakermaker.core',
             sources=srcs,
-            extra_f77_compile_args=["-ffixed-line-length-132", "-Wno-tabs", "-Wno-unused-dummy-argument", "-fPIC"],
-            extra_compile_args=["-DNPY_NO_DEPRECATED_API=NPY_1_7_API_VERSION"]
+            extra_f77_compile_args=["-ffixed-line-length-132", "-Wno-tabs", "-Wno-unused-dummy-argument", "-fPIC", "-fopenmp"],
+            extra_compile_args=["-DNPY_NO_DEPRECATED_API=NPY_1_7_API_VERSION"],
+            extra_link_args=["-fopenmp"]
         )
 
     ext_modules = [ext1]

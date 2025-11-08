@@ -122,6 +122,20 @@ class ShakerMaker:
             print("\n\n")
             print(title)
             print("-"*len(title))
+            # INICIO modificaicones de PP-Hybrid Parallelization
+            import os
+            omp_threads = os.environ.get('OMP_NUM_THREADS', 'not set')
+            print(f"Hybrid Parallelization:")
+            print(f"   MPI processes    : {nprocs}")
+            print(f"   OpenMP threads   : {omp_threads}")
+            if omp_threads != 'not set':
+                total_threads = nprocs * int(omp_threads)
+                print(f"   Total parallelism: {nprocs} × {omp_threads} = {total_threads} threads")
+            print(f"   Parallelization strategy:")
+            print(f"      - MPI level : distributes source-receiver pairs across {nprocs} processes")
+            print(f"      - OpenMP    : parallelizes frequencies and FFTs within each pair")
+            print("-"*len(title)) 
+            # FIN modificaicones de PP-Hybrid Parallelization
 
         #Initialize performance counters
         perf_time_begin = perf_counter()
@@ -176,6 +190,11 @@ class ShakerMaker:
                 if ipair == next_pair:
                     if verbose:
                         print(f"rank={rank} nprocs={nprocs} ipair={ipair} skip_pairs={skip_pairs} npairs={npairs} !!")
+                        # INICIO modificaicones de PP-Hybrid Parallelization
+                        import os
+                        omp_threads = os.environ.get('OMP_NUM_THREADS', '1')
+                        print(f"   [Rank {rank}] Processing pair {ipair} with {omp_threads} OpenMP threads")
+                        # FIN modificaicones de PP-Hybrid Parallelization
                     if nprocs == 1 or (rank > 0 and nprocs > 1):
 
                         if verbose:

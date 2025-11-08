@@ -81,6 +81,9 @@ c*************** do wavenumber integration for each frequency
             enddo
          enddo
       enddo
+!$OMP PARALLEL DO DEFAULT(SHARED)
+!$OMP& PRIVATE(j,omega,w,att,i,k,n,ix,z,aj0,aj1,aj2,u,nf,l,filter,phi)
+!$OMP& SCHEDULE(DYNAMIC)
       do j=1,nfft2              ! start frequency loop
          omega = (j-1)*dw
          w = cmplx(omega,-sigma)        ! complex frequency
@@ -126,7 +129,8 @@ c n=2
             enddo
          enddo
       enddo                     ! end of freqency loop
-      
+!$OMP END PARALLEL DO
+
 c***************************************************************
 c*************** do inverse fourier transform
       dt = dt/smth
@@ -134,6 +138,9 @@ c*************** do inverse fourier transform
       nfft3 = nfft/2
       dfac = exp(sigma*dt)
 C       write(*,*) "subfk 4"
+!$OMP PARALLEL DO DEFAULT(SHARED) 
+!$OMP& PRIVATE(ix,l,j,data,z)
+!$OMP& SCHEDULE(STATIC)
       do ix=1,nx
          !if ( nfft2.EQ.1 ) then
          !   write(*,'(f5.1,9e11.3)')x(ix),(real(sum(ix,l,1)),l=1,nCom)
@@ -162,6 +169,7 @@ C                write(*,*) "l=", l, "(2)"
             enddo
          !endif
       enddo
+!$OMP END PARALLEL DO
       nfft=nfft/smth
       return 
       end

@@ -10,17 +10,20 @@ class Gaussian(SourceTimeFunction):
     :type t0: float
     :param freq: Frequency parameter (1/s)
     :type freq: float
+    :param M0: Seismic moment. Default is 1 (unit source).
+    :type M0: float
     :param derivative: If True, use the time derivative of the Gaussian.
     :type derivative: bool
 
     Example:
-        >>> stf = Gaussian(t0=0.36, freq=16.6667, derivative=True)
+        >>> stf = Gaussian(t0=0.36, freq=16.6667, M0=1.0 , derivative=True)
     """
 
-    def __init__(self, t0=0.36, freq=16.6667, derivative=False):
+    def __init__(self, t0=0.36, freq=16.6667, M0=1.0 , derivative=False):
         SourceTimeFunction.__init__(self)
         self._t0 = t0
         self._freq = freq
+        self._M0 = M0
         self._derivative = derivative
 
     def _generate_data(self):
@@ -34,6 +37,6 @@ class Gaussian(SourceTimeFunction):
         dg_dt = -(self._freq**3 * (self._t - self._t0) / np.sqrt(2.0 * np.pi)) * np.exp(
             -0.5 * (self._freq * (self._t - self._t0))**2
         )
-        self._data = dg_dt if self._derivative else g
+        self._data = self._M0 * (dg_dt if self._derivative else g)
 
 SourceTimeFunction.register(Gaussian)
