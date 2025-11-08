@@ -116,7 +116,7 @@ class ShakerMaker:
         
 
         """
-        title = f"ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+        title = f"🎉 ¡LARGA VIDA AL LADRUNO! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
         
         if rank == 0:
             print("\n\n")
