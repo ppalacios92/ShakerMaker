@@ -3,6 +3,7 @@ setup.py
 shakermaker/__init__.py
 shakermaker/crustmodel.py
 shakermaker/faultsource.py
+shakermaker/ffspsource.py
 shakermaker/pointsource.py
 shakermaker/shakermaker.py
 shakermaker/sourcetimefunction.py
@@ -37,6 +38,19 @@ shakermaker/core/subgreen.f
 shakermaker/core/subgreen2.f
 shakermaker/core/subtrav.f
 shakermaker/core/tau_p.f
+shakermaker/ffsp/__init__.py
+shakermaker/ffsp/dcf_subs_1.f90
+shakermaker/ffsp/ffsp_comm.f90
+shakermaker/ffsp/ffsp_dcf_v2
+shakermaker/ffsp/ffsp_dcf_v2.f90
+shakermaker/ffsp/ffsp_io.py
+shakermaker/ffsp/ffsp_runner.py
+shakermaker/ffsp/ffsp_tool.f
+shakermaker/ffsp/makefile
+shakermaker/ffsp/s2m.f90
+shakermaker/ffsp/s2m_comm.f90
+shakermaker/ffsp/slip_rate.f90
+shakermaker/ffsp/spfield_n.f90
 shakermaker/sl_extensions/DRMBox.py
 shakermaker/sl_extensions/__init__.py
 shakermaker/slw_extensions/__init__.py
