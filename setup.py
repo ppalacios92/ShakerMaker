@@ -3,6 +3,10 @@ from numpy.distutils.core import Extension, setup as np_setup
 import importlib.util
 import os
 
+from setuptools.command.install import install
+from setuptools.command.develop import develop
+import subprocess
+
 on_rtd = os.environ.get('READTHEDOCS') == 'True'
 
 name = "shakermaker"
@@ -39,10 +43,43 @@ else:
 
     ext_modules = [ext1]
 
+# ========== FFSP compilation support
+def compile_ffsp():
+    """Compile FFSP executable using makefile"""
+    ffsp_dir = os.path.join(os.path.dirname(__file__), 'shakermaker', 'ffsp')    
+    try:
+        subprocess.run(['make', 'clean'], cwd=ffsp_dir, check=False, capture_output=True)
+        subprocess.run(['make', 'all'], cwd=ffsp_dir, check=True, capture_output=True)        
+        ffsp_exec = os.path.join(ffsp_dir, 'ffsp_dcf_v2')
+        if os.path.exists(ffsp_exec):
+            os.chmod(ffsp_exec, 0o755)
+            print("OK: FFSP compiled")            
+    except subprocess.CalledProcessError:
+        print("X: FFSP compilation failed")
+        raise
+class CustomInstallCommand(install):
+    """Custom install command that compiles FFSP first"""
+    def run(self):
+        compile_ffsp()
+        install.run(self)
+class CustomDevelopCommand(develop):
+    """Custom develop command that compiles FFSP first"""
+    def run(self):
+        compile_ffsp()
+        develop.run(self)
+# ============================================================
+
 # Check for sphinx
 found_sphinx = importlib.util.find_spec('sphinx') is not None
 
-cmdclass = {}
+# ============================================================
+# cmdclass = {}  me tomo esta variable. Consultar si es pertinente
+cmdclass = {
+    'install': CustomInstallCommand,
+    'develop': CustomDevelopCommand,
+}
+# ============================================================
+
 command_options = {}
 
 # if found_sphinx:
@@ -69,7 +106,11 @@ np_setup(
         "shakermaker.slw_extensions",
         "shakermaker.stf_extensions",
         "shakermaker.tools",
+        "shakermaker.ffsp", 
     ],
+    package_data={
+        'shakermaker.ffsp': ['ffsp_dcf_v2', '*.f90', '*.f', 'makefile'], 
+    },
     ext_modules=ext_modules,
     version=version,
     description="README.md",
