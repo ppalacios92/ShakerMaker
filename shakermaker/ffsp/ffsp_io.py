@@ -131,3 +131,89 @@ def parse_best_realization(base_name: str, work_dir: str) -> Optional[Dict[str, 
         'dip': data[:, 8],
         'rake': data[:, 9]
     }
+
+# Parse all statistical output files from FFSP_DCF_v2
+def parse_statistical_results(work_dir: str) -> Optional[Dict]:
+    results = {}
+    
+    # 1. Parse source_model.score
+    source_file = os.path.join(work_dir, "source_model.score")
+    if not os.path.exists(source_file):
+        return None    
+    with open(source_file) as f:
+        n_realizations = int(f.readline().strip())
+        f.readline()          
+        names, ave_tr, ave_tp, ave_vr, err_spectra, pdf = [], [], [], [], [], []        
+        for _ in range(n_realizations):
+            name = f.readline().strip()
+            values = list(map(float, f.readline().split()))
+            names.append(name)
+            ave_tr.append(values[0])
+            ave_tp.append(values[1])
+            ave_vr.append(values[2])
+            err_spectra.append(values[3])
+            pdf.append(values[4])    
+    results['source_score'] = {
+            'n_realizations': n_realizations,
+            'names': names,
+            'ave_tr': np.array(ave_tr),
+            'ave_tp': np.array(ave_tp),
+            'ave_vr': np.array(ave_vr),
+            'err_spectra': np.array(err_spectra),
+            'pdf': np.array(pdf)       }    
+
+    # 2. Parse source_model.list
+    list_file = os.path.join(work_dir, "source_model.list")
+    if not os.path.exists(list_file):
+        return None
+    with open(list_file) as f:
+        line1 = list(map(float, f.readline().split()))
+        line2 = list(map(float, f.readline().split()))
+        best_file = f.readline().strip()
+    
+    results['source_list'] = {
+        'id': int(line1[0]),
+        'nsubx': int(line1[1]),
+        'nsuby': int(line1[2]),
+        'dx': line1[3],
+        'dy': line1[4],
+        'x_hypc': line1[5],
+        'y_hypc': line1[6],
+        'xref_hypc': line2[0],
+        'yref_hypc': line2[1],
+        'angle_north': line2[2],
+        'best_file': best_file    }
+    
+    # 3. Parse calsvf.dat (frequency domain spectrum)
+    calsvf_file = os.path.join(work_dir, "calsvf.dat")
+    if not os.path.exists(calsvf_file):
+        return None
+    data = np.loadtxt(calsvf_file, skiprows=1)
+    
+    results['spectrum'] = {
+        'freq': data[:, 0],
+        'moment_rate_synth': data[:, 1],
+        'moment_rate_dcf': data[:, 2]    }
+    
+    # 4. Parse calsvf_tim.dat (time domain STF)
+    stf_file = os.path.join(work_dir, "calsvf_tim.dat")
+    if not os.path.exists(stf_file):
+        return None
+    data = np.loadtxt(stf_file, skiprows=1)
+    
+    results['stf_time'] = {
+        'time': data[:, 0],
+        'stf': data[:, 1]    }
+    
+    # 5. Parse logsvf.dat (octave-averaged spectrum)
+    logsvf_file = os.path.join(work_dir, "logsvf.dat")
+    if not os.path.exists(logsvf_file):
+        return None
+    data = np.loadtxt(logsvf_file, skiprows=1)
+    
+    results['spectrum_octave'] = {
+        'freq_center': data[:, 0],
+        'logmean_synth': data[:, 1],
+        'logmean_dcf': data[:, 2]    }
+    
+    return results
