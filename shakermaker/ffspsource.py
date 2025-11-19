@@ -77,8 +77,8 @@ class FFSPSource:
             os.makedirs(work_dir, exist_ok=True)
             self._cleanup_old_outputs(work_dir)
 
-
-        print(f"--- Working directory: {work_dir}")
+        if not self.cleanup:
+            print(f"--- Working directory: {work_dir}")
         
         try:            
             write_ffsp_inp(self.params, os.path.join(work_dir, 'ffsp.inp'))
@@ -130,7 +130,7 @@ class FFSPSource:
             'slip': self.all_realizations['slip'][:, index],
             'rupture_time': self.all_realizations['rupture_time'][:, index],
             'rise_time': self.all_realizations['rise_time'][:, index],
-            'unknown': self.all_realizations['unknown'][:, index],
+            'peak_time': self.all_realizations['peak_time'][:, index],
             'strike': self.all_realizations['strike'][:, index],
             'dip': self.all_realizations['dip'][:, index],
             'rake': self.all_realizations['rake'][:, index],
@@ -143,8 +143,47 @@ class FFSPSource:
     def get_subfaults(self) -> Dict:
         return self.subfaults
     
-    # Plot slip distribution of active realization
-    def plot_slip_distribution(self, figsize=(10, 8), cmap='coolwarm'):
+
+# PLOTS (revisar si la dejamos aqui)
+
+
+    # Plot histogram of field across all realizations
+    def plot_histogram(self, field='slip', bins=50, figsize=(7, 5)):
+        valid_fields = ['x', 'y', 'z', 'slip', 'rupture_time', 'rise_time', 'peak_time', 'strike', 'dip', 'rake']
+        if field not in valid_fields:
+            raise ValueError(f"field must be one of {valid_fields}, got '{field}'")    
+        plt.figure(figsize=figsize)    
+        # Plot all realizations
+        for i in range(self.all_realizations['n_realizations']):
+            var = self.all_realizations[field][:, i]
+            plt.hist(var, bins=bins, alpha=0.4, label=f'Rlz{i+1}')    
+        # Plot best realization
+        var_best = self.best_realization[field]
+        plt.hist(var_best, bins=bins, histtype='step', color='red', linewidth=2, label='Best')
+        
+        # Labels
+        field_labels = {
+            'x': 'North (m)',
+            'y': 'East (m)',
+            'z': 'Depth (m)',
+            'slip': 'Slip (m)',
+            'rupture_time': 'Rupture Time (s)',
+            'rise_time': 'Rise Time (s)',
+            'peak_time': 'Peak Time (s)',
+            'strike': 'Strike (°)',
+            'dip': 'Dip (°)',
+            'rake': 'Rake (°)'}
+        
+        plt.xlabel(field_labels[field])
+        plt.ylabel('Frequency')
+        plt.title(f'{field_labels[field]} - Multiple Realizations')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.show()
+
+    # Plot spatial distribution of subfault parameters
+    def plot_spacial_distribution(self, figsize=(10, 8) , field='rise_time', cmap='coolwarm', show_rupture_contours=True, show_hypocenter=True):
 
         nx = self.params['nsubx']
         ny = self.params['nsuby']
@@ -155,20 +194,44 @@ class FFSPSource:
         cxp = self.params['x_hypc']
         cyp = self.params['y_hypc']
         
-        slip = np.transpose(self.subfaults['slip'].reshape(nx, ny))
+        # Validate field
+        valid_fields = ['slip', 'rupture_time', 'rise_time', 'strike', 'dip', 'rake', 'peak_time']
+        if field not in valid_fields:
+            raise ValueError(f"field must be one of {valid_fields}, got '{field}'")
+    
+        field_data = np.transpose(self.subfaults[field].reshape(nx, ny))
         rptm = np.transpose(self.subfaults['rupture_time'].reshape(nx, ny))
-        rstm = np.transpose(self.subfaults['rise_time'].reshape(nx, ny))
         x = np.linspace(-lx/2, lx/2, nx)
         y = np.linspace(0, ly, ny)
         X, Y = np.meshgrid(x, y)
+
+        # Plot
         plt.figure(figsize=figsize)
-        plt.imshow(rstm[::-1], cmap=cmap, extent=(-lx/2-dx/2, lx/2+dx/2, -dy/2, ly+dy/2),interpolation='nearest')
-        plt.colorbar(label='Rise Time [s]', shrink=ly/lx)
-        contours=plt.contour(X, Y, rptm, 8, colors='blue')
-        plt.clabel(contours, fontsize=12, fmt='%2.1f', inline=1)
-        plt.scatter(cxp-lx/2, cyp, c='red', s=300, marker='*',  edgecolors='white', linewidth=2)
+        plt.imshow(field_data[::-1], cmap=cmap, extent=(-lx/2-dx/2, lx/2+dx/2, -dy/2, ly+dy/2), interpolation='nearest')
+        # Labels for colorbar
+        field_labels = {
+            'slip': 'Slip [m]',
+            'rupture_time': 'Rupture Time [s]',
+            'rise_time': 'Rise Time [s]',
+            'peak_time': 'Peak Time [s]',
+            'strike': 'Strike [°]',
+            'dip': 'Dip [°]',
+            'rake': 'Rake [°]',        
+        }
+        plt.colorbar(label=field_labels[field], shrink=ly/lx)
+
+        # Rupture time contours
+        if show_rupture_contours:
+            contours = plt.contour(X, Y, rptm, 8, colors='blue', linewidths=1.5)
+            plt.clabel(contours, fontsize=10, fmt='%2.1f', inline=1)        
+        # Hypocenter
+        if show_hypocenter:
+            plt.scatter(cxp-lx/2, cyp, c='red', s=300, marker='*',edgecolors='white', linewidth=2, label='Hypocenter', zorder=10)
+            plt.legend(loc='upper right')
+
         plt.xlabel('Along Strike [km]')
         plt.ylabel('Down Dip [km]')
+        plt.title(f'{field_labels[field]} Distribution', fontsize=14, fontweight='bold')
         plt.gca().invert_yaxis()
         plt.gca().set_aspect('equal')
         plt.tight_layout()
@@ -248,7 +311,6 @@ class FFSPSource:
         plt.grid(alpha=0.3)
         plt.tight_layout()
         plt.show()
-
 
     # Plot Moment Rate Spectrum and Octave-Averaged Spectrum side by side
     def plot_spectral_comparison(self, figsize: tuple = (14, 6)):       

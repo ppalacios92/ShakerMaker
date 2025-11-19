@@ -85,7 +85,7 @@ def parse_all_realizations(base_name: str, work_dir: str) -> Dict[str, np.ndarra
         'slip': np.zeros((npts, n_realizations)),
         'rupture_time': np.zeros((npts, n_realizations)),
         'rise_time': np.zeros((npts, n_realizations)),
-        'unknown': np.zeros((npts, n_realizations)),
+        'peak_time': np.zeros((npts, n_realizations)),
         'strike': np.zeros((npts, n_realizations)),
         'dip': np.zeros((npts, n_realizations)),
         'rake': np.zeros((npts, n_realizations))
@@ -99,7 +99,7 @@ def parse_all_realizations(base_name: str, work_dir: str) -> Dict[str, np.ndarra
         result['slip'][:, i] = data[:, 3]
         result['rupture_time'][:, i] = data[:, 4]
         result['rise_time'][:, i] = data[:, 5]
-        result['unknown'][:, i] = data[:, 6]
+        result['peak_time'][:, i] = data[:, 6]
         result['strike'][:, i] = data[:, 7]
         result['dip'][:, i] = data[:, 8]
         result['rake'][:, i] = data[:, 9]
@@ -126,7 +126,7 @@ def parse_best_realization(base_name: str, work_dir: str) -> Optional[Dict[str, 
         'slip': data[:, 3],
         'rupture_time': data[:, 4],
         'rise_time': data[:, 5],
-        'unknown': data[:, 6],
+        'peak_time': data[:, 6],
         'strike': data[:, 7],
         'dip': data[:, 8],
         'rake': data[:, 9]
