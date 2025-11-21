@@ -183,7 +183,7 @@ class FFSPSource:
         plt.show()
 
     # Plot spatial distribution of subfault parameters
-    def plot_spacial_distribution(self, figsize=(10, 8) , field='rise_time', cmap='coolwarm', show_rupture_contours=True, show_hypocenter=True):
+    def plot_spacial_distribution(self, figsize=(10, 8) , field='rise_time', cmap='coolwarm', show_contours=True, contour_field='rupture_time', show_hypocenter=True):
 
         nx = self.params['nsubx']
         ny = self.params['nsuby']
@@ -194,21 +194,21 @@ class FFSPSource:
         cxp = self.params['x_hypc']
         cyp = self.params['y_hypc']
         
-        # Validate field
-        valid_fields = ['slip', 'rupture_time', 'rise_time', 'strike', 'dip', 'rake', 'peak_time']
+        # Validate fields
+        valid_fields = ['slip', 'rupture_time', 'rise_time', 'peak_time', 'strike', 'dip', 'rake']
         if field not in valid_fields:
             raise ValueError(f"field must be one of {valid_fields}, got '{field}'")
-    
+        if contour_field not in valid_fields:
+            raise ValueError(f"contour_field must be one of {valid_fields}, got '{contour_field}'")
+
+        # Prepare data
         field_data = np.transpose(self.subfaults[field].reshape(nx, ny))
-        rptm = np.transpose(self.subfaults['rupture_time'].reshape(nx, ny))
+        contour_data = np.transpose(self.subfaults[contour_field].reshape(nx, ny))
         x = np.linspace(-lx/2, lx/2, nx)
         y = np.linspace(0, ly, ny)
         X, Y = np.meshgrid(x, y)
 
-        # Plot
-        plt.figure(figsize=figsize)
-        plt.imshow(field_data[::-1], cmap=cmap, extent=(-lx/2-dx/2, lx/2+dx/2, -dy/2, ly+dy/2), interpolation='nearest')
-        # Labels for colorbar
+        # Labels
         field_labels = {
             'slip': 'Slip [m]',
             'rupture_time': 'Rupture Time [s]',
@@ -218,20 +218,30 @@ class FFSPSource:
             'dip': 'Dip [°]',
             'rake': 'Rake [°]',        
         }
+
+        # Plot
+        plt.figure(figsize=figsize)
+        plt.imshow(field_data[::-1], cmap=cmap, extent=(-lx/2-dx/2, lx/2+dx/2, -dy/2, ly+dy/2), interpolation='nearest')
         plt.colorbar(label=field_labels[field], shrink=ly/lx)
 
-        # Rupture time contours
-        if show_rupture_contours:
-            contours = plt.contour(X, Y, rptm, 8, colors='blue', linewidths=1.5)
-            plt.clabel(contours, fontsize=10, fmt='%2.1f', inline=1)        
+        # Contours
+        if show_contours:
+            contours = plt.contour(X, Y, contour_data, 8, colors='blue', linewidths=1.5)
+            plt.clabel(contours, fontsize=10, fmt='%2.1f', inline=1)                
         # Hypocenter
         if show_hypocenter:
-            plt.scatter(cxp-lx/2, cyp, c='red', s=300, marker='*',edgecolors='white', linewidth=2, label='Hypocenter', zorder=10)
+            plt.scatter(cxp-lx/2, cyp, c='red', s=300, marker='*', edgecolors='white', linewidth=2, label='Hypocenter', zorder=10)
             plt.legend(loc='upper right')
 
         plt.xlabel('Along Strike [km]')
         plt.ylabel('Down Dip [km]')
-        plt.title(f'{field_labels[field]} Distribution', fontsize=14, fontweight='bold')
+        
+        # Title
+        if show_contours:
+            plt.title(f'{field_labels[field]} Distribution (contours: {field_labels[contour_field]})', fontsize=14, fontweight='bold')
+        else:
+            plt.title(f'{field_labels[field]} Distribution', fontsize=14, fontweight='bold')
+        
         plt.gca().invert_yaxis()
         plt.gca().set_aspect('equal')
         plt.tight_layout()
