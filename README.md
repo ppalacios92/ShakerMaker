@@ -161,3 +161,6 @@ In this example, we generate a stochastic finite fault rupture by specifying the
 	    cleanup=False,  
 	    verbose=True,
 	)
+
+
+![ShakerMaker](/examples/example1_fig1.png)
