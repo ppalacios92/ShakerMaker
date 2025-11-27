@@ -35,6 +35,7 @@ Program ffsp_dcf_v3
  real::rise_time
  real::ave_tr,ave_tp,ave_vr,err_spectra,pdf,pdf_min
  integer::io_model_out,id_min
+ integer:: idum1_master, idum2_master, idum3_master
 
  open(8,file='ffsp.inp',status='old')
  open(7,file='ffsp.inf',status='unknown')
@@ -177,7 +178,15 @@ Program ffsp_dcf_v3
  spfile_best(nlch:nlch+3)='.bst'
  write(11,'(1a)') spfile_best(1:nlch+3)
  close(11)
+ ! Guardar seeds master
+ idum1_master = idum1
+ idum2_master = idum2
+ idum3_master = idum3
  do nsource=id_ran1,id_ran2
+    ! Calcular seeds únicas para este modelo
+   idum1 = idum1_master + nsource * 10000
+   idum2 = idum2_master + nsource * 20000
+   idum3 = idum3_master + nsource * 30000
    call dig2ch(nsource,charnum)
    spfile(nlch+1:nlch+3)=charnum
    write(31,'(1a)') spfile(1:nlch+3)
