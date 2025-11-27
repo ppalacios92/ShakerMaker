@@ -62,11 +62,26 @@ class CustomInstallCommand(install):
     def run(self):
         compile_ffsp()
         install.run(self)
+        self.set_ffsp_permissions() # para permiso chmod +x
+
+    def set_ffsp_permissions(self):
+        import site
+        for site_pkg in site.getsitepackages() + [site.getusersitepackages()]:
+            ffsp_exec = os.path.join(site_pkg, 'shakermaker', 'ffsp', 'ffsp_dcf_v2')
+            if os.path.exists(ffsp_exec):
+                os.chmod(ffsp_exec, 0o755)
+                print(f"Permission OK to: {ffsp_exec}")
+                break
+
 class CustomDevelopCommand(develop):
     """Custom develop command that compiles FFSP first"""
     def run(self):
         compile_ffsp()
         develop.run(self)
+        ffsp_exec = os.path.join('shakermaker', 'ffsp', 'ffsp_dcf_v2')
+        if os.path.exists(ffsp_exec):
+            os.chmod(ffsp_exec, 0o755)
+            # print(f"Permission to: {ffsp_exec}")
 # ============================================================
 
 # Check for sphinx
