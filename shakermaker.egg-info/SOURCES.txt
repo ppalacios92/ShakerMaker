@@ -44,6 +44,7 @@ shakermaker/ffsp/ffsp_comm.f90
 shakermaker/ffsp/ffsp_dcf_v2
 shakermaker/ffsp/ffsp_dcf_v2.f90
 shakermaker/ffsp/ffsp_io.py
+shakermaker/ffsp/ffsp_mpi_runner.py
 shakermaker/ffsp/ffsp_runner.py
 shakermaker/ffsp/ffsp_tool.f
 shakermaker/ffsp/makefile
