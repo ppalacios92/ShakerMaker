@@ -6,6 +6,7 @@ import numpy as np
 from .crustmodel import CrustModel
 from .ffsp import write_ffsp_inp, write_velocity_file, run_ffsp, parse_all_realizations, parse_best_realization, parse_statistical_results
 import matplotlib.pyplot as plt
+from .ffsp.ffsp_mpi_runner import run_ffsp_mpi
         
 # Finite Fault Stochastic Process (FFSP) source model
 class FFSPSource:
@@ -67,8 +68,10 @@ class FFSPSource:
         self.subfaults = None
         self._temp_dir = None
     
-    # Execute FFSP simulation and return best/first realization
-    def run(self) -> Dict:           
+    def run(self) -> Dict:
+        """Run FFSP to generate fault realizations"""
+        
+        # Configurar directorio de trabajo
         if self.work_dir is None:
             self._temp_dir = tempfile.mkdtemp(prefix='ffsp_')
             work_dir = self._temp_dir
@@ -76,51 +79,124 @@ class FFSPSource:
             work_dir = self.work_dir
             os.makedirs(work_dir, exist_ok=True)
             self._cleanup_old_outputs(work_dir)
-
+        
         if not self.cleanup:
             print(f"--- Working directory: {work_dir}")
         
-        try:            
-            write_ffsp_inp(self.params, os.path.join(work_dir, 'ffsp.inp'))
-            write_velocity_file(self.crust_model, os.path.join(work_dir, 'velocity.vel'))
-                        
-            if self.verbose:
+        try:
+            # DETECTAR MPI PRIMERO
+            try:
+                from mpi4py import MPI
+                comm = MPI.COMM_WORLD
+                use_mpi = comm.Get_size() > 1
+                rank = comm.Get_rank() if use_mpi else 0
+            except ImportError:
+                use_mpi = False
+                rank = 0
+            
+            # ESCRIBIR ARCHIVOS: Solo si NO hay MPI
+            if not use_mpi:
+                write_ffsp_inp(self.params, os.path.join(work_dir, 'ffsp.inp'))
+                write_velocity_file(self.crust_model, os.path.join(work_dir, 'velocity.vel'))
+            
+            if self.verbose and rank == 0:
                 print("Running FFSP...")
             
-            run_ffsp(work_dir, verbose=self.verbose)
-            
-            self.all_realizations = parse_all_realizations(self.output_name, work_dir)
-            self.best_realization = parse_best_realization(self.output_name, work_dir)
-            self.source_stats = parse_statistical_results( work_dir)  
-            self.subfaults = self.best_realization if self.best_realization else self.get_realization(0)
-            # Print some information
-            n = self.all_realizations['n_realizations']
-            active = "best" if self.best_realization else "first"
-            print(f"\nFound {n} realization(s) - Active: {active}")
-            print(f"  Slip: {self.subfaults['slip'].min():.3f} - {self.subfaults['slip'].max():.3f} m")
+            # EJECUTAR FFSP
+            if use_mpi:
+                # MPI paralelo
+                from .ffsp.ffsp_mpi_runner import run_ffsp_mpi
+                run_ffsp_mpi(self.params, self.crust_model, work_dir, verbose=self.verbose)
+                
+                # Parse resultados
+                if rank == 0:
+                    # Rank 0 usa directorio consolidado
+                    consolidated_dir = os.path.join(work_dir, 'consolidated')
+                    self._parse_output(consolidated_dir)
+                else:
+                    # Otros ranks: dummy parse 
+                    self.realizations = []
+                    self.best_realization = None
+                    self.subfaults = None
+                    self.all_realizations = {}
+                    self.stats = {}
+            else:
+                # Serial
+                run_ffsp(work_dir, verbose=self.verbose)
+                self._parse_output(work_dir)
             
             return self.subfaults
             
         finally:
+            # Cleanup solo si es temporal
             if self.cleanup and self._temp_dir is not None:
                 shutil.rmtree(self._temp_dir)
                 if self.verbose:
                     print("\nCleaned up temporary files")
 
+
     # Remove old FFSP output files from work directory
     def _cleanup_old_outputs(self, work_dir: str):
+        """Remove old FFSP output files from work directory"""
+        if not os.path.exists(work_dir):
+            return
+        
         for item in os.listdir(work_dir):
             if item.startswith(f"{self.output_name}."):
                 try:
-                    os.remove(os.path.join(work_dir, item))
+                    path = os.path.join(work_dir, item)
+                    if os.path.isfile(path):
+                        os.remove(path)
+                except:
+                    pass
+        
+        # Limpiar subdirectorios de MPI previos
+        for item in os.listdir(work_dir):
+            if item.startswith('rank_') or item == 'consolidated':
+                try:
+                    path = os.path.join(work_dir, item)
+                    if os.path.isdir(path):
+                        shutil.rmtree(path)
                 except:
                     pass
 
+    def _parse_output(self, work_dir: str):
+        """Parse FFSP output files"""
+        
+        # Parse all realizations
+        self.all_realizations = parse_all_realizations(self.output_name, work_dir )
+        
+        # Parse best realization
+        self.best_realization = parse_best_realization(self.output_name, work_dir )
+        
+        # Parse statistical results
+        self.source_stats = parse_statistical_results(work_dir)
+        
+        # Set best as active subfaults
+        if self.best_realization is not None:
+            self.subfaults = self.best_realization
+            self.active_realization = 'best'
+        
+        # Print summary
+        if self.verbose and self.all_realizations:
+            n = self.all_realizations['n_realizations']
+            print(f"\nFound {n} realization(s) - Active: {self.active_realization}")
+            if self.best_realization:
+                slip_min = self.best_realization['slip'].min()
+                slip_max = self.best_realization['slip'].max()
+                print(f"  Slip: {slip_min:.3f} - {slip_max:.3f} m")
+
     # Get specific realization by index (0-based)
-    def get_realization(self, index: int) -> Dict:        
+    def get_realization(self, index: int) -> Dict:
+        """Get specific realization by index (0-based)"""
+        
+        if not hasattr(self, 'all_realizations') or not self.all_realizations:
+            raise RuntimeError("No realizations available. Run FFSP first.")
+        
         n = self.all_realizations['n_realizations']
         if not (0 <= index < n):
             raise IndexError(f"Index {index} out of range [0, {n-1}]")
+        
         return {
             'nseg': self.all_realizations['nseg'],
             'npts': self.all_realizations['npts'],
@@ -135,17 +211,21 @@ class FFSPSource:
             'dip': self.all_realizations['dip'][:, index],
             'rake': self.all_realizations['rake'][:, index],
         }
-    
+
     # Set active realization for plotting
     def set_active_realization(self, index: int):
+        """Set active realization for plotting"""
         self.subfaults = self.get_realization(index)
+        self.active_realization = index
+
     # Get currently active subfault data
     def get_subfaults(self) -> Dict:
-        return self.subfaults
+        """Get currently active subfault data"""
+        if self.subfaults is None:
+            raise RuntimeError("No active realization. Call set_active_realization() first.")
+        return self.subfaults 
     
-
 # PLOTS (revisar si la dejamos aqui)
-
 
     # Plot histogram of field across all realizations
     def plot_histogram(self, field='slip', bins=50, figsize=(7, 5)):
