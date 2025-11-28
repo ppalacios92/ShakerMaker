@@ -114,18 +114,18 @@ Yielding:
 
 ## Quickstart usage FFSP tool
 
-Using the FFSP tool in ShakerMaker is straightforward. ShakerMaker has adopted the FFSP tool for stochastic generation of spatially-correlated fault ruptures. To define a stochastic fault source, you need to specify the parameters in the :class:`FFSPSource` class. Since layered earth structures are required to consider stratigraphy and wave propagation properties, you also use the previously described :class:`CrustModel` class.
+Using the FFSP tool in ShakerMaker is straightforward. ShakerMaker has adopted the FFSP tool for stochastic generation of spatially-correlated fault ruptures `(Pengcheng Liu 2005 andadding the relationships found by Schmedes et al. (2010, 2013) by Chen Ji, 2020)`. To define a stochastic fault source, you need to specify the parameters in the :class:`FFSPSource` class. Since layered earth structures are required to consider stratigraphy and wave propagation properties, you also use the previously described :class:`CrustModel` class.
 In this example, we generate a stochastic finite fault rupture by specifying the fault geometry, magnitude and rupture characteristics. The following parameters must be provided to :class:`FFSPSource`:
 
-**Source Type and Frequency** - `id_sf_type`: Source type identifier (8 = finite fault with stochastic slip) - `freq_min`, `freq_max`: Frequency band for ground motion simulation (Hz)
+**Source Type and Frequency** - `id_sf_type`: Source type identifier (defines slip-rate function type) - `freq_min`, `freq_max`: Frequency band for ground motion simulation (Hz)
 
 **Fault Geometry** - `fault_length`, `fault_width`: Fault plane dimensions (km) - `strike`, `dip`, `rake`: Fault orientation angles (degrees) - `pdip_max`, `prake_max`: Maximum perturbation for dip and rake angles (degrees) - `nsubx`, `nsuby`: Number of subfaults along strike and dip directions
 
 **Hypocenter Location** - `x_hypc`, `y_hypc`, `depth_hypc`: Hypocenter position relative to fault plane (km) - `xref_hypc`, `yref_hypc`: Reference point for hypocenter coordinates
 
-**Source Characteristics** - `magnitude`: Moment magnitude (Mw) - `fc_main_1`, `fc_main_2`: Corner frequencies for double-corner source spectrum (Hz) - `rv_avg`: Average rupture velocity (km/s) - `ratio_rise`: Rise time as fraction of total subfault rupture duration
+**Source Characteristics** - `magnitude`: Moment magnitude (Mw) - `fc_main_1`, `fc_main_2`: Corner frequencies for double-corner source spectrum (Hz) - `rv_avg`: Average rupture velocity (km/s) - `ratio_rise`: Ratio between peak time and rise time (tp/tr), controls slip-rate function shape
 
-**Slip Distribution** - `nb_taper_trbl`: Taper zones [top, right, bottom, left] to smooth slip edges - `seeds`: Random seeds for stochastic slip generation - `id_ran1`, `id_ran2`: Random field correlation settings for spatial slip distribution
+**Slip Distribution** - `nb_taper_trbl`: Taper zones [top, right, bottom, left] to smooth slip edges - `seeds`: Random seeds for stochastic slip generation - `id_ran1`, `id_ran2`: First and last index of stochastic realizations to generate (model numbers)
 
 **Coordinate System and Output** - `angle_north_to_x`: Rotation angle of coordinate system (degrees) - `is_moment`: Flag for moment tensor calculation - `crust_model`: :class:`CrustModel` defining velocity structure for Green's functions - `work_dir`: Output directory path for results and temporary files - `cleanup`: Remove temporary files after computation (boolean) - `verbose`: Print detailed progress information (boolean)
 
