@@ -67,6 +67,10 @@ class FFSPSource:
         self.source_stats = None
         self.subfaults = None
         self._temp_dir = None
+
+        self.dx = self.params['fault_length'] / self.params['nsubx']
+        self.dy = self.params['fault_width'] / self.params['nsuby']
+        self.area= self.dx * self.dy
     
     def run(self) -> Dict:
         """Run FFSP to generate fault realizations"""
@@ -269,8 +273,10 @@ class FFSPSource:
         ny = self.params['nsuby']
         lx = self.params['fault_length']
         ly = self.params['fault_width']
-        dx = lx / nx
-        dy = ly / ny
+        # dx = lx / nx
+        # dy = ly / ny
+        dx=self.dx
+        dy=self.dy
         cxp = self.params['x_hypc']
         cyp = self.params['y_hypc']
         
