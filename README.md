@@ -114,7 +114,7 @@ Yielding:
 
 ## Quickstart usage FFSP tool
 
-Using the FFSP tool in ShakerMaker is straightforward. ShakerMaker has adopted the FFSP tool for stochastic generation of spatially-correlated fault ruptures `(Pengcheng Liu 2005 andadding the relationships found by Schmedes et al. (2010, 2013) by Chen Ji, 2020)`. To define a stochastic fault source, you need to specify the parameters in the :class:`FFSPSource` class. Since layered earth structures are required to consider stratigraphy and wave propagation properties, you also use the previously described :class:`CrustModel` class.
+ShakerMaker has adopted the FFSP tool for stochastic generation of spatially-correlated fault ruptures `(Pengcheng Liu 2005 and adding the relationships found by Schmedes et al. (2010, 2013) by Chen Ji, 2020)`. To define a stochastic fault source, you need to specify the parameters in the :class:`FFSPSource` class. Since layered earth structures are required to consider stratigraphy and wave propagation properties, you also use the previously described :class:`CrustModel` class.
 In this example, we generate a stochastic finite fault rupture by specifying the fault geometry, magnitude and rupture characteristics. The following parameters must be provided to :class:`FFSPSource`:
 
 **Source Type and Frequency** - `id_sf_type`: Source type identifier (defines slip-rate function type) - `freq_min`, `freq_max`: Frequency band for ground motion simulation (Hz)
