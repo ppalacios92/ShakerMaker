@@ -38,6 +38,9 @@ def run_ffsp_mpi(params, crust_model, work_dir, verbose=False):
     write_velocity_file(crust_model, os.path.join(rank_work_dir, 'velocity.vel'))
     write_ffsp_inp(params_rank, os.path.join(rank_work_dir, 'ffsp.inp'))
     
+    # Esperamso que todos terminen de escribir
+    comm.Barrier()
+
     # Run FFSP
     run_ffsp(rank_work_dir, verbose=(rank == 0 and verbose))
     
