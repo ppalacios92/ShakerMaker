@@ -26,15 +26,13 @@ def run_ffsp_mpi(params, crust_model, work_dir, verbose=False):
     if rank == 0 and verbose:
         print(f"MPI: {total_models} models across {size} processes")
     
+    rank_work_dir = os.path.join(work_dir, f'rank_{rank:04d}')
     # Setup rank directory - SERIAL
     for r in range(size):
         if rank == r:
-            rank_work_dir = os.path.join(work_dir, f'rank_{rank:04d}')
             os.makedirs(rank_work_dir, exist_ok=True)
         # Esperar a que termine
         comm.Barrier()  
-    
-    rank_work_dir = os.path.join(work_dir, f'rank_{rank:04d}')
     
     # Write config files
     params_rank = params.copy()
@@ -51,7 +49,7 @@ def run_ffsp_mpi(params, crust_model, work_dir, verbose=False):
         comm.Barrier() 
     
     # Small delay for filesystem
-    time.sleep(0.1)
+    time.sleep(0.2)
     comm.Barrier()
 
     # Run FFSP
