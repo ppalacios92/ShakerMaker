@@ -6,12 +6,12 @@ from .ffsp_io import write_velocity_file, write_ffsp_inp
 from .ffsp_runner import run_ffsp
 
 def run_ffsp_mpi(params, crust_model, work_dir, verbose=False):
-    """Run FFSP in parallel using MPI"""
-    comm = MPI.COMM_WORLD
-    rank = comm.Get_rank()
-    size = comm.Get_size()
+    """Run FFSP in parallel using MPqI"""
+    comm = MPI.COMM_WORLD # Communicator
+    rank = comm.Get_rank() # get ranks of process
+    size = comm.Get_size() # get total of process
     
-    # Distribuir modelos
+    # Distribute all models
     total_models = params['id_ran2'] - params['id_ran1'] + 1
     models_per_rank = total_models // size
     remainder = total_models % size
@@ -26,34 +26,57 @@ def run_ffsp_mpi(params, crust_model, work_dir, verbose=False):
     if rank == 0 and verbose:
         print(f"MPI: {total_models} models across {size} processes")
     
-    # Every directory
+    # Rank 0. mkdir all folders
+    if rank == 0:
+        # remove all
+        if os.path.exists(work_dir):
+            print(f"Rank 0: Removing existing directory {work_dir}")
+            shutil.rmtree(work_dir, ignore_errors=True)
+            time.sleep(0.2)
+        
+        # base folder
+        print(f"Rank 0: Creating base directory {work_dir}")
+        os.makedirs(work_dir, exist_ok=False) 
+        
+        # all other models
+        for r in range(size):
+            rank_dir = os.path.join(work_dir, f'rank_{r:04d}')
+            print(f"Rank 0: Creating {rank_dir}")
+            os.makedirs(rank_dir, exist_ok=False)
+            
+            # check if create
+            if not os.path.exists(rank_dir):
+                print(f"ERROR: Rank 0 failed to create {rank_dir}")
+                comm.Abort(1)
+        
+        print(f"Rank 0: Created all {size} directories successfully")
+    
+    comm.Barrier()
+    time.sleep(0.5) 
+    comm.Barrier()
+    
     rank_work_dir = os.path.join(work_dir, f'rank_{rank:04d}')
-    os.makedirs(rank_work_dir, exist_ok=True)
-    comm.Barrier()  
-    # Write config files
+    
     params_rank = params.copy()
     params_rank['id_ran1'] = start
     params_rank['id_ran2'] = end
     params_rank['velocity_file'] = 'velocity.vel'
     
-    # Escribir archivos - SERIAL
+    # write all files
     write_velocity_file(crust_model, os.path.join(rank_work_dir, 'velocity.vel'))
     write_ffsp_inp(params_rank, os.path.join(rank_work_dir, 'ffsp.inp'))
     
     comm.Barrier()
     
-    # Small delay for filesystem
-    time.sleep(0.2)
-    comm.Barrier()
-
-    # Run FFSP
+    # ffsp paralel
     run_ffsp(rank_work_dir, verbose=(rank == 0 and verbose))
     
-    # Consolidate (rank 0 only)
+    # consolidate
     comm.Barrier()
     if rank == 0:
         consolidate_results(work_dir, size, total_models)
     comm.Barrier()
+
 
 def consolidate_results(work_dir, size, total_models):
     """Consolidate all results"""

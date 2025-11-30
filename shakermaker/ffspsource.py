@@ -82,7 +82,7 @@ class FFSPSource:
         else:
             work_dir = self.work_dir
             os.makedirs(work_dir, exist_ok=True)
-            self._cleanup_old_outputs(work_dir)
+            # self._cleanup_old_outputs(work_dir)
         
         if not self.cleanup:
             print(f"--- Working directory: {work_dir}")
