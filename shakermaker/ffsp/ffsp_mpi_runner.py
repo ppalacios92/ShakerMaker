@@ -26,14 +26,10 @@ def run_ffsp_mpi(params, crust_model, work_dir, verbose=False):
     if rank == 0 and verbose:
         print(f"MPI: {total_models} models across {size} processes")
     
+    # Every directory
     rank_work_dir = os.path.join(work_dir, f'rank_{rank:04d}')
-    # Setup rank directory - SERIAL
-    for r in range(size):
-        if rank == r:
-            os.makedirs(rank_work_dir, exist_ok=True)
-        # Esperar a que termine
-        comm.Barrier()  
-    
+    os.makedirs(rank_work_dir, exist_ok=True)
+    comm.Barrier()  
     # Write config files
     params_rank = params.copy()
     params_rank['id_ran1'] = start
@@ -41,12 +37,10 @@ def run_ffsp_mpi(params, crust_model, work_dir, verbose=False):
     params_rank['velocity_file'] = 'velocity.vel'
     
     # Escribir archivos - SERIAL
-    for r in range(size):
-        if rank == r:
-            write_velocity_file(crust_model, os.path.join(rank_work_dir, 'velocity.vel'))
-            write_ffsp_inp(params_rank, os.path.join(rank_work_dir, 'ffsp.inp'))
-        # Esperar a que termine
-        comm.Barrier() 
+    write_velocity_file(crust_model, os.path.join(rank_work_dir, 'velocity.vel'))
+    write_ffsp_inp(params_rank, os.path.join(rank_work_dir, 'ffsp.inp'))
+    
+    comm.Barrier()
     
     # Small delay for filesystem
     time.sleep(0.2)
