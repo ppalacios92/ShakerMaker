@@ -45,56 +45,35 @@ else:
 
 # ========== FFSP compilation support
 def compile_ffsp():
-    """Compile FFSP executable using makefile"""
+    """Compile FFSP wrapper module using f2py"""
     ffsp_dir = os.path.join(os.path.dirname(__file__), 'shakermaker', 'ffsp')    
     try:
-        subprocess.run(['make', 'clean'], cwd=ffsp_dir, check=False, capture_output=True)
-        subprocess.run(['make', 'all'], cwd=ffsp_dir, check=True, capture_output=True)        
-        ffsp_exec = os.path.join(ffsp_dir, 'ffsp_dcf_v2')
-        if os.path.exists(ffsp_exec):
-            os.chmod(ffsp_exec, 0o755)
-            print("OK: FFSP compiled")            
-    except subprocess.CalledProcessError:
-        print("X: FFSP compilation failed")
+        subprocess.run(['make', '-f', 'Makefile_f2py', 'clean'], 
+                      cwd=ffsp_dir, check=False, capture_output=True)
+        
+        result = subprocess.run(['make', '-f', 'Makefile_f2py'], 
+                               cwd=ffsp_dir, check=True, capture_output=True, text=True)
+        
+        so_files = [f for f in os.listdir(ffsp_dir) if f.startswith('ffsp_core') and f.endswith('.so')]
+        
+        if so_files:
+            print(f"✓ FFSP wrapper compiled: {so_files[0]}")
+        else:
+            raise RuntimeError("FFSP wrapper not compiled")
+            
+    except subprocess.CalledProcessError as e:
+        print("✗ FFSP compilation failed")
         raise
-class CustomInstallCommand(install):
-    """Custom install command that compiles FFSP first"""
-    def run(self):
-        compile_ffsp()
-        install.run(self)
-        self.set_ffsp_permissions() # para permiso chmod +x
+# Compile FFSP before the setup
+compile_ffsp()
 
-    def set_ffsp_permissions(self):
-        import site
-        for site_pkg in site.getsitepackages() + [site.getusersitepackages()]:
-            ffsp_exec = os.path.join(site_pkg, 'shakermaker', 'ffsp', 'ffsp_dcf_v2')
-            if os.path.exists(ffsp_exec):
-                os.chmod(ffsp_exec, 0o755)
-                print(f"Permission OK to: {ffsp_exec}")
-                break
-
-class CustomDevelopCommand(develop):
-    """Custom develop command that compiles FFSP first"""
-    def run(self):
-        compile_ffsp()
-        develop.run(self)
-        ffsp_exec = os.path.join('shakermaker', 'ffsp', 'ffsp_dcf_v2')
-        if os.path.exists(ffsp_exec):
-            os.chmod(ffsp_exec, 0o755)
-            # print(f"Permission to: {ffsp_exec}")
 # ============================================================
 
 # Check for sphinx
 found_sphinx = importlib.util.find_spec('sphinx') is not None
 
 # ============================================================
-# cmdclass = {}  me tomo esta variable. Consultar si es pertinente
-cmdclass = {
-    'install': CustomInstallCommand,
-    'develop': CustomDevelopCommand,
-}
-# ============================================================
-
+cmdclass = {}
 command_options = {}
 
 # if found_sphinx:
@@ -124,7 +103,7 @@ np_setup(
         "shakermaker.ffsp", 
     ],
     package_data={
-        'shakermaker.ffsp': ['ffsp_dcf_v2', '*.f90', '*.f', 'makefile'], 
+        'shakermaker.ffsp': ['ffsp_core.cpython-*.so', '*.f90', '*.f', 'makefile', 'Makefile_f2py', 'ffsp.pyf'], 
     },
     ext_modules=ext_modules,
     version=version,

@@ -1,198 +1,439 @@
 import os
-import tempfile
-import shutil
-from typing import Optional, Dict, List
 import numpy as np
+from typing import Optional, Dict, List
 from .crustmodel import CrustModel
-from .ffsp import write_ffsp_inp, write_velocity_file, run_ffsp, parse_all_realizations, parse_best_realization, parse_statistical_results
 import matplotlib.pyplot as plt
-from .ffsp.ffsp_mpi_runner import run_ffsp_mpi
-        
+
 # Finite Fault Stochastic Process (FFSP) source model
 class FFSPSource:
     """Finite Fault Stochastic Process source model (Liu & Archuleta)"""
     
     def __init__(self,
                  id_sf_type: int, freq_min: float, freq_max: float,
-                 fault_length: float,fault_width: float,
+                 fault_length: float, fault_width: float,
                  x_hypc: float, y_hypc: float, depth_hypc: float,
-                 xref_hypc: float,yref_hypc: float,
-                 magnitude: float,  fc_main_1: float, fc_main_2: float,
+                 xref_hypc: float, yref_hypc: float,
+                 magnitude: float, fc_main_1: float, fc_main_2: float,
                  rv_avg: float,
                  ratio_rise: float,
                  strike: float, dip: float, rake: float,
-                 pdip_max: float,  prake_max: float,
-                 nsubx: int,  nsuby: int,
+                 pdip_max: float, prake_max: float,
+                 nsubx: int, nsuby: int,
                  nb_taper_trbl: List[int],
                  seeds: List[int],
-                 id_ran1: int,  id_ran2: int,
+                 id_ran1: int, id_ran2: int,
                  angle_north_to_x: float,
                  is_moment: int,
                  crust_model: CrustModel,
                  output_name: str = "FFSP_OUTPUT",
-                 work_dir: Optional[str] = None,
-                 cleanup: bool = True,
                  verbose: bool = True):
+        """
+        Initialize FFSP source model.
+        
+        Parameters
+        ----------
+        id_sf_type : int
+            Slip function type
+        freq_min, freq_max : float
+            Frequency range (Hz)
+        fault_length, fault_width : float
+            Fault dimensions (km)
+        x_hypc, y_hypc, depth_hypc : float
+            Hypocenter position (km)
+        xref_hypc, yref_hypc : float
+            Reference position for hypocenter
+        magnitude : float
+            Moment magnitude
+        fc_main_1, fc_main_2 : float
+            Corner frequencies (Hz)
+        rv_avg : float
+            Average rupture velocity (km/s)
+        ratio_rise : float
+            Rise time ratio
+        strike, dip, rake : float
+            Fault geometry (degrees)
+        pdip_max, prake_max : float
+            Maximum perturbations (degrees)
+        nsubx, nsuby : int
+            Number of subfaults along strike and dip
+        nb_taper_trbl : List[int]
+            Taper zones [top, right, bottom, left]
+        seeds : List[int]
+            Random seeds [seed1, seed2, seed3]
+        id_ran1, id_ran2 : int
+            Realization range [start, end]
+        angle_north_to_x : float
+            Rotation angle (degrees)
+        is_moment : int
+            Result flag
+        crust_model : CrustModel
+            Velocity model
+        output_name : str, optional
+            Output file prefix
+        verbose : bool, optional
+            Print progress messages
+        """
         
         if not isinstance(crust_model, CrustModel):
             raise TypeError("crust_model must be a CrustModel instance")
 
+        # Store all parameters
         self.params = {
-            'id_sf_type': id_sf_type,'freq_min': freq_min,'freq_max': freq_max,
-            'fault_length': fault_length,'fault_width': fault_width,
-            'x_hypc': x_hypc,'y_hypc': y_hypc, 'depth_hypc': depth_hypc,
-            'xref_hypc': xref_hypc,'yref_hypc': yref_hypc,
+            'id_sf_type': id_sf_type, 'freq_min': freq_min, 'freq_max': freq_max,
+            'fault_length': fault_length, 'fault_width': fault_width,
+            'x_hypc': x_hypc, 'y_hypc': y_hypc, 'depth_hypc': depth_hypc,
+            'xref_hypc': xref_hypc, 'yref_hypc': yref_hypc,
             'magnitude': magnitude, 'fc_main_1': fc_main_1, 'fc_main_2': fc_main_2,
             'rv_avg': rv_avg,
             'ratio_rise': ratio_rise,
             'strike': strike, 'dip': dip, 'rake': rake,
             'pdip_max': pdip_max, 'prake_max': prake_max,
-            'nsubx': nsubx,  'nsuby': nsuby,
+            'nsubx': nsubx, 'nsuby': nsuby,
             'nb_taper_trbl': nb_taper_trbl,
             'seeds': seeds,
-            'id_ran1': id_ran1,  'id_ran2': id_ran2,
-            'velocity_file': 'velocity.vel',
+            'id_ran1': id_ran1, 'id_ran2': id_ran2,
             'angle_north_to_x': angle_north_to_x,
             'is_moment': is_moment,
-            'output_name': output_name,    }
+            'output_name': output_name,
+        }
         
         self.crust_model = crust_model
         self.output_name = output_name
-        self.work_dir = work_dir
-        self.cleanup = cleanup
         self.verbose = verbose
         
+        # Results storage
         self.all_realizations = None
         self.best_realization = None
         self.source_stats = None
         self.subfaults = None
-        self._temp_dir = None
 
-        self.dx = self.params['fault_length'] / self.params['nsubx']
-        self.dy = self.params['fault_width'] / self.params['nsuby']
-        self.area= self.dx * self.dy
+        # Subfault dimensions
+        self.dx = fault_length / nsubx
+        self.dy = fault_width / nsuby
+        self.area = self.dx * self.dy
     
     def run(self) -> Dict:
-        """Run FFSP to generate fault realizations"""
+        """
+        Run FFSP to generate fault realizations using Fortran wrapper.
+        Supports MPI parallelization with automatic data gathering.
         
-        # Configurar directorio de trabajo
-        if self.work_dir is None:
-            self._temp_dir = tempfile.mkdtemp(prefix='ffsp_')
-            work_dir = self._temp_dir
-        else:
-            work_dir = self.work_dir
-            os.makedirs(work_dir, exist_ok=True)
-            # self._cleanup_old_outputs(work_dir)
+        Returns
+        -------
+        Dict
+            Best realization subfault data (only valid on rank 0 if using MPI)
+        """
         
-        if not self.cleanup:
-            print(f"--- Working directory: {work_dir}")
-        
+        # Detect MPI environment
         try:
-            # DETECTAR MPI PRIMERO
-            try:
-                from mpi4py import MPI
-                comm = MPI.COMM_WORLD
-                use_mpi = comm.Get_size() > 1
-                rank = comm.Get_rank() if use_mpi else 0
-            except ImportError:
-                use_mpi = False
-                rank = 0
+            from mpi4py import MPI
+            comm = MPI.COMM_WORLD
+            use_mpi = comm.Get_size() > 1
+            rank = comm.Get_rank() if use_mpi else 0
+            nprocs = comm.Get_size() if use_mpi else 1
+        except ImportError:
+            use_mpi = False
+            rank = 0
+            nprocs = 1
+        
+        # Distribute realizations across MPI ranks
+        total_models = self.params['id_ran2'] - self.params['id_ran1'] + 1
+        
+        if use_mpi:
+            models_per_rank = total_models // nprocs
+            remainder = total_models % nprocs
             
-            # ESCRIBIR ARCHIVOS: Solo si NO hay MPI
-            if not use_mpi:
-                write_ffsp_inp(self.params, os.path.join(work_dir, 'ffsp.inp'))
-                write_velocity_file(self.crust_model, os.path.join(work_dir, 'velocity.vel'))
-            
-            if self.verbose and rank == 0:
-                print("Running FFSP...")
-            
-            # EJECUTAR FFSP
-            if use_mpi:
-                # MPI paralelo
-                from .ffsp.ffsp_mpi_runner import run_ffsp_mpi
-                run_ffsp_mpi(self.params, self.crust_model, work_dir, verbose=self.verbose)
-                
-                # Parse resultados
-                if rank == 0:
-                    # Rank 0 usa directorio consolidado
-                    consolidated_dir = os.path.join(work_dir, 'consolidated')
-                    self._parse_output(consolidated_dir)
-                else:
-                    # Otros ranks: dummy parse 
-                    self.realizations = []
-                    self.best_realization = None
-                    self.subfaults = None
-                    self.all_realizations = {}
-                    self.stats = {}
+            if rank < remainder:
+                start = rank * (models_per_rank + 1) + self.params['id_ran1']
+                end = start + models_per_rank
             else:
-                # Serial
-                run_ffsp(work_dir, verbose=self.verbose)
-                self._parse_output(work_dir)
+                start = rank * models_per_rank + remainder + self.params['id_ran1']
+                end = start + models_per_rank - 1
             
-            return self.subfaults
-            
-        finally:
-            # Cleanup solo si es temporal
-            if self.cleanup and self._temp_dir is not None:
-                shutil.rmtree(self._temp_dir)
+            my_n_models = end - start + 1
+        else:
+            start = self.params['id_ran1']
+            end = self.params['id_ran2']
+            my_n_models = total_models
+        
+        if self.verbose and rank == 0:
+            print(f"\n{'='*60}")
+            print(f"Running FFSP with wrapper (MPI parallel)")
+            print(f"{'='*60}")
+            print(f"Total realizations: {total_models}")
+            print(f"MPI processes: {nprocs}")
+            if use_mpi:
+                print(f"Realizations per rank: ~{models_per_rank}")
+            print(f"{'='*60}\n")
+        
+        # Import Fortran wrapper module
+        try:
+            from . import ffsp_core
+        except ImportError:
+            # Fallback: add ffsp directory to path
+            import sys
+            ffsp_dir = os.path.join(os.path.dirname(__file__), 'ffsp')
+            sys.path.insert(0, ffsp_dir)
+            import ffsp_core
+        
+        # Call Fortran wrapper (each rank computes its own subset)
+        if self.verbose and use_mpi:
+            print(f"[Rank {rank}] Computing realizations {start} to {end} ({my_n_models} models)")
+        
+        result = ffsp_core.ffsp_run_wrapper(
+            self.params['id_sf_type'],
+            self.params['freq_min'],
+            self.params['freq_max'],
+            self.params['fault_length'],
+            self.params['fault_width'],
+            self.params['x_hypc'],
+            self.params['y_hypc'],
+            self.params['depth_hypc'],
+            self.params['xref_hypc'],
+            self.params['yref_hypc'],
+            self.params['magnitude'],
+            self.params['fc_main_1'],
+            self.params['fc_main_2'],
+            self.params['rv_avg'],
+            self.params['ratio_rise'],
+            self.params['strike'],
+            self.params['dip'],
+            self.params['rake'],
+            self.params['pdip_max'],
+            self.params['prake_max'],
+            self.params['nsubx'],
+            self.params['nsuby'],
+            np.array(self.params['nb_taper_trbl'], dtype=np.int32),
+            np.array(self.params['seeds'], dtype=np.int32),
+            start, end,
+            self.params['angle_north_to_x'],
+            self.params['is_moment'],
+            self.crust_model.nlayers,
+            self.crust_model.a.astype(np.float32),
+            self.crust_model.b.astype(np.float32),
+            self.crust_model.rho.astype(np.float32),
+            self.crust_model.d.astype(np.float32),
+            self.crust_model.qa.astype(np.float32),
+            self.crust_model.qb.astype(np.float32),
+        )
+        
+        # Unpack results from Fortran wrapper (27 values)
+        (n_realizations, npts, x, y, z, slip, rupture_time, 
+         rise_time, peak_time, strike, dip, rake,
+         ave_tr, ave_tp, ave_vr, err_spectra, pdf,
+         # Spectral data
+         ntime_spec, nphf_spec, lnpt_spec,
+         stf_time, stf,
+         freq_spec, moment_rate, dcf,
+         freq_center, logmean_synth, logmean_dcf) = result
+        
+        if self.verbose and use_mpi:
+            print(f"[Rank {rank}] Completed {n_realizations} realizations")
+        
+        # =====================================================================
+        # MPI GATHER: Collect all data at rank 0
+        # =====================================================================
+        if use_mpi:
+            if rank == 0:
                 if self.verbose:
-                    print("\nCleaned up temporary files")
-
-
-    # Remove old FFSP output files from work directory
-    def _cleanup_old_outputs(self, work_dir: str):
-        """Remove old FFSP output files from work directory"""
-        if not os.path.exists(work_dir):
-            return
+                    print(f"\n[Rank 0] Gathering data from all {nprocs} processes...")
+                
+                # Initialize lists to collect data from all ranks
+                all_x = [x]
+                all_y = [y]
+                all_z = [z]
+                all_slip = [slip]
+                all_rupture_time = [rupture_time]
+                all_rise_time = [rise_time]
+                all_peak_time = [peak_time]
+                all_strike = [strike]
+                all_dip = [dip]
+                all_rake = [rake]
+                all_ave_tr = [ave_tr]
+                all_ave_tp = [ave_tp]
+                all_ave_vr = [ave_vr]
+                all_err_spectra = [err_spectra]
+                all_pdf = [pdf]
+                
+                # Receive from all other ranks
+                for r in range(1, nprocs):
+                    if self.verbose:
+                        print(f"[Rank 0] Receiving from rank {r}...")
+                    
+                    recv_data = comm.recv(source=r, tag=r)
+                    
+                    all_x.append(recv_data['x'])
+                    all_y.append(recv_data['y'])
+                    all_z.append(recv_data['z'])
+                    all_slip.append(recv_data['slip'])
+                    all_rupture_time.append(recv_data['rupture_time'])
+                    all_rise_time.append(recv_data['rise_time'])
+                    all_peak_time.append(recv_data['peak_time'])
+                    all_strike.append(recv_data['strike'])
+                    all_dip.append(recv_data['dip'])
+                    all_rake.append(recv_data['rake'])
+                    all_ave_tr.append(recv_data['ave_tr'])
+                    all_ave_tp.append(recv_data['ave_tp'])
+                    all_ave_vr.append(recv_data['ave_vr'])
+                    all_err_spectra.append(recv_data['err_spectra'])
+                    all_pdf.append(recv_data['pdf'])
+                
+                # Concatenate all data
+                x = np.concatenate(all_x, axis=1)
+                y = np.concatenate(all_y, axis=1)
+                z = np.concatenate(all_z, axis=1)
+                slip = np.concatenate(all_slip, axis=1)
+                rupture_time = np.concatenate(all_rupture_time, axis=1)
+                rise_time = np.concatenate(all_rise_time, axis=1)
+                peak_time = np.concatenate(all_peak_time, axis=1)
+                strike = np.concatenate(all_strike, axis=1)
+                dip = np.concatenate(all_dip, axis=1)
+                rake = np.concatenate(all_rake, axis=1)
+                ave_tr = np.concatenate(all_ave_tr)
+                ave_tp = np.concatenate(all_ave_tp)
+                ave_vr = np.concatenate(all_ave_vr)
+                err_spectra = np.concatenate(all_err_spectra)
+                pdf = np.concatenate(all_pdf)
+                
+                n_realizations = total_models
+                
+                if self.verbose:
+                    print(f"[Rank 0] Gathered all {n_realizations} realizations")
+                
+            else:
+                # Other ranks send their data to rank 0
+                if self.verbose:
+                    print(f"[Rank {rank}] Sending {n_realizations} realizations to rank 0...")
+                
+                send_data = {
+                    'x': x,
+                    'y': y,
+                    'z': z,
+                    'slip': slip,
+                    'rupture_time': rupture_time,
+                    'rise_time': rise_time,
+                    'peak_time': peak_time,
+                    'strike': strike,
+                    'dip': dip,
+                    'rake': rake,
+                    'ave_tr': ave_tr,
+                    'ave_tp': ave_tp,
+                    'ave_vr': ave_vr,
+                    'err_spectra': err_spectra,
+                    'pdf': pdf,
+                }
+                
+                comm.send(send_data, dest=0, tag=rank)
+                
+                if self.verbose:
+                    print(f"[Rank {rank}] Data sent successfully")
+                
+                # Non-zero ranks return dummy data (user should only use rank 0 results)
+                self.all_realizations = None
+                self.source_stats = None
+                self.best_realization = None
+                self.subfaults = None
+                self.active_realization = None
+                
+                return None
         
-        for item in os.listdir(work_dir):
-            if item.startswith(f"{self.output_name}."):
-                try:
-                    path = os.path.join(work_dir, item)
-                    if os.path.isfile(path):
-                        os.remove(path)
-                except:
-                    pass
+        # =====================================================================
+        # Store results (only rank 0 in MPI mode, or single process)
+        # =====================================================================
         
-        # Limpiar subdirectorios de MPI previos
-        for item in os.listdir(work_dir):
-            if item.startswith('rank_') or item == 'consolidated':
-                try:
-                    path = os.path.join(work_dir, item)
-                    if os.path.isdir(path):
-                        shutil.rmtree(path)
-                except:
-                    pass
-
-    def _parse_output(self, work_dir: str):
-        """Parse FFSP output files"""
+        # Store all realizations in compatible format
+        self.all_realizations = {
+            'n_realizations': n_realizations,
+            'nseg': 1,
+            'npts': npts,
+            'x': x,
+            'y': y,
+            'z': z,
+            'slip': slip,
+            'rupture_time': rupture_time,
+            'rise_time': rise_time,
+            'peak_time': peak_time,
+            'strike': strike,
+            'dip': dip,
+            'rake': rake,
+        }
         
-        # Parse all realizations
-        self.all_realizations = parse_all_realizations(self.output_name, work_dir )
+        # Store statistics (for plots)
+        self.source_stats = {
+            'source_score': {
+                'n_realizations': n_realizations,
+                'ave_tr': ave_tr,
+                'ave_tp': ave_tp,
+                'ave_vr': ave_vr,
+                'err_spectra': err_spectra,
+                'pdf': pdf,
+            },
+            # Spectral data (from best realization computed by rank 0 or single process)
+            'spectrum': {
+                'freq': freq_spec[:nphf_spec],
+                'moment_rate_synth': moment_rate[:nphf_spec],
+                'moment_rate_dcf': dcf[:nphf_spec],
+            },
+            'stf_time': {
+                'time': stf_time[:ntime_spec],
+                'stf': stf[:ntime_spec],
+            },
+            'spectrum_octave': {
+                'freq_center': freq_center[:lnpt_spec],
+                'logmean_synth': logmean_synth[:lnpt_spec],
+                'logmean_dcf': logmean_dcf[:lnpt_spec],
+            }
+        }
         
-        # Parse best realization
-        self.best_realization = parse_best_realization(self.output_name, work_dir )
+        # Identify best realization (minimum PDF)
+        best_idx = np.argmin(pdf)
+        self.best_realization = {
+            'nseg': 1,
+            'npts': npts,
+            'x': x[:, best_idx],
+            'y': y[:, best_idx],
+            'z': z[:, best_idx],
+            'slip': slip[:, best_idx],
+            'rupture_time': rupture_time[:, best_idx],
+            'rise_time': rise_time[:, best_idx],
+            'peak_time': peak_time[:, best_idx],
+            'strike': strike[:, best_idx],
+            'dip': dip[:, best_idx],
+            'rake': rake[:, best_idx],
+        }
         
-        # Parse statistical results
-        self.source_stats = parse_statistical_results(work_dir)
-        
-        # Set best as active subfaults
-        if self.best_realization is not None:
-            self.subfaults = self.best_realization
-            self.active_realization = 'best'
+        # Set best realization as active subfaults
+        self.subfaults = self.best_realization
+        self.active_realization = 'best'
         
         # Print summary
-        if self.verbose and self.all_realizations:
-            n = self.all_realizations['n_realizations']
-            print(f"\nFound {n} realization(s) - Active: {self.active_realization}")
-            if self.best_realization:
-                slip_min = self.best_realization['slip'].min()
-                slip_max = self.best_realization['slip'].max()
-                print(f"  Slip: {slip_min:.3f} - {slip_max:.3f} m")
+        if self.verbose and (rank == 0 or not use_mpi):
+            print(f"\n{'='*60}")
+            print(f"FFSP Run Complete!")
+            print(f"{'='*60}")
+            print(f"Total realizations: {n_realizations}")
+            print(f"Best realization (index {best_idx}): PDF={pdf[best_idx]:.6f}")
+            slip_min = slip[:, best_idx].min()
+            slip_max = slip[:, best_idx].max()
+            print(f"  Slip range: {slip_min:.3f} - {slip_max:.3f} m")
+            print(f"  Spectral data: {ntime_spec} time points, {nphf_spec} freq points")
+            print(f"{'='*60}\n")
+        
+        return self.subfaults
 
-    # Get specific realization by index (0-based)
     def get_realization(self, index: int) -> Dict:
-        """Get specific realization by index (0-based)"""
+        """
+        Get specific realization by index (0-based).
+        
+        Parameters
+        ----------
+        index : int
+            Realization index
+            
+        Returns
+        -------
+        Dict
+            Realization data
+        """
         
         if not hasattr(self, 'all_realizations') or not self.all_realizations:
             raise RuntimeError("No realizations available. Run FFSP first.")
@@ -216,47 +457,501 @@ class FFSPSource:
             'rake': self.all_realizations['rake'][:, index],
         }
 
-    # Set active realization for plotting
     def set_active_realization(self, index: int):
-        """Set active realization for plotting"""
+        """Set active realization for plotting."""
         self.subfaults = self.get_realization(index)
         self.active_realization = index
 
-    # Get currently active subfault data
     def get_subfaults(self) -> Dict:
-        """Get currently active subfault data"""
+        """Get currently active subfault data."""
         if self.subfaults is None:
             raise RuntimeError("No active realization. Call set_active_realization() first.")
         return self.subfaults 
     
-# PLOTS (revisar si la dejamos aqui)
-
-    # Plot histogram of field across all realizations
+    # ============ FILE WRITING METHODS ============
+    
+    def write_ffsp_format(self, output_dir: str, output_name: str = None):
+        """
+        Write results in original FFSP format (text files).
+        Creates files compatible with original FFSP:
+        - FFSP_OUTPUT.001, .002, ... (all realizations)
+        - FFSP_OUTPUT.bst (best realization)
+        - source_model.score (statistics)
+        - source_model.list (metadata)
+        - calsvf.dat, calsvf_tim.dat, logsvf.dat (spectral data)
+        
+        Parameters
+        ----------
+        output_dir : str
+            Directory to write files
+        output_name : str, optional
+            Base name for files (default: self.output_name)
+        """
+        
+        if self.all_realizations is None:
+            raise RuntimeError("No realizations available. Run FFSP first.")
+        
+        if output_name is None:
+            output_name = self.output_name
+        
+        os.makedirs(output_dir, exist_ok=True)
+        
+        print(f"\nWriting FFSP format files to: {output_dir}")
+        print(f"Output name: {output_name}")
+        
+        n = self.all_realizations['n_realizations']
+        npts = self.all_realizations['npts']
+        
+        # Write all realizations (FFSP_OUTPUT.001, .002, ...)
+        for i in range(n):
+            filename = os.path.join(output_dir, f"{output_name}.{i+1:03d}")
+            with open(filename, 'w') as f:
+                # Header: nseg npts
+                f.write(f"{self.all_realizations['nseg']} {npts}\n")
+                
+                # Data: x y z slip rupture_time rise_time peak_time strike dip rake
+                for j in range(npts):
+                    f.write(f"{self.all_realizations['x'][j, i]:15.6e} ")
+                    f.write(f"{self.all_realizations['y'][j, i]:15.6e} ")
+                    f.write(f"{self.all_realizations['z'][j, i]:15.6e} ")
+                    f.write(f"{self.all_realizations['slip'][j, i]:15.6e} ")
+                    f.write(f"{self.all_realizations['rupture_time'][j, i]:15.6e} ")
+                    f.write(f"{self.all_realizations['rise_time'][j, i]:15.6e} ")
+                    f.write(f"{self.all_realizations['peak_time'][j, i]:15.6e} ")
+                    f.write(f"{self.all_realizations['strike'][j, i]:15.6e} ")
+                    f.write(f"{self.all_realizations['dip'][j, i]:15.6e} ")
+                    f.write(f"{self.all_realizations['rake'][j, i]:15.6e}\n")
+        
+        print(f"  ✓ Wrote {n} realization files (.001 to .{n:03d})")
+        
+        # Write best realization (FFSP_OUTPUT.bst)
+        if self.best_realization is not None:
+            filename = os.path.join(output_dir, f"{output_name}.bst")
+            with open(filename, 'w') as f:
+                f.write(f"{self.best_realization['nseg']} {self.best_realization['npts']}\n")
+                for j in range(self.best_realization['npts']):
+                    f.write(f"{self.best_realization['x'][j]:15.6e} ")
+                    f.write(f"{self.best_realization['y'][j]:15.6e} ")
+                    f.write(f"{self.best_realization['z'][j]:15.6e} ")
+                    f.write(f"{self.best_realization['slip'][j]:15.6e} ")
+                    f.write(f"{self.best_realization['rupture_time'][j]:15.6e} ")
+                    f.write(f"{self.best_realization['rise_time'][j]:15.6e} ")
+                    f.write(f"{self.best_realization['peak_time'][j]:15.6e} ")
+                    f.write(f"{self.best_realization['strike'][j]:15.6e} ")
+                    f.write(f"{self.best_realization['dip'][j]:15.6e} ")
+                    f.write(f"{self.best_realization['rake'][j]:15.6e}\n")
+            
+            print(f"  ✓ Wrote best realization (.bst)")
+        
+        # Write statistics (source_model.score)
+        if self.source_stats is not None:
+            filename = os.path.join(output_dir, "source_model.score")
+            stats = self.source_stats['source_score']
+            with open(filename, 'w') as f:
+                f.write(f"{n}\n")
+                f.write("Target: average Risetime= 0.0 average peaktime= 0.0\n")
+                for i in range(n):
+                    f.write(f"{output_name}.{i+1:03d}\n")
+                    f.write(f"{stats['ave_tr'][i]:15.5e} ")
+                    f.write(f"{stats['ave_tp'][i]:15.5e} ")
+                    f.write(f"{stats['ave_vr'][i]:15.5e} ")
+                    f.write(f"{stats['err_spectra'][i]:15.5e} ")
+                    f.write(f"{stats['pdf'][i]:15.5e}\n")
+            
+            print(f"  ✓ Wrote statistics (source_model.score)")
+        
+        # Write metadata (source_model.list)
+        filename = os.path.join(output_dir, "source_model.list")
+        with open(filename, 'w') as f:
+            f.write(f"{self.params['id_sf_type']} ")
+            f.write(f"{self.params['nsubx']} ")
+            f.write(f"{self.params['nsuby']} ")
+            f.write(f"{self.dx} ")
+            f.write(f"{self.dy} ")
+            f.write(f"{self.params['x_hypc']} ")
+            f.write(f"{self.params['y_hypc']}\n")
+            f.write(f"{self.params['xref_hypc']} ")
+            f.write(f"{self.params['yref_hypc']} ")
+            f.write(f"{self.params['angle_north_to_x']}\n")
+            f.write(f"{output_name}.bst\n")
+        
+        print(f"  ✓ Wrote metadata (source_model.list)")
+        
+        # Write spectral data if available
+        if self.source_stats and 'spectrum' in self.source_stats:
+            # calsvf.dat (frequency spectrum)
+            filename = os.path.join(output_dir, "calsvf.dat")
+            spectrum = self.source_stats['spectrum']
+            with open(filename, 'w') as f:
+                f.write(f"{len(spectrum['freq'])}\n")
+                for i in range(len(spectrum['freq'])):
+                    f.write(f"{spectrum['freq'][i]:15.6e} ")
+                    f.write(f"{spectrum['moment_rate_synth'][i]:15.6e} ")
+                    f.write(f"{spectrum['moment_rate_dcf'][i]:15.6e}\n")
+            print(f"  ✓ Wrote spectrum (calsvf.dat)")
+            
+            # calsvf_tim.dat (STF time domain)
+            filename = os.path.join(output_dir, "calsvf_tim.dat")
+            stf = self.source_stats['stf_time']
+            with open(filename, 'w') as f:
+                f.write(f"{len(stf['time'])}\n")
+                for i in range(len(stf['time'])):
+                    f.write(f"{stf['time'][i]:15.6e} ")
+                    f.write(f"{stf['stf'][i]:15.6e}\n")
+            print(f"  ✓ Wrote STF time (calsvf_tim.dat)")
+            
+            # logsvf.dat (octave-averaged spectrum)
+            filename = os.path.join(output_dir, "logsvf.dat")
+            octave = self.source_stats['spectrum_octave']
+            with open(filename, 'w') as f:
+                f.write(f"{len(octave['freq_center'])}\n")
+                for i in range(len(octave['freq_center'])):
+                    f.write(f"{octave['freq_center'][i]:15.6e} ")
+                    f.write(f"{octave['logmean_synth'][i]:15.6e} ")
+                    f.write(f"{octave['logmean_dcf'][i]:15.6e}\n")
+            print(f"  ✓ Wrote octave spectrum (logsvf.dat)")
+        
+        print(f"\n✓ All files written successfully to {output_dir}\n")
+    
+    def write_hdf5(self, filename: str):
+        """
+        Write results to HDF5 file (modern, efficient format).
+        Stores all realizations and metadata in a single compressed file.
+        
+        Parameters
+        ----------
+        filename : str
+            Output HDF5 filename (will add .h5 if not present)
+        """
+        
+        if self.all_realizations is None:
+            raise RuntimeError("No realizations available. Run FFSP first.")
+        
+        try:
+            import h5py
+        except ImportError:
+            raise ImportError("h5py required for HDF5 output. Install with: pip install h5py")
+        
+        if not filename.endswith('.h5'):
+            filename += '.h5'
+        
+        print(f"\nWriting HDF5 file: {filename}")
+        
+        with h5py.File(filename, 'w') as f:
+            # Create groups
+            grp_realizations = f.create_group('realizations')
+            grp_best = f.create_group('best_realization')
+            grp_stats = f.create_group('statistics')
+            grp_params = f.create_group('parameters')
+            
+            # Write all realizations
+            for key, val in self.all_realizations.items():
+                if isinstance(val, (int, float)):
+                    grp_realizations.attrs[key] = val
+                else:
+                    grp_realizations.create_dataset(key, data=val, compression='gzip')
+            
+            print(f"  ✓ Wrote {self.all_realizations['n_realizations']} realizations")
+            
+            # Write best realization
+            if self.best_realization is not None:
+                for key, val in self.best_realization.items():
+                    if isinstance(val, (int, float)):
+                        grp_best.attrs[key] = val
+                    else:
+                        grp_best.create_dataset(key, data=val, compression='gzip')
+                print(f"  ✓ Wrote best realization")
+            
+            # Write statistics
+            if self.source_stats is not None:
+                # Source scores
+                grp_score = grp_stats.create_group('source_score')
+                for key, val in self.source_stats['source_score'].items():
+                    if isinstance(val, (int, float)):
+                        grp_score.attrs[key] = val
+                    else:
+                        grp_score.create_dataset(key, data=val, compression='gzip')
+                
+                # Spectral data
+                if 'spectrum' in self.source_stats:
+                    grp_spectrum = grp_stats.create_group('spectrum')
+                    for key, val in self.source_stats['spectrum'].items():
+                        grp_spectrum.create_dataset(key, data=val, compression='gzip')
+                    
+                    grp_stf = grp_stats.create_group('stf_time')
+                    for key, val in self.source_stats['stf_time'].items():
+                        grp_stf.create_dataset(key, data=val, compression='gzip')
+                    
+                    grp_octave = grp_stats.create_group('spectrum_octave')
+                    for key, val in self.source_stats['spectrum_octave'].items():
+                        grp_octave.create_dataset(key, data=val, compression='gzip')
+                    
+                    print(f"  ✓ Wrote statistics and spectral data")
+            
+            # Write parameters
+            for key, val in self.params.items():
+                if isinstance(val, (int, float, str)):
+                    grp_params.attrs[key] = val
+                elif isinstance(val, list):
+                    grp_params.create_dataset(key, data=np.array(val))
+            
+            # Subfault geometry
+            grp_params.attrs['dx'] = self.dx
+            grp_params.attrs['dy'] = self.dy
+            grp_params.attrs['area'] = self.area
+            
+            print(f"  ✓ Wrote parameters")
+            
+            # Crust model - save layer-by-layer data
+            grp_crust = grp_params.create_group('crust_model')
+            grp_crust.attrs['nlayers'] = self.crust_model.nlayers
+            grp_crust.create_dataset('d', data=self.crust_model.d)      # thickness
+            grp_crust.create_dataset('a', data=self.crust_model.a)      # vp
+            grp_crust.create_dataset('b', data=self.crust_model.b)      # vs
+            grp_crust.create_dataset('rho', data=self.crust_model.rho)
+            grp_crust.create_dataset('qa', data=self.crust_model.qa)
+            grp_crust.create_dataset('qb', data=self.crust_model.qb)
+            
+            print(f"  ✓ Wrote crust model")
+        
+        print(f"\n✓ HDF5 file written successfully: {filename}\n")
+    
+    def load_hdf5(self, filename: str):
+        """
+        Load results from HDF5 file into existing FFSPSource object.
+        
+        Parameters
+        ----------
+        filename : str
+            Input HDF5 filename
+        """
+        
+        try:
+            import h5py
+        except ImportError:
+            raise ImportError("h5py required for HDF5 input. Install with: pip install h5py")
+        
+        if not filename.endswith('.h5'):
+            filename += '.h5'
+        
+        print(f"\nLoading from HDF5 file: {filename}")
+        
+        with h5py.File(filename, 'r') as f:
+            # Load all realizations
+            grp_realizations = f['realizations']
+            self.all_realizations = {}
+            for key in grp_realizations.keys():
+                self.all_realizations[key] = grp_realizations[key][:]
+            for key in grp_realizations.attrs.keys():
+                self.all_realizations[key] = grp_realizations.attrs[key]
+            
+            # Load best realization
+            grp_best = f['best_realization']
+            self.best_realization = {}
+            for key in grp_best.keys():
+                self.best_realization[key] = grp_best[key][:]
+            for key in grp_best.attrs.keys():
+                self.best_realization[key] = grp_best.attrs[key]
+            
+            # Load statistics
+            grp_stats = f['statistics']
+            self.source_stats = {}
+            
+            grp_score = grp_stats['source_score']
+            self.source_stats['source_score'] = {}
+            for key in grp_score.keys():
+                self.source_stats['source_score'][key] = grp_score[key][:]
+            for key in grp_score.attrs.keys():
+                self.source_stats['source_score'][key] = grp_score.attrs[key]
+            
+            if 'spectrum' in grp_stats:
+                self.source_stats['spectrum'] = {}
+                for key in grp_stats['spectrum'].keys():
+                    self.source_stats['spectrum'][key] = grp_stats['spectrum'][key][:]
+                
+                self.source_stats['stf_time'] = {}
+                for key in grp_stats['stf_time'].keys():
+                    self.source_stats['stf_time'][key] = grp_stats['stf_time'][key][:]
+                
+                self.source_stats['spectrum_octave'] = {}
+                for key in grp_stats['spectrum_octave'].keys():
+                    self.source_stats['spectrum_octave'][key] = grp_stats['spectrum_octave'][key][:]
+            
+            # Load parameters
+            grp_params = f['parameters']
+            self.params = {}
+            for key in grp_params.attrs.keys():
+                self.params[key] = grp_params.attrs[key]
+            for key in grp_params.keys():
+                if key != 'crust_model':  # Skip crust_model group
+                    self.params[key] = grp_params[key][:].tolist()
+            
+            # Reconstruct subfault geometry attributes
+            self.dx = self.params['dx']
+            self.dy = self.params['dy']
+            self.area = self.params['area']
+            self.output_name = self.params.get('output_name', 'FFSP_OUTPUT')
+            self.verbose = True  # Default
+            
+            # Load crust model - reconstruct layer by layer
+            grp_crust = grp_params['crust_model']
+            from .crustmodel import CrustModel
+            
+            nlayers = grp_crust.attrs['nlayers']
+            self.crust_model = CrustModel(nlayers)
+            
+            # Add each layer
+            d = grp_crust['d'][:]
+            a = grp_crust['a'][:]    # vp
+            b = grp_crust['b'][:]    # vs
+            rho = grp_crust['rho'][:]
+            qa = grp_crust['qa'][:]
+            qb = grp_crust['qb'][:]
+            
+            for i in range(nlayers):
+                self.crust_model.add_layer(d[i], a[i], b[i], rho[i], qa[i], qb[i])
+            
+            # Set active realization
+            self.subfaults = self.best_realization
+            self.active_realization = 'best'
+        
+        print(f"✓ Loaded {self.all_realizations['n_realizations']} realizations")
+        print(f"✓ Best realization (PDF={self.source_stats['source_score']['pdf'].min():.6f})\n")
+    
+    @classmethod
+    def from_hdf5(cls, filename: str):
+        """
+        Create FFSPSource object from HDF5 file (class method).
+        This is the recommended way to load saved results.
+        
+        Parameters
+        ----------
+        filename : str
+            Input HDF5 filename
+            
+        Returns
+        -------
+        FFSPSource
+            Fully initialized FFSPSource object with all data loaded
+            
+        Examples
+        --------
+        >>> # Save results
+        >>> source.run()
+        >>> source.write_hdf5('results.h5')
+        >>> 
+        >>> # Load in new session
+        >>> source = FFSPSource.from_hdf5('results.h5')
+        >>> source.plot_spectral_comparison()
+        """
+        
+        try:
+            import h5py
+        except ImportError:
+            raise ImportError("h5py required for HDF5 input. Install with: pip install h5py")
+        
+        if not filename.endswith('.h5'):
+            filename += '.h5'
+        
+        print(f"\nLoading FFSPSource from HDF5: {filename}")
+        
+        with h5py.File(filename, 'r') as f:
+            # Load parameters first
+            grp_params = f['parameters']
+            params = {}
+            for key in grp_params.attrs.keys():
+                params[key] = grp_params.attrs[key]
+            for key in grp_params.keys():
+                if key != 'crust_model':
+                    params[key] = grp_params[key][:].tolist()
+            
+            # Load crust model - reconstruct layer by layer
+            grp_crust = grp_params['crust_model']
+            from .crustmodel import CrustModel
+            
+            nlayers = grp_crust.attrs['nlayers']
+            crust_model = CrustModel(nlayers)
+            
+            # Add each layer
+            d = grp_crust['d'][:]
+            a = grp_crust['a'][:]    # vp
+            b = grp_crust['b'][:]    # vs
+            rho = grp_crust['rho'][:]
+            qa = grp_crust['qa'][:]
+            qb = grp_crust['qb'][:]
+            
+            for i in range(nlayers):
+                crust_model.add_layer(d[i], a[i], b[i], rho[i], qa[i], qb[i])
+        
+        # Create object using __init__ with loaded parameters
+        obj = cls(
+            id_sf_type=params['id_sf_type'],
+            freq_min=params['freq_min'],
+            freq_max=params['freq_max'],
+            fault_length=params['fault_length'],
+            fault_width=params['fault_width'],
+            x_hypc=params['x_hypc'],
+            y_hypc=params['y_hypc'],
+            depth_hypc=params['depth_hypc'],
+            xref_hypc=params['xref_hypc'],
+            yref_hypc=params['yref_hypc'],
+            magnitude=params['magnitude'],
+            fc_main_1=params['fc_main_1'],
+            fc_main_2=params['fc_main_2'],
+            rv_avg=params['rv_avg'],
+            ratio_rise=params['ratio_rise'],
+            strike=params['strike'],
+            dip=params['dip'],
+            rake=params['rake'],
+            pdip_max=params['pdip_max'],
+            prake_max=params['prake_max'],
+            nsubx=params['nsubx'],
+            nsuby=params['nsuby'],
+            nb_taper_trbl=params['nb_taper_trbl'],
+            seeds=params['seeds'],
+            id_ran1=params['id_ran1'],
+            id_ran2=params['id_ran2'],
+            angle_north_to_x=params['angle_north_to_x'],
+            is_moment=params['is_moment'],
+            crust_model=crust_model,
+            output_name=params.get('output_name', 'FFSP_OUTPUT'),
+            verbose=False  # Don't print during load
+        )
+        
+        # Now load the data into the initialized object
+        obj.load_hdf5(filename)
+        
+        return obj
+    
+    
+    # ============ PLOTTING METHODS ============
+    
     def plot_histogram(self, field='slip', bins=50, figsize=(7, 5)):
-        valid_fields = ['x', 'y', 'z', 'slip', 'rupture_time', 'rise_time', 'peak_time', 'strike', 'dip', 'rake']
+        """Plot histogram of field across all realizations."""
+        valid_fields = ['x', 'y', 'z', 'slip', 'rupture_time', 'rise_time', 
+                       'peak_time', 'strike', 'dip', 'rake']
         if field not in valid_fields:
-            raise ValueError(f"field must be one of {valid_fields}, got '{field}'")    
-        plt.figure(figsize=figsize)    
+            raise ValueError(f"field must be one of {valid_fields}, got '{field}'")
+            
+        plt.figure(figsize=figsize)
+        
         # Plot all realizations
         for i in range(self.all_realizations['n_realizations']):
             var = self.all_realizations[field][:, i]
-            plt.hist(var, bins=bins, alpha=0.4, label=f'Rlz{i+1}')    
+            plt.hist(var, bins=bins, alpha=0.4, label=f'Rlz{i+1}')
+        
         # Plot best realization
         var_best = self.best_realization[field]
-        plt.hist(var_best, bins=bins, histtype='step', color='red', linewidth=2, label='Best')
+        plt.hist(var_best, bins=bins, histtype='step', color='red', 
+                linewidth=2, label='Best')
         
         # Labels
         field_labels = {
-            'x': 'North (m)',
-            'y': 'East (m)',
-            'z': 'Depth (m)',
-            'slip': 'Slip (m)',
-            'rupture_time': 'Rupture Time (s)',
-            'rise_time': 'Rise Time (s)',
-            'peak_time': 'Peak Time (s)',
-            'strike': 'Strike (°)',
-            'dip': 'Dip (°)',
-            'rake': 'Rake (°)'}
+            'x': 'North (m)', 'y': 'East (m)', 'z': 'Depth (m)',
+            'slip': 'Slip (m)', 'rupture_time': 'Rupture Time (s)',
+            'rise_time': 'Rise Time (s)', 'peak_time': 'Peak Time (s)',
+            'strike': 'Strike (°)', 'dip': 'Dip (°)', 'rake': 'Rake (°)'
+        }
         
         plt.xlabel(field_labels[field])
         plt.ylabel('Frequency')
@@ -266,26 +961,27 @@ class FFSPSource:
         plt.tight_layout()
         plt.show()
 
-    # Plot spatial distribution of subfault parameters
-    def plot_spacial_distribution(self, figsize=(10, 8) , field='rise_time', cmap='coolwarm', show_contours=True, contour_field='rupture_time', show_hypocenter=True):
-
+    def plot_spacial_distribution(self, figsize=(10, 8), field='rise_time', 
+                                  cmap='coolwarm', show_contours=True, 
+                                  contour_field='rupture_time', show_hypocenter=True):
+        """Plot spatial distribution of subfault parameters."""
+        
         nx = self.params['nsubx']
         ny = self.params['nsuby']
         lx = self.params['fault_length']
         ly = self.params['fault_width']
-        # dx = lx / nx
-        # dy = ly / ny
-        dx=self.dx
-        dy=self.dy
+        dx = self.dx
+        dy = self.dy
         cxp = self.params['x_hypc']
         cyp = self.params['y_hypc']
         
         # Validate fields
-        valid_fields = ['slip', 'rupture_time', 'rise_time', 'peak_time', 'strike', 'dip', 'rake']
+        valid_fields = ['slip', 'rupture_time', 'rise_time', 'peak_time', 
+                       'strike', 'dip', 'rake']
         if field not in valid_fields:
-            raise ValueError(f"field must be one of {valid_fields}, got '{field}'")
+            raise ValueError(f"field must be one of {valid_fields}")
         if contour_field not in valid_fields:
-            raise ValueError(f"contour_field must be one of {valid_fields}, got '{contour_field}'")
+            raise ValueError(f"contour_field must be one of {valid_fields}")
 
         # Prepare data
         field_data = np.transpose(self.subfaults[field].reshape(nx, ny))
@@ -296,35 +992,35 @@ class FFSPSource:
 
         # Labels
         field_labels = {
-            'slip': 'Slip [m]',
-            'rupture_time': 'Rupture Time [s]',
-            'rise_time': 'Rise Time [s]',
-            'peak_time': 'Peak Time [s]',
-            'strike': 'Strike [°]',
-            'dip': 'Dip [°]',
-            'rake': 'Rake [°]',        
+            'slip': 'Slip [m]', 'rupture_time': 'Rupture Time [s]',
+            'rise_time': 'Rise Time [s]', 'peak_time': 'Peak Time [s]',
+            'strike': 'Strike [°]', 'dip': 'Dip [°]', 'rake': 'Rake [°]',
         }
 
         # Plot
         plt.figure(figsize=figsize)
-        plt.imshow(field_data[::-1], cmap=cmap, extent=(-lx/2-dx/2, lx/2+dx/2, -ly/2-dy/2, ly/2+dy/2), interpolation='nearest')
+        plt.imshow(field_data[::-1], cmap=cmap, 
+                  extent=(-lx/2-dx/2, lx/2+dx/2, -ly/2-dy/2, ly/2+dy/2), 
+                  interpolation='nearest')
         plt.colorbar(label=field_labels[field], shrink=ly/lx)
 
         # Contours
         if show_contours:
             contours = plt.contour(X, Y, contour_data, 8, colors='blue', linewidths=1.5)
-            plt.clabel(contours, fontsize=10, fmt='%2.1f', inline=1)                
+            plt.clabel(contours, fontsize=10, fmt='%2.1f', inline=1)
+            
         # Hypocenter
         if show_hypocenter:
-            plt.scatter(cxp-lx/2, cyp-ly/2, c='red', s=300, marker='*', edgecolors='white', linewidth=2, label='Hypocenter', zorder=10)
+            plt.scatter(cxp-lx/2, cyp-ly/2, c='red', s=300, marker='*', 
+                       edgecolors='white', linewidth=2, label='Hypocenter', zorder=10)
             plt.legend(loc='upper right')
 
         plt.xlabel('Along Strike [km]')
         plt.ylabel('Down Dip [km]')
         
-        # Title
         if show_contours:
-            plt.title(f'{field_labels[field]} Distribution (contours: {field_labels[contour_field]})', fontsize=14, fontweight='bold')
+            plt.title(f'{field_labels[field]} Distribution (contours: {field_labels[contour_field]})', 
+                     fontsize=14, fontweight='bold')
         else:
             plt.title(f'{field_labels[field]} Distribution', fontsize=14, fontweight='bold')
         
@@ -333,41 +1029,48 @@ class FFSPSource:
         plt.tight_layout()
         plt.show()
 
-    # PPlot PDF and Spectral Error side by side
-    def plot_quality_metrics(self , figsize: tuple = (14, 5)):
+    def plot_quality_metrics(self, figsize=(14, 5)):
+        """Plot PDF and Spectral Error side by side."""
         if self.source_stats is None:
-                print("No source statistics available. Run simulation first.")
-                return
+            print("No source statistics available. Run simulation first.")
+            return
+            
         stats = self.source_stats['source_score']
         n = stats['n_realizations']
         idx = np.arange(1, n + 1)
         best_idx = np.argmin(stats['pdf'])
+        
         plt.figure(figsize=figsize)
+        
         # Subplot 1: PDF
         plt.subplot(1, 2, 1)
         colors = ['tab:green' if i == best_idx else 'tab:blue' for i in range(n)]
         plt.bar(idx, stats['pdf'], color=colors, edgecolor='black', alpha=0.7)
-        plt.axhline(stats['pdf'][best_idx], color='tab:red', ls='--', lw=2, label=f'Best = {stats["pdf"][best_idx]:.3f}')
+        plt.axhline(stats['pdf'][best_idx], color='tab:red', ls='--', lw=2, 
+                   label=f'Best = {stats["pdf"][best_idx]:.3f}')
         plt.xlabel('Realization', fontsize=12)
         plt.ylabel('PDF', fontsize=12)
         plt.title(f'PDF Quality Metric (Best: #{best_idx+1})', fontsize=13, fontweight='bold')
         plt.legend()
         plt.grid(axis='y', alpha=0.3)
+        
         # Subplot 2: Spectral Error
         plt.subplot(1, 2, 2)
         colors = ['tab:green' if i == best_idx else 'tab:orange' for i in range(n)]
         plt.bar(idx, stats['err_spectra'], color=colors, edgecolor='black', alpha=0.7)
-        plt.axhline(stats['err_spectra'][best_idx], color='tab:red', ls='--', lw=2, label=f'Best = {stats["err_spectra"][best_idx]:.4f}')
+        plt.axhline(stats['err_spectra'][best_idx], color='tab:red', ls='--', lw=2, 
+                   label=f'Best = {stats["err_spectra"][best_idx]:.4f}')
         plt.xlabel('Realization', fontsize=12)
         plt.ylabel('Spectral Error (RMS)', fontsize=12)
         plt.title(f'Spectral Error (Best: #{best_idx+1})', fontsize=13, fontweight='bold')
         plt.legend()
         plt.grid(axis='y', alpha=0.3)
+        
         plt.tight_layout()
         plt.show()
 
-    # Plot Rise Time, Peak Time, and Rupture Velocity
-    def plot_temporal_metrics(self, figsize: tuple = (15, 5)):
+    def plot_temporal_metrics(self, figsize=(15, 5)):
+        """Plot Rise Time, Peak Time, and Rupture Velocity."""
         if self.source_stats is None:
             print("No source statistics available. Run simulation first.")
             return
@@ -378,38 +1081,45 @@ class FFSPSource:
         best_idx = np.argmin(stats['pdf'])
 
         plt.figure(figsize=figsize)
+        
         # Subplot 1: Rise Time
         plt.subplot(1, 3, 1)
         plt.plot(idx, stats['ave_tr'], 'o-', color='tab:purple', lw=2, markersize=6)
-        plt.plot(best_idx+1, stats['ave_tr'][best_idx], 's', color='tab:green', markersize=15, label=f'Best = {stats["ave_tr"][best_idx]:.3f} s', zorder=10)
+        plt.plot(best_idx+1, stats['ave_tr'][best_idx], 's', color='tab:green', 
+                markersize=15, label=f'Best = {stats["ave_tr"][best_idx]:.3f} s', zorder=10)
         plt.xlabel('Realization', fontsize=12)
         plt.ylabel('Average Rise Time (s)', fontsize=12)
         plt.title(f'Rise Time (Best: #{best_idx+1})', fontsize=13, fontweight='bold')
         plt.legend()
         plt.grid(alpha=0.3)
+        
         # Subplot 2: Peak Time
         plt.subplot(1, 3, 2)
         plt.plot(idx, stats['ave_tp'], 'o-', color='tab:orange', lw=2, markersize=6)
-        plt.plot(best_idx+1, stats['ave_tp'][best_idx], 's', color='tab:green', markersize=15, label=f'Best = {stats["ave_tp"][best_idx]:.3f} s', zorder=10)
+        plt.plot(best_idx+1, stats['ave_tp'][best_idx], 's', color='tab:green', 
+                markersize=15, label=f'Best = {stats["ave_tp"][best_idx]:.3f} s', zorder=10)
         plt.xlabel('Realization', fontsize=12)
         plt.ylabel('Average Peak Time (s)', fontsize=12)
         plt.title(f'Peak Time (Best: #{best_idx+1})', fontsize=13, fontweight='bold')
         plt.legend()
         plt.grid(alpha=0.3)
+        
         # Subplot 3: Rupture Velocity
         plt.subplot(1, 3, 3)
         plt.plot(idx, stats['ave_vr'], 'o-', color='tab:cyan', lw=2, markersize=6)
-        plt.plot(best_idx+1, stats['ave_vr'][best_idx], 's', color='tab:green', markersize=15, label=f'Best = {stats["ave_vr"][best_idx]:.3f} km/s', zorder=10)
+        plt.plot(best_idx+1, stats['ave_vr'][best_idx], 's', color='tab:green', 
+                markersize=15, label=f'Best = {stats["ave_vr"][best_idx]:.3f} km/s', zorder=10)
         plt.xlabel('Realization', fontsize=12)
         plt.ylabel('Average Rupture Velocity (km/s)', fontsize=12)
         plt.title(f'Rupture Velocity (Best: #{best_idx+1})', fontsize=13, fontweight='bold')
         plt.legend()
         plt.grid(alpha=0.3)
+        
         plt.tight_layout()
         plt.show()
 
-    # Plot Moment Rate Spectrum and Octave-Averaged Spectrum side by side
-    def plot_spectral_comparison(self, figsize: tuple = (14, 6)):       
+    def plot_spectral_comparison(self, figsize=(14, 6)):
+        """Plot Moment Rate Spectrum and Octave-Averaged Spectrum side by side."""
         if self.source_stats is None:
             print("No source statistics available. Run simulation first.")
             return
@@ -417,6 +1127,7 @@ class FFSPSource:
         spectrum = self.source_stats['spectrum']
         octave = self.source_stats['spectrum_octave']
         plt.figure(figsize=figsize)
+        
         # Subplot 1: Full Spectrum
         plt.subplot(1, 2, 1)
         plt.loglog(spectrum['freq'], spectrum['moment_rate_synth'], color='tab:blue', lw=2.5, label='Synthetic Model')
@@ -426,6 +1137,7 @@ class FFSPSource:
         plt.title('Moment Rate Spectrum', fontsize=13, fontweight='bold')
         plt.legend(fontsize=11)
         plt.grid(True, which='both', alpha=0.3)
+        
         # Subplot 2: Octave-Averaged
         plt.subplot(1, 2, 2)
         plt.semilogx(octave['freq_center'], octave['logmean_synth'], 'o-', color='tab:blue', lw=2.5, markersize=8, label='Synthetic (log-mean)')
@@ -435,11 +1147,12 @@ class FFSPSource:
         plt.title('Octave-Averaged Spectrum', fontsize=13, fontweight='bold')
         plt.legend(fontsize=11)
         plt.grid(alpha=0.3)
+        
         plt.tight_layout()
         plt.show()
-    
-    # Plot Source Time Function (STF)
-    def plot_source_time_function(self, figsize: tuple = (10, 6)):
+
+    def plot_source_time_function(self, figsize=(10, 6)):
+        """Plot Source Time Function (STF)."""
         if self.source_stats is None:
             print("No source statistics available. Run simulation first.")
             return
