@@ -41,7 +41,7 @@ def run_ffsp_mpi(params, crust_model, work_dir, verbose=False):
         # all other models
         for r in range(size):
             rank_dir = os.path.join(work_dir, f'rank_{r:04d}')
-            print(f"Rank 0: Creating {rank_dir}")
+            # print(f"Rank 0: Creating {rank_dir}")
             os.makedirs(rank_dir, exist_ok=False)
             
             # check if create

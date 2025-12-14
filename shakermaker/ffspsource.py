@@ -291,7 +291,7 @@ class FFSPSource:
         field_data = np.transpose(self.subfaults[field].reshape(nx, ny))
         contour_data = np.transpose(self.subfaults[contour_field].reshape(nx, ny))
         x = np.linspace(-lx/2, lx/2, nx)
-        y = np.linspace(0, ly, ny)
+        y = np.linspace(-ly/2, ly/2, ny)
         X, Y = np.meshgrid(x, y)
 
         # Labels
@@ -307,7 +307,7 @@ class FFSPSource:
 
         # Plot
         plt.figure(figsize=figsize)
-        plt.imshow(field_data[::-1], cmap=cmap, extent=(-lx/2-dx/2, lx/2+dx/2, -dy/2, ly+dy/2), interpolation='nearest')
+        plt.imshow(field_data[::-1], cmap=cmap, extent=(-lx/2-dx/2, lx/2+dx/2, -ly/2-dy/2, ly/2+dy/2), interpolation='nearest')
         plt.colorbar(label=field_labels[field], shrink=ly/lx)
 
         # Contours
@@ -316,7 +316,7 @@ class FFSPSource:
             plt.clabel(contours, fontsize=10, fmt='%2.1f', inline=1)                
         # Hypocenter
         if show_hypocenter:
-            plt.scatter(cxp-lx/2, cyp, c='red', s=300, marker='*', edgecolors='white', linewidth=2, label='Hypocenter', zorder=10)
+            plt.scatter(cxp-lx/2, cyp-ly/2, c='red', s=300, marker='*', edgecolors='white', linewidth=2, label='Hypocenter', zorder=10)
             plt.legend(loc='upper right')
 
         plt.xlabel('Along Strike [km]')
