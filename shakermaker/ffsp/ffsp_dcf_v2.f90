@@ -182,11 +182,15 @@ Program ffsp_dcf_v3
  idum1_master = idum1
  idum2_master = idum2
  idum3_master = idum3
+! write(*,*) 'DEBUG fortran: seeds_read=', idum1, idum2, idum3
+! write(*,*) 'DEBUG fortran: idum_master=', idum1_master, idum2_master, idum3_master
+
  do nsource=id_ran1,id_ran2
     ! Calcular seeds únicas para este modelo
-   idum1 = idum1_master + nsource * 10000
-   idum2 = idum2_master + nsource * 20000
-   idum3 = idum3_master + nsource * 30000
+    idum1 = idum1_master + (nsource - 1) * 10000
+    idum2 = idum2_master + (nsource - 1) * 20000
+    idum3 = idum3_master + (nsource - 1) * 30000
+
    call dig2ch(nsource,charnum)
    spfile(nlch+1:nlch+3)=charnum
    write(31,'(1a)') spfile(1:nlch+3)

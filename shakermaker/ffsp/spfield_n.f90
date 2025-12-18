@@ -341,19 +341,23 @@ subroutine random_field(idum1,idum2,idum3,ave_tr,ave_tp,ave_vr,err_spectra)
  do i=1,nsum
    gasv1(i)=gasdev(idum1,iset)
  enddo
+ ! write(*,*) 'DEBUG gasv1(1:5)=', gasv1(1:5)
  iset=0
  do i=1,nsum
    gasv2(i)=gasdev(idum2,iset)
  enddo
+ ! write(*,*) 'DEBUG gasv2(1:5)=', gasv2(1:5)
  iset=0
  do i=1,nsum
    gasv3(i)=gasdev(idum3,iset)
  enddo
+ ! write(*,*) 'DEBUG gasv3(1:5)=', gasv3(1:5)
  iset=0
  idum4=idum1+nsum
  do i=1,nsum
    gasv4(i)=gasdev(idum4,iset)
  enddo
+ ! write(*,*) 'DEBUG gasv4(1:5)=', gasv4(1:5)
 ! 1. slip distribution
 !
  slip=gasv1

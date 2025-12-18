@@ -125,6 +125,14 @@ subroutine ffsp_run_wrapper( &
     real :: ave_tr, ave_tp, ave_vr, err_spectra, pdf
     
     !--------------------------------------------------------------------------
+    ! 0. Clean up previous state (CRITICAL for repeated calls)
+    !--------------------------------------------------------------------------
+    ! Deallocate arrays from previous runs
+    if (allocated(slip)) deallocate(slip, rstm, rptm, pktm, rpvel, beta, amu, &
+                        taper, rtx, rtz, rake_prt, dip_prt, amz_prt, depth_source, lrtp)
+    if (allocated(freq)) deallocate(freq)
+
+    !--------------------------------------------------------------------------
     ! 1. Assign parameters to sp_sub_f module variables
     !--------------------------------------------------------------------------
     id_sf_type = id_sf_type_in
@@ -212,11 +220,20 @@ subroutine ffsp_run_wrapper( &
         i_real = i_real + 1
         
         ! Calculate unique seeds for this model (PARALLELIZATION)
-        ! This ensures same realization regardless of MPI rank distribution
-        idum1 = idum1_master + nsource * 10000
-        idum2 = idum2_master + nsource * 20000
-        idum3 = idum3_master + nsource * 30000
-        
+        idum1 = idum1_master + (nsource - 1) * 10000
+        idum2 = idum2_master + (nsource - 1) * 20000
+        idum3 = idum3_master + (nsource - 1) * 30000
+
+        ! idum1 = seeds_in(1)
+        ! idum2 = seeds_in(2)
+        ! idum3 = seeds_in(3)
+
+        ! write(*,*) 'DEBUG fortran: nsource=', nsource
+        ! write(*,*) 'DEBUG fortran: idum1,2,3=', idum1, idum2, idum3
+        ! idum1 = 52  ! Hardcoded para debug
+        ! idum2 = 448
+        ! idum3 = 4446
+   
         ! Generate random field
         call random_field(idum1, idum2, idum3, ave_tr, ave_tp, ave_vr, err_spectra)
         
