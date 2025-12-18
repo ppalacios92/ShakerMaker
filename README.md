@@ -153,12 +153,11 @@ In this example, we generate a stochastic finite fault rupture by specifying the
 	    nsubx=256,   nsuby=128,
 	    nb_taper_trbl=[5, 5, 5, 5],
 	    seeds=[52, 448, 4446],
-	    id_ran1=1,  id_ran2=2,
+	    id_ran1=1,  id_ran2=1,
 	    angle_north_to_x=0.0,
 	    is_moment=3,
 	    crust_model=crustal,
-	    work_dir='./ffsp_output',
-	    cleanup=False,  
+	    output_name="FFSP_OUTPUT", 
 	    verbose=True,
 	)
 
