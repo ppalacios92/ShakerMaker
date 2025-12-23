@@ -1151,7 +1151,7 @@ class FFSPSource:
         plt.tight_layout()
         plt.show()
 
-    def plot_source_time_function(self, figsize=(10, 6)):
+    def plot_source_time_function(self, figsize=(10, 6),xlim=None):
         """Plot Source Time Function (STF)."""
         if self.source_stats is None:
             print("No source statistics available. Run simulation first.")
@@ -1168,5 +1168,7 @@ class FFSPSource:
         plt.title('Source Time Function (STF)', fontsize=14, fontweight='bold')
         plt.legend(fontsize=11)
         plt.grid(alpha=0.3)
+        if xlim is not None:
+            plt.xlim(xlim)
         plt.tight_layout()
         plt.show()
