@@ -20,6 +20,7 @@ class DRMHDF5StationListWriter(HDF5StationListWriter):
         self._tstart = np.infty
         self._tend = -np.infty
         self._dt = 0.
+        self._gfs = {}
 
     def initialize(self, station_list, num_samples):
         assert isinstance(station_list, DRMBox), \
@@ -102,6 +103,10 @@ class DRMHDF5StationListWriter(HDF5StationListWriter):
         self._tend = max(t[-1],self._tend)
         self._dt = t[1] - t[0]
 
+        gf_dict = station.get_greens_functions()
+        if gf_dict:
+            self._gfs[index] = gf_dict
+
 
 
 
@@ -175,9 +180,20 @@ class DRMHDF5StationListWriter(HDF5StationListWriter):
                 self._h5file['DRM_QA_Data/acceleration'][1,:] = an
                 self._h5file['DRM_QA_Data/acceleration'][2,:] = az
 
-        self._h5file.close()
+        if self._gfs:
+            self._write_gfs()
 
-
+    def _write_gfs(self):
+        grp = self._h5file.create_group('GF')
+        for sta_idx, gf_dict in self._gfs.items():
+            grp_sta = grp.create_group(f'sta_{sta_idx}')
+            for sub_idx, (z, e, n, t) in gf_dict.items():
+                grp_sub = grp_sta.create_group(f'sub_{sub_idx}')
+                grp_sub.create_dataset('z', data=z, compression='gzip')
+                grp_sub.create_dataset('e', data=e, compression='gzip')
+                grp_sub.create_dataset('n', data=n, compression='gzip')
+                grp_sub.create_dataset('t', data=t, compression='gzip')
+        print(f"[WRITER] _write_gfs() done!")
 
 
 HDF5StationListWriter.register(DRMHDF5StationListWriter)

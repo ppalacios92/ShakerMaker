@@ -966,8 +966,8 @@ class FFSPSource:
                                   contour_field='rupture_time', show_hypocenter=True):
         """Plot spatial distribution of subfault parameters."""
         
-        nx = self.params['nsubx']
-        ny = self.params['nsuby']
+        nx = int(self.params['nsubx'])
+        ny = int(self.params['nsuby'])
         lx = self.params['fault_length']
         ly = self.params['fault_width']
         dx = self.dx

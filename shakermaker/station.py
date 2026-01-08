@@ -36,6 +36,7 @@ class Station:
         self._observers = []
         self._internal = internal
         self._initialized = False
+        self._greens_functions = {} #green functions!!
 
     @property
     def x(self):
@@ -216,3 +217,11 @@ class Station:
 
 
         return
+    def add_greens_function(self, z, e, n, t, subfault_id):
+        save_gf = self._metadata.get('save_gf', False)
+        if not save_gf:
+            return
+        self._greens_functions[subfault_id] = (z.copy(), e.copy(), n.copy(), t.copy())
+    
+    def get_greens_functions(self):
+        return self._greens_functions

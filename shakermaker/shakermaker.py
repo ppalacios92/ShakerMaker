@@ -116,7 +116,7 @@ class ShakerMaker:
         
 
         """
-        title = f"🎉 ¡LARGA VIDA AL LADRUNO! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+        title = f"🎉 ¡LARGA VIDA AL LADRUNO1! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
         
         if rank == 0:
             print("\n\n")
@@ -218,7 +218,6 @@ class ShakerMaker:
                         t = np.arange(0, len(z)*dt, dt) + psource.tt + t0
                         psource.stf.dt = dt
 
-
                         z_stf = psource.stf.convolve(z, t)
                         e_stf = psource.stf.convolve(e, t)
                         n_stf = psource.stf.convolve(n, t)
@@ -239,6 +238,15 @@ class ShakerMaker:
                             data[:,3] = t
                             printMPI(f"Rank {rank} sending to P0 2 ")
                             comm.Send(data, dest=0, tag=2*ipair+1)
+                            # enviamos green functions
+                            data_gf = np.empty((nt,4), dtype=np.float64)
+                            data_gf[:,0] = z
+                            data_gf[:,1] = e
+                            data_gf[:,2] = n
+                            data_gf[:,3] = t
+                            printMPI(f"Rank {rank} sending GF to P0")
+                            comm.Send(data_gf, dest=0, tag=2*ipair+100)
+
                             printMPI(f"Rank {rank} done sending to P0 2")
                             next_pair += skip_pairs
                             t2 = perf_counter()
@@ -264,10 +272,23 @@ class ShakerMaker:
                                 e_stf = data[:,1]
                                 n_stf = data[:,2]
                                 t = data[:,3]    
+                                #recibir green funcitons
+                                data_gf = np.empty((nt,4), dtype=np.float64)
+                                printMPI(f"P0 getting GF from remote {remote}")
+                                comm.Recv(data_gf, source=remote, tag=2*ipair+100)
+                                z_gf = data_gf[:,0]
+                                e_gf = data_gf[:,1]
+                                n_gf = data_gf[:,2]
+                                t_gf = data_gf[:,3]
 
                                 t2 = perf_counter()
                                 perf_time_recv += t2 - t1
                         next_pair += 1
+                        # add green funcitons 
+                        if nprocs > 1:
+                            station.add_greens_function(z_gf, e_gf, n_gf, t_gf, i_psource)
+                        else:
+                            station.add_greens_function(z, e, n, t, i_psource)
                         try:
                             t1 = perf_counter()
                             station.add_to_response(z_stf, e_stf, n_stf, t, tmin, tmax)
