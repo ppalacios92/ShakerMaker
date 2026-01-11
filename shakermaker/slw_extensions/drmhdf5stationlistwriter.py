@@ -21,6 +21,7 @@ class DRMHDF5StationListWriter(HDF5StationListWriter):
         self._tend = -np.infty
         self._dt = 0.
         self._gfs = {}
+        self._spectrum_gfs = {}
 
     def initialize(self, station_list, num_samples):
         assert isinstance(station_list, DRMBox), \
@@ -106,6 +107,9 @@ class DRMHDF5StationListWriter(HDF5StationListWriter):
         gf_dict = station.get_greens_functions()
         if gf_dict:
             self._gfs[index] = gf_dict
+        spec_dict = station.get_spectrum_greens()
+        if spec_dict:
+            self._spectrum_gfs[index] = spec_dict
 
 
 
@@ -182,6 +186,8 @@ class DRMHDF5StationListWriter(HDF5StationListWriter):
 
         if self._gfs:
             self._write_gfs()
+        if self._spectrum_gfs:
+            self._write_spectrum_gfs()
 
     def _write_gfs(self):
         grp = self._h5file.create_group('GF')
@@ -195,5 +201,19 @@ class DRMHDF5StationListWriter(HDF5StationListWriter):
                 grp_sub.create_dataset('t', data=t, compression='gzip')
         print(f"[WRITER] _write_gfs() done!")
 
+    def _write_spectrum_gfs(self):
+        grp = self._h5file.create_group('GF_Spectrum')
+        for sta_idx, spec_dict in self._spectrum_gfs.items():
+            grp_sta = grp.create_group(f'sta_{sta_idx}')
+            for sub_idx, (sz, se, sn, freqs) in spec_dict.items():
+                grp_sub = grp_sta.create_group(f'sub_{sub_idx}')
+                grp_sub.create_dataset('spectrum_z_real', data=sz.real, compression='gzip')
+                grp_sub.create_dataset('spectrum_z_imag', data=sz.imag, compression='gzip')
+                grp_sub.create_dataset('spectrum_e_real', data=se.real, compression='gzip')
+                grp_sub.create_dataset('spectrum_e_imag', data=se.imag, compression='gzip')
+                grp_sub.create_dataset('spectrum_n_real', data=sn.real, compression='gzip')
+                grp_sub.create_dataset('spectrum_n_imag', data=sn.imag, compression='gzip')
+                grp_sub.create_dataset('freqs', data=freqs, compression='gzip')
+        print(f"[WRITER] _write_spectrum_gfs() done!")
 
 HDF5StationListWriter.register(DRMHDF5StationListWriter)

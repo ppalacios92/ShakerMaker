@@ -1,7 +1,7 @@
       subroutine subfk(mb,stype,src,rcv,
      &  a,b,qa,qb,d,rho,mu,xi,si,
      &  vs,hs,xmax,flip,updn,
-     &  nfft,dt,smth,sigma,pmin,pmax,dk,kc,taper,nx,x,t0,tdata)
+     &  nfft,dt,smth,sigma,pmin,pmax,dk,kc,taper,nx,x,t0,tdata,spectrum)
       implicit none
       include 'constants.h'
       include 'model.h'
@@ -14,6 +14,7 @@
       complex w,att,nf,u(3,3)
       real aj0,aj1,aj2,z,tdata(nx,9,2*nfft)
       complex sum(nx,9,2*nfft), data(2*nfft)
+      complex spectrum(nx,9,2*nfft) 
       complex ka_local(mb), kb_local(mb) 
 
       nCom = 3 + 3*stype
@@ -135,7 +136,15 @@ c n=2
          enddo
       enddo                     ! end of freqency loop
 !$OMP END PARALLEL DO
-
+c***************************************************************
+c*************** extraer sum
+      do ix=1,nx
+         do l=1,nCom
+            do j=1,nfft2
+               spectrum(ix,l,j) = sum(ix,l,j)
+            enddo
+         enddo
+      enddo
 c***************************************************************
 c*************** do inverse fourier transform
       dt = dt/smth

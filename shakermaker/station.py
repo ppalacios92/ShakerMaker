@@ -37,6 +37,7 @@ class Station:
         self._internal = internal
         self._initialized = False
         self._greens_functions = {} #green functions!!
+        self._spectrum_greens = {}
 
     @property
     def x(self):
@@ -217,6 +218,7 @@ class Station:
 
 
         return
+        # Green funcitons
     def add_greens_function(self, z, e, n, t, subfault_id):
         save_gf = self._metadata.get('save_gf', False)
         if not save_gf:
@@ -225,3 +227,12 @@ class Station:
     
     def get_greens_functions(self):
         return self._greens_functions
+
+    def add_spectrum_greens_function(self, sz, se, sn, freqs, subfault_id):
+        save_spec = self._metadata.get('save_spectrum_gf', False)
+        if not save_spec:
+            return
+        self._spectrum_greens[subfault_id] = (sz.copy(), se.copy(), sn.copy(), freqs.copy())
+    
+    def get_spectrum_greens(self):
+        return self._spectrum_greens

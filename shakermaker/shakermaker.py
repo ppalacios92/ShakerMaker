@@ -69,7 +69,7 @@ class ShakerMaker:
         sigma=2, 
         taper=0.9, 
         wc1=1, 
-        wc2=2, 
+        wc2=2,
         pmin=0, 
         pmax=1, 
         dk=0.3,
@@ -116,7 +116,7 @@ class ShakerMaker:
         
 
         """
-        title = f"🎉 ¡LARGA VIDA AL LADRUNO1! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+        title = f"🎉 ¡LARGA VIDA AL LADRUNO500! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
         
         if rank == 0:
             print("\n\n")
@@ -179,7 +179,7 @@ class ShakerMaker:
             skip_pairs = nprocs-1
 
         npairs = self._receivers.nstations*len(self._source._pslist)
-
+        nfft2 = 2 * nfft
         for i_station, station in enumerate(self._receivers):
             for i_psource, psource in enumerate(self._source):
                 aux_crust = copy.deepcopy(self._crust)
@@ -200,12 +200,22 @@ class ShakerMaker:
                         if verbose:
                             print("calling core START")
                         t1 = perf_counter()
-                        tdata, z, e, n, t0 = self._call_core(dt, nfft, tb, nx, sigma, smth, wc1, wc2, pmin, pmax, dk, kc,
+                        tdata, spectrum, z, e, n, t0= self._call_core(dt, nfft, tb, nx, sigma, smth, wc1, wc2, pmin, pmax, dk, kc,
                                                              taper, aux_crust, psource, station, verbose)
                         t2 = perf_counter()
                         perf_time_core += t2 - t1
                         if verbose:
                             print("calling core END")
+                        # Calculate spectrum only if needed
+                        if station.metadata.get('save_spectrum_gf', False):
+                            pf, df, lf = psource.angles[0], psource.angles[1], psource.angles[2]
+                            sx, sy = psource.x[0], psource.x[1]
+                            rx, ry = station.x[0], station.x[1]
+                            freqs = np.arange(nfft2) * (1.0 / (2 * nfft * dt))
+                            spectrum_z, spectrum_e, spectrum_n = self.calculate_zen_spectrum(spectrum, pf, df, lf, sx, sy, rx, ry)
+                        
+                        nt = len(z)
+                        # spectrum ----------------
 
                         nt = len(z)
                         dd = psource.x - station.x
@@ -246,6 +256,18 @@ class ShakerMaker:
                             data_gf[:,3] = t
                             printMPI(f"Rank {rank} sending GF to P0")
                             comm.Send(data_gf, dest=0, tag=2*ipair+100)
+                            
+                            # Send spectrum only if needed
+                            if station.metadata.get('save_spectrum_gf', False):
+                                data_spec = np.empty((nfft2, 7), dtype=np.float64)
+                                data_spec[:,0] = spectrum_z.real
+                                data_spec[:,1] = spectrum_z.imag
+                                data_spec[:,2] = spectrum_e.real
+                                data_spec[:,3] = spectrum_e.imag
+                                data_spec[:,4] = spectrum_n.real
+                                data_spec[:,5] = spectrum_n.imag
+                                data_spec[:,6] = freqs
+                                comm.Send(data_spec, dest=0, tag=2*ipair+200)
 
                             printMPI(f"Rank {rank} done sending to P0 2")
                             next_pair += skip_pairs
@@ -280,15 +302,29 @@ class ShakerMaker:
                                 e_gf = data_gf[:,1]
                                 n_gf = data_gf[:,2]
                                 t_gf = data_gf[:,3]
+                                
+                                # Receive spectrum only if needed
+                                if station.metadata.get('save_spectrum_gf', False):
+                                    data_spec = np.empty((nfft2,7), dtype=np.float64)
+                                    comm.Recv(data_spec, source=remote, tag=2*ipair+200)
+                                    sz_gf = data_spec[:,0] + 1j*data_spec[:,1]
+                                    se_gf = data_spec[:,2] + 1j*data_spec[:,3]
+                                    sn_gf = data_spec[:,4] + 1j*data_spec[:,5]
+                                    freqs_gf = data_spec[:,6]
 
                                 t2 = perf_counter()
                                 perf_time_recv += t2 - t1
                         next_pair += 1
-                        # add green funcitons 
+                        # add green functions 
                         if nprocs > 1:
                             station.add_greens_function(z_gf, e_gf, n_gf, t_gf, i_psource)
+                            if station.metadata.get('save_spectrum_gf', False):
+                                station.add_spectrum_greens_function(sz_gf, se_gf, sn_gf, freqs_gf, i_psource)
                         else:
                             station.add_greens_function(z, e, n, t, i_psource)
+                            if station.metadata.get('save_spectrum_gf', False):
+                                station.add_spectrum_greens_function(spectrum_z, spectrum_e, spectrum_n, freqs, i_psource)
+                        # add green functions 
                         try:
                             t1 = perf_counter()
                             station.add_to_response(z_stf, e_stf, n_stf, t, tmin, tmax)
@@ -531,14 +567,16 @@ class ShakerMaker:
         tstart = perf_counter()
 
         npairs = self._receivers.nstations*len(self._source._pslist)
+        nfft2 = nfft 
         npairs_skip  = 0
+
         for i_station, station in enumerate(self._receivers):
             for i_psource, psource in enumerate(self._source):
                 aux_crust = copy.deepcopy(self._crust)
 
                 aux_crust.split_at_depth(psource.x[2])
                 aux_crust.split_at_depth(station.x[2])
-
+                
                 if ipair == next_pair:
                     if verbose:
                         print(f"rank={rank} nprocs={nprocs} ipair={ipair} skip_pairs={skip_pairs} npairs={npairs} !!")
@@ -1775,6 +1813,28 @@ class ShakerMaker:
     @property
     def mpi_nprocs(self):
         return self._mpi_nprocs
+    # calculate the principal components with the 9x9 tensor
+    def calculate_zen_spectrum(self, spectrum, pf, df, lf, sx, sy, rx, ry):
+        dx = rx - sx
+        dy = ry - sy
+        p = np.arctan2(dy, dx)
+        f1 = np.cos(lf)*np.cos(pf) + np.sin(lf)*np.cos(df)*np.sin(pf)
+        f2 = np.cos(lf)*np.sin(pf) - np.sin(lf)*np.cos(df)*np.cos(pf)
+        f3 = -np.sin(lf)*np.sin(df)
+        n1 = -np.sin(pf)*np.sin(df)
+        n2 = np.cos(pf)*np.sin(df)
+        n3 = -np.cos(df)
+        sz = (spectrum[0, 6, :] * ((f1*n1-f2*n2)*np.cos(2*p) + (f1*n2+f2*n1)*np.sin(2*p)) +
+              spectrum[0, 3, :] * ((f1*n3+f3*n1)*np.cos(p) + (f2*n3+f3*n2)*np.sin(p)) +
+              spectrum[0, 0, :] * (f3*n3))
+        sr = (spectrum[0, 7, :] * ((f1*n1-f2*n2)*np.cos(2*p) + (f1*n2+f2*n1)*np.sin(2*p)) +
+              spectrum[0, 4, :] * ((f1*n3+f3*n1)*np.cos(p) + (f2*n3+f3*n2)*np.sin(p)) +
+              spectrum[0, 1, :] * (f3*n3))
+        st = (spectrum[0, 8, :] * ((f1*n1-f2*n2)*np.sin(2*p) - (f1*n2+f2*n1)*np.cos(2*p)) +
+              spectrum[0, 5, :] * ((f1*n3+f3*n1)*np.sin(p) - (f2*n3+f3*n2)*np.cos(p)))
+        se = -sr*np.sin(p) - st*np.cos(p)
+        sn = -sr*np.cos(p) + st*np.sin(p)
+        return sz, se, sn
 
     def _call_core(self, dt, nfft, tb, nx, sigma, smth, wc1, wc2, pmin, pmax, dk, kc, taper, crust, psource, station, verbose=False):
         mb = crust.nlayers
@@ -1824,12 +1884,12 @@ class ShakerMaker:
                            wc2, pmin, pmax, dk, kc, taper, x, pf, df, lf, sx, sy, rx, ry))
 
         # Execute the core subgreen fortran routing
-        tdata, z, e, n, t0 = core.subgreen(mb, src, rcv, stype, updn, d, a, b, rho, qa, qb, dt, nfft, tb, nx, sigma,
+        tdata, spectrum, z, e, n, t0 = core.subgreen(mb, src, rcv, stype, updn, d, a, b, rho, qa, qb, dt, nfft, tb, nx, sigma,
                                            smth, wc1, wc2, pmin, pmax, dk, kc, taper, x, pf, df, lf, sx, sy, rx, ry)
 
         self._logger.debug('ShakerMaker._call_core - core.subgreen returned: z_size'.format(len(z)))
 
-        return tdata, z, e, n, t0
+        return tdata, spectrum, z, e, n, t0
 
 
     def _call_core_fast(self, tdata, dt, nfft, tb, nx, sigma, smth, wc1, wc2, pmin, pmax, dk, kc, taper, crust, psource, station, verbose=False):
