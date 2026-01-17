@@ -1968,3 +1968,268 @@ class ShakerMaker:
         self._logger.debug('ShakerMaker._call_core_fast - core.subgreen returned: z_size'.format(len(z)))
 
         return z, e, n, t0
+
+    def run_fast_faster(self,
+            stage='all',
+            h5_database_name='GF_database_pairs',
+            # Stage 0 parameters
+            delta_h=0.04,
+            delta_v_rec=0.002,
+            delta_v_src=0.2,
+            npairs_max=100000,
+            # Core parameters (all stages)
+            dt=0.05, 
+            nfft=4096, 
+            dk=0.3,
+            tb=1000,
+            # Stage 1 & 2 parameters
+            smth=1, 
+            sigma=2, 
+            taper=0.9, 
+            wc1=1, 
+            wc2=2, 
+            pmin=0, 
+            pmax=1, 
+            nx=1, 
+            kc=15.0,
+            # Stage 2 only parameters
+            tmin=0.,
+            tmax=100,
+            writer=None,
+            allow_out_of_bounds=False,
+            # General
+            verbose=False,
+            debugMPI=False,
+            showProgress=True
+            ):
+            """
+            Run complete GF database workflow with stages 0, 1, and/or 2.
+            
+            Parameters
+            ----------
+            stage : str or int
+                Which stage(s) to run: 'all', 0, 1, or 2
+                - 0: Generate unique pairs (serial, rank 0 only)
+                - 1: Compute Green's functions (MPI parallel)
+                - 2: Run simulation using pre-computed GFs (MPI parallel)
+                - 'all': Run all three stages sequentially
+            
+            h5_database_name : str
+                Name of HDF5 database file (without .h5 extension)
+                Stage 0 creates it, stages 1&2 read it
+            
+            Stage 0 parameters:
+            delta_h : float
+                Horizontal distance tolerance (km)
+            delta_v_rec : float
+                Vertical distance tolerance for receivers (km)
+            delta_v_src : float
+                Vertical distance tolerance for sources (km)
+            npairs_max : int
+                Maximum number of unique pairs to compute
+            
+            Core parameters (used by all stages):
+            dt : float
+                Time step (s)
+            nfft : int
+                Number of FFT points
+            dk : float
+                Wavenumber discretization
+            tb : float
+                Time before first arrival (s)
+            
+            Stage 2 parameters:
+            tmin, tmax : float
+                Time window for output (s)
+            writer : StationListWriter
+                Writer object for output (required for stage 2)
+            allow_out_of_bounds : bool
+                Allow GF search outside tolerances
+            
+            Returns
+            -------
+            None
+            """
+            
+            import h5py
+            
+            # Validate stage parameter
+            valid_stages = ['all', 0, 1, 2]
+            if stage not in valid_stages:
+                if rank == 0:
+                    print(f"ERROR: Invalid stage '{stage}'. Must be one of {valid_stages}")
+                return
+            
+            # ================================================================
+            # STAGE 0: Generate unique pairs
+            # ================================================================
+            if stage in ['all', 0]:
+                if rank == 0:
+                    print("\n" + "="*70)
+                    print("STAGE 0: Generating unique pairs database")
+                    print("="*70)
+                    if nprocs > 1:
+                        print(f"⚠️  WARNING: Stage 0 is SERIAL. {nprocs-1} MPI processes will be IDLE.")
+                    print(f"Database file: {h5_database_name}.h5")
+                    print(f"Tolerances: delta_h={delta_h} km, delta_v_rec={delta_v_rec} km, delta_v_src={delta_v_src} km")
+                
+                # Only rank 0 does the work
+                if rank == 0:
+                    self.gen_greens_function_database_pairs(
+                        dt=dt,
+                        nfft=nfft,
+                        tb=tb,
+                        smth=smth,
+                        sigma=sigma,
+                        taper=taper,
+                        wc1=wc1,
+                        wc2=wc2,
+                        pmin=pmin,
+                        pmax=pmax,
+                        dk=dk,
+                        nx=nx,
+                        kc=kc,
+                        writer=None,
+                        verbose=verbose,
+                        debugMPI=debugMPI,
+                        tmin=tmin,
+                        tmax=tmax,
+                        delta_h=delta_h,
+                        delta_v_rec=delta_v_rec,
+                        delta_v_src=delta_v_src,
+                        showProgress=showProgress,
+                        store_here=h5_database_name,
+                        npairs_max=npairs_max
+                    )
+                
+                # Wait for rank 0 to finish
+                if use_mpi and nprocs > 1:
+                    comm.Barrier()
+                
+                # If only stage 0, we're done
+                if stage == 0:
+                    if rank == 0:
+                        print(f"\n✓ Stage 0 complete. Database saved to {h5_database_name}.h5")
+                    return
+            
+            # ================================================================
+            # STAGE 1: Compute Green's functions
+            # ================================================================
+            if stage in ['all', 1]:
+                if rank == 0:
+                    print("\n" + "="*70)
+                    print("STAGE 1: Computing Green's Functions database")
+                    print("="*70)
+                    print(f"Reading pairs from: {h5_database_name}.h5")
+                
+                self.run_create_greens_function_database(
+                    h5_database_name=h5_database_name,
+                    dt=dt,
+                    nfft=nfft,
+                    tb=tb,
+                    smth=smth,
+                    sigma=sigma,
+                    taper=taper,
+                    wc1=wc1,
+                    wc2=wc2,
+                    pmin=pmin,
+                    pmax=pmax,
+                    dk=dk,
+                    nx=nx,
+                    kc=kc,
+                    verbose=verbose,
+                    debugMPI=debugMPI,
+                    tmin=tmin,
+                    tmax=tmax,
+                    showProgress=showProgress
+                )
+                
+                # Wait for all processes
+                if use_mpi and nprocs > 1:
+                    comm.Barrier()
+                
+                # If only stage 1, we're done
+                if stage == 1:
+                    if rank == 0:
+                        print(f"\n✓ Stage 1 complete. GFs computed and stored in {h5_database_name}.h5")
+                    return
+            
+            # ================================================================
+            # STAGE 2: Run simulation with pre-computed GFs
+            # ================================================================
+            if stage in ['all', 2]:
+                if rank == 0:
+                    print("\n" + "="*70)
+                    print("STAGE 2: Running simulation with pre-computed GFs")
+                    print("="*70)
+                    print(f"Reading GFs from: {h5_database_name}.h5")
+                
+                # Check if writer is provided
+                if stage == 2 and writer is None and rank == 0:
+                    print("ERROR: Stage 2 requires a writer object")
+                    return
+                
+                # Load GF database info and attach to writer (rank 0 only)
+                if rank == 0 and writer is not None:
+                    try:
+                        with h5py.File(h5_database_name + '.h5', 'r') as hf:
+                            # Attach GF database metadata to writer
+                            writer.gf_db_pairs = hf["/pairs_to_compute"][:]
+                            writer.gf_db_dh = hf["/dh_of_pairs"][:]
+                            writer.gf_db_zrec = hf["/zrec_of_pairs"][:]
+                            writer.gf_db_zsrc = hf["/zsrc_of_pairs"][:]
+                            
+                            # Try to read tolerances from file, fallback to parameters
+                            writer.gf_db_delta_h = hf.attrs.get('delta_h', delta_h)
+                            writer.gf_db_delta_v_rec = hf.attrs.get('delta_v_rec', delta_v_rec)
+                            writer.gf_db_delta_v_src = hf.attrs.get('delta_v_src', delta_v_src)
+                            
+                            if verbose:
+                                print(f"Attached GF database info to writer:")
+                                print(f"  - {len(writer.gf_db_pairs)} unique pairs")
+                                print(f"  - delta_h={writer.gf_db_delta_h} km")
+                                print(f"  - delta_v_rec={writer.gf_db_delta_v_rec} km")
+                                print(f"  - delta_v_src={writer.gf_db_delta_v_src} km")
+                    
+                    except Exception as e:
+                        print(f"WARNING: Could not load GF database info: {e}")
+                        print("Output file will not contain GF database metadata")
+                
+                # Run the faster simulation
+                self.run_faster(
+                    h5_database_name=h5_database_name,
+                    delta_h=delta_h,
+                    delta_v_rec=delta_v_rec,
+                    delta_v_src=delta_v_src,
+                    dt=dt,
+                    nfft=nfft,
+                    tb=tb,
+                    smth=smth,
+                    sigma=sigma,
+                    taper=taper,
+                    wc1=wc1,
+                    wc2=wc2,
+                    pmin=pmin,
+                    pmax=pmax,
+                    dk=dk,
+                    nx=nx,
+                    kc=kc,
+                    writer=writer,
+                    verbose=verbose,
+                    debugMPI=debugMPI,
+                    tmin=tmin,
+                    tmax=tmax,
+                    showProgress=showProgress,
+                    allow_out_of_bounds=allow_out_of_bounds
+                )
+                
+                if rank == 0:
+                    print(f"\n✓ Stage 2 complete. Results written via writer")
+            
+            # ================================================================
+            # Final message
+            # ================================================================
+            if rank == 0 and stage == 'all':
+                print("\n" + "="*70)
+                print("✓ ALL STAGES COMPLETE")
+                print("="*70)

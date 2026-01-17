@@ -189,6 +189,20 @@ class DRMHDF5StationListWriter(HDF5StationListWriter):
         if self._spectrum_gfs:
             self._write_spectrum_gfs()
 
+        # Guardar info de GF database si existe (para los stages creados en run_fast_faster)
+        if hasattr(self, 'gf_db_pairs') and self.gf_db_pairs is not None:
+            grp_gf_db = self._h5file.create_group('GF_Database_Info')
+            grp_gf_db.create_dataset('pairs_to_compute', data=self.gf_db_pairs, compression='gzip')
+            grp_gf_db.create_dataset('dh_of_pairs', data=self.gf_db_dh, compression='gzip')
+            grp_gf_db.create_dataset('zrec_of_pairs', data=self.gf_db_zrec, compression='gzip')
+            grp_gf_db.create_dataset('zsrc_of_pairs', data=self.gf_db_zsrc, compression='gzip')
+            grp_gf_db.attrs['delta_h'] = self.gf_db_delta_h
+            grp_gf_db.attrs['delta_v_rec'] = self.gf_db_delta_v_rec
+            grp_gf_db.attrs['delta_v_src'] = self.gf_db_delta_v_src
+            print(f"[WRITER] GF Database info saved to output file")
+
+        self._h5file.close()
+
     def _write_gfs(self):
         grp = self._h5file.create_group('GF')
         for sta_idx, gf_dict in self._gfs.items():
