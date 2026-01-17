@@ -1037,8 +1037,24 @@ class ShakerMaker:
                         if verbose:
                             print("calling core FASTER END")
 
-                        t1 = perf_counter()
+
                         t = np.arange(0, len(z)*dt, dt) + psource.tt + t0
+                        nfft2 = 2 * nfft
+                        # Guardar Green's functions temporales
+                        if station.metadata.get('save_gf', False):
+                            station.add_greens_function(z, e, n, t, i_psource)
+
+                        # Guardar espectros
+                        if station.metadata.get('save_spectrum_gf', False):
+                            spectrum_z_temp = np.fft.rfft(z, n=nfft2)
+                            spectrum_e_temp = np.fft.rfft(e, n=nfft2)
+                            spectrum_n_temp = np.fft.rfft(n, n=nfft2)
+                            freqs = np.fft.rfftfreq(nfft2, dt)
+                            station.add_spectrum_greens_function(spectrum_z_temp, spectrum_e_temp, spectrum_n_temp, freqs, i_psource)
+
+
+                        t1 = perf_counter()
+                        
                         psource.stf.dt = dt
 
                         z_stf = psource.stf.convolve(z, t)
@@ -1409,7 +1425,7 @@ class ShakerMaker:
                         if verbose:
                             print("calling core START")
                         t1 = perf_counter()
-                        tdata, z, e, n, t0 = self._call_core(dt, nfft, tb, nx, sigma, smth, wc1, wc2, pmin, pmax, dk, kc,
+                        tdata, spectrum , z, e, n, t0 = self._call_core(dt, nfft, tb, nx, sigma, smth, wc1, wc2, pmin, pmax, dk, kc,
                                                              taper, aux_crust, psource, station, verbose)
                         t2 = perf_counter()
                         perf_time_core += t2 - t1
