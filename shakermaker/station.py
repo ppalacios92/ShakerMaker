@@ -219,11 +219,11 @@ class Station:
 
         return
         # Green funcitons
-    def add_greens_function(self, z, e, n, t, subfault_id):
+    def add_greens_function(self, z, e, n, t, tdata, t0, subfault_id):
         save_gf = self._metadata.get('save_gf', False)
         if not save_gf:
             return
-        self._greens_functions[subfault_id] = (z.copy(), e.copy(), n.copy(), t.copy())
+        self._greens_functions[subfault_id] = (z.copy(), e.copy(), n.copy(), t.copy(), tdata.copy(), t0)
     
     def get_greens_functions(self):
         return self._greens_functions

@@ -207,12 +207,14 @@ class DRMHDF5StationListWriter(HDF5StationListWriter):
         grp = self._h5file.create_group('GF')
         for sta_idx, gf_dict in self._gfs.items():
             grp_sta = grp.create_group(f'sta_{sta_idx}')
-            for sub_idx, (z, e, n, t) in gf_dict.items():
+            for sub_idx, (z, e, n, t, tdata, t0) in gf_dict.items():
                 grp_sub = grp_sta.create_group(f'sub_{sub_idx}')
                 grp_sub.create_dataset('z', data=z, compression='gzip')
                 grp_sub.create_dataset('e', data=e, compression='gzip')
                 grp_sub.create_dataset('n', data=n, compression='gzip')
                 grp_sub.create_dataset('t', data=t, compression='gzip')
+                grp_sub.create_dataset('tdata', data=tdata, compression='gzip')
+                grp_sub.create_dataset('t0', data=t0)
         print(f"[WRITER] _write_gfs() done!")
 
     def _write_spectrum_gfs(self):

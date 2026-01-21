@@ -116,7 +116,7 @@ class ShakerMaker:
         
 
         """
-        title = f"🎉 ¡LARGA VIDA AL LADRUNO500! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+        title = f"🎉 ¡LARGA VIDA AL LADRUNO750! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
         
         if rank == 0:
             print("\n\n")
@@ -269,6 +269,13 @@ class ShakerMaker:
                                 data_spec[:,6] = freqs
                                 comm.Send(data_spec, dest=0, tag=2*ipair+200)
 
+                              # Enviar tdata y t0
+                            tdata_flat = tdata.flatten()
+                            tdata_size = np.array([len(tdata_flat)], dtype=np.int32)
+                            comm.Send(tdata_size, dest=0, tag=2*ipair+299)
+                            comm.Send(tdata_flat.astype(np.float64), dest=0, tag=2*ipair+300)
+                            comm.Send(np.asarray(t0, dtype=np.float64), dest=0, tag=2*ipair+301)
+
                             printMPI(f"Rank {rank} done sending to P0 2")
                             next_pair += skip_pairs
                             t2 = perf_counter()
@@ -311,17 +318,29 @@ class ShakerMaker:
                                     se_gf = data_spec[:,2] + 1j*data_spec[:,3]
                                     sn_gf = data_spec[:,4] + 1j*data_spec[:,5]
                                     freqs_gf = data_spec[:,6]
+                                
+                                # Recibir tdata y t0
+                                tdata_size = np.empty(1, dtype=np.int32)
+                                comm.Recv(tdata_size, source=remote, tag=2*ipair+299)
+                                tdata_flat = np.empty(tdata_size[0], dtype=np.float64)
+                                t0 = np.empty(1, dtype=np.float64)
+                                comm.Recv(tdata_flat, source=remote, tag=2*ipair+300)
+                                comm.Recv(t0, source=remote, tag=2*ipair+301)
+                                
+                                # Reformatear tdata a su forma original (1, 9, nt)
+                                nt_tdata = tdata_size[0] // 9
+                                tdata = tdata_flat.reshape((1, 9, nt_tdata))
 
                                 t2 = perf_counter()
                                 perf_time_recv += t2 - t1
                         next_pair += 1
                         # add green functions 
                         if nprocs > 1:
-                            station.add_greens_function(z_gf, e_gf, n_gf, t_gf, i_psource)
+                            station.add_greens_function(z_gf, e_gf, n_gf, t_gf, tdata, t0, i_psource)
                             if station.metadata.get('save_spectrum_gf', False):
                                 station.add_spectrum_greens_function(sz_gf, se_gf, sn_gf, freqs_gf, i_psource)
                         else:
-                            station.add_greens_function(z, e, n, t, i_psource)
+                            station.add_greens_function(z, e, n, t, tdata, t0, i_psource)
                             if station.metadata.get('save_spectrum_gf', False):
                                 station.add_spectrum_greens_function(spectrum_z, spectrum_e, spectrum_n, freqs, i_psource)
                         # add green functions 
@@ -1042,7 +1061,7 @@ class ShakerMaker:
                         nfft2 = 2 * nfft
                         # Guardar Green's functions temporales
                         if station.metadata.get('save_gf', False):
-                            station.add_greens_function(z, e, n, t, i_psource)
+                            station.add_greens_function(z, e, n, t, tdata, t0, i_psource)
 
                         # Guardar espectros
                         if station.metadata.get('save_spectrum_gf', False):
@@ -2050,7 +2069,26 @@ class ShakerMaker:
             -------
             None
             """
-            
+            title = f"🎉 ¡LARGA VIDA AL LADRUNO750! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+            if rank == 0:
+                print("\n\n")
+                print(title)
+                print("-"*len(title))
+                # INICIO modificaicones de PP-Hybrid Parallelization
+                import os
+                omp_threads = os.environ.get('OMP_NUM_THREADS', 'not set')
+                print(f"Hybrid Parallelization:")
+                print(f"   MPI processes    : {nprocs}")
+                print(f"   OpenMP threads   : {omp_threads}")
+                if omp_threads != 'not set':
+                    total_threads = nprocs * int(omp_threads)
+                    print(f"   Total parallelism: {nprocs} × {omp_threads} = {total_threads} threads")
+                print(f"   Parallelization strategy:")
+                print(f"      - MPI level : distributes source-receiver pairs across {nprocs} processes")
+                print(f"      - OpenMP    : parallelizes frequencies and FFTs within each pair")
+                print("-"*len(title)) 
+                # FIN modificaicones de PP-Hybrid Parallelization
+
             import h5py
             
             # Validate stage parameter
