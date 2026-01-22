@@ -116,7 +116,7 @@ class ShakerMaker:
         
 
         """
-        title = f"🎉 ¡LARGA VIDA AL LADRUNO750! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+        title = f"🎉 ¡LARGA VIDA AL LADRUNO755! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
         
         if rank == 0:
             print("\n\n")
@@ -269,11 +269,13 @@ class ShakerMaker:
                                 data_spec[:,6] = freqs
                                 comm.Send(data_spec, dest=0, tag=2*ipair+200)
 
-                              # Enviar tdata y t0
-                            tdata_flat = tdata.flatten()
-                            tdata_size = np.array([len(tdata_flat)], dtype=np.int32)
-                            comm.Send(tdata_size, dest=0, tag=2*ipair+299)
-                            comm.Send(tdata_flat.astype(np.float64), dest=0, tag=2*ipair+300)
+                            # Send tdata and t0 - transpose from (1,9,nt) to (nt,9)
+                            nt_tdata = tdata.shape[2]
+                            tdata_send = np.empty((nt_tdata, 9), dtype=np.float64)
+                            for comp in range(9):
+                                tdata_send[:, comp] = tdata[0, comp, :]
+                            comm.Send(np.array([nt_tdata], dtype=np.int32), dest=0, tag=2*ipair+299)
+                            comm.Send(tdata_send, dest=0, tag=2*ipair+300)
                             comm.Send(np.asarray(t0, dtype=np.float64), dest=0, tag=2*ipair+301)
 
                             printMPI(f"Rank {rank} done sending to P0 2")
@@ -319,17 +321,13 @@ class ShakerMaker:
                                     sn_gf = data_spec[:,4] + 1j*data_spec[:,5]
                                     freqs_gf = data_spec[:,6]
                                 
-                                # Recibir tdata y t0
-                                tdata_size = np.empty(1, dtype=np.int32)
-                                comm.Recv(tdata_size, source=remote, tag=2*ipair+299)
-                                tdata_flat = np.empty(tdata_size[0], dtype=np.float64)
+                              # Receive tdata and t0 - already in (nt,9) format
+                                nt_tdata = np.empty(1, dtype=np.int32)
+                                comm.Recv(nt_tdata, source=remote, tag=2*ipair+299)
+                                tdata = np.empty((nt_tdata[0], 9), dtype=np.float64)
                                 t0 = np.empty(1, dtype=np.float64)
-                                comm.Recv(tdata_flat, source=remote, tag=2*ipair+300)
+                                comm.Recv(tdata, source=remote, tag=2*ipair+300)
                                 comm.Recv(t0, source=remote, tag=2*ipair+301)
-                                
-                                # Reformatear tdata a su forma original (1, 9, nt)
-                                nt_tdata = tdata_size[0] // 9
-                                tdata = tdata_flat.reshape((1, 9, nt_tdata))
 
                                 t2 = perf_counter()
                                 perf_time_recv += t2 - t1
@@ -340,9 +338,13 @@ class ShakerMaker:
                             if station.metadata.get('save_spectrum_gf', False):
                                 station.add_spectrum_greens_function(sz_gf, se_gf, sn_gf, freqs_gf, i_psource)
                         else:
-                            station.add_greens_function(z, e, n, t, tdata, t0, i_psource)
+                            tdata_transposed = np.empty((tdata.shape[2], 9), dtype=np.float64)
+                            for comp in range(9):
+                                tdata_transposed[:, comp] = tdata[0, comp, :]
+                            station.add_greens_function(z, e, n, t, tdata_transposed, t0, i_psource)
                             if station.metadata.get('save_spectrum_gf', False):
                                 station.add_spectrum_greens_function(spectrum_z, spectrum_e, spectrum_n, freqs, i_psource)
+                                
                         # add green functions 
                         try:
                             t1 = perf_counter()
@@ -2069,7 +2071,7 @@ class ShakerMaker:
             -------
             None
             """
-            title = f"🎉 ¡LARGA VIDA AL LADRUNO750! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+            title = f"🎉 ¡LARGA VIDA AL LADRUNO755! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
             if rank == 0:
                 print("\n\n")
                 print(title)
