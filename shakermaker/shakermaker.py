@@ -116,7 +116,7 @@ class ShakerMaker:
         
 
         """
-        title = f"🎉 ¡LARGA VIDA AL LADRUNO755! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+        title = f"🎉 ¡LARGA VIDA AL LADRUNO200! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
         
         if rank == 0:
             print("\n\n")
@@ -344,7 +344,7 @@ class ShakerMaker:
                             station.add_greens_function(z, e, n, t, tdata_transposed, t0, i_psource)
                             if station.metadata.get('save_spectrum_gf', False):
                                 station.add_spectrum_greens_function(spectrum_z, spectrum_e, spectrum_n, freqs, i_psource)
-                                
+
                         # add green functions 
                         try:
                             t1 = perf_counter()
@@ -818,387 +818,373 @@ class ShakerMaker:
 
 
     def run_faster(self, 
-        h5_database_name,
-        delta_h=0.04,
-        delta_v_rec=0.002,
-        delta_v_src=0.2,
-        dt=0.05, 
-        nfft=4096, 
-        tb=1000, 
-        smth=1, 
-        sigma=2, 
-        taper=0.9, 
-        wc1=1, 
-        wc2=2, 
-        pmin=0, 
-        pmax=1, 
-        dk=0.3,
-        nx=1, 
-        kc=15.0, 
-        writer=None,
-        verbose=False,
-        debugMPI=False,
-        tmin=0.,
-        tmax=100,
-        showProgress=True,
-        allow_out_of_bounds=False,
-        ):
-        """Run the simulation. 
-        
-        Arguments:
-        :param sigma: Its role is to damp the trace (at rate of exp(-sigma*t)) to reduce the wrap-arround.
-        :type sigma: double
-        :param nfft: Number of time-points to use in fft
-        :type nfft: integer
-        :param dt: Simulation time-step
-        :type dt: double
-        :param tb: Num. of samples before the first arrival.
-        :type tb: integer
-        :param taper: For low-pass filter, 0-1. 
-        :type taper: double
-        :param smth: Densify the output samples by a factor of smth
-        :type smth: double
-        :param wc1: (George.. please provide one-line description!)
-        :type wc1: double
-        :param wc2: (George.. please provide one-line description!)
-        :type wc2: double
-        :param pmin: Max. phase velocity, in 1/vs, 0 the best.
-        :type pmin: double
-        :param pmax: Min. phase velocity, in 1/vs.
-        :type pmax: double
-        :param dk: Sample interval in wavenumber, in Pi/x, 0.1-0.4.
-        :type dk: double
-        :param nx: Number of distance ranges to compute.
-        :type nx: integer
-        :param kc: It's kmax, equal to 1/hs. Because the kernels decay with k at rate of exp(-k*hs) at w=0, we require kmax > 10 to make sure we have have summed enough.
-        :type kc: double
-        :param writer: Use this writer class to store outputs
-        :type writer: StationListWriter
-        
-
-        """
-        import h5py
-        # from scipy.spatial import KDTree
-        title = f"ShakerMaker Run Fase begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
-        
-
-        if rank==0:
-            print(f"Loading pairs-to-compute info from HDF5 database: {h5_database_name}")
-
-
-        if rank > 0:
-            hfile = h5py.File(h5_database_name + '.h5', 'r')
-        elif rank == 0:
-            hfile = h5py.File(h5_database_name + '.h5', 'r+')
-
-
-
-        # dists= hfile["/dists"][:]
-        pairs_to_compute = hfile["/pairs_to_compute"][:]
-        dh_of_pairs = hfile["/dh_of_pairs"][:]
-        # dv_of_pairs = hfile["/dv_of_pairs"][:]
-        zrec_of_pairs= hfile["/zrec_of_pairs"][:]
-        zsrc_of_pairs= hfile["/zsrc_of_pairs"][:]
-
-        #Initialize seach KD-tree:
-        # Construct the data for KD-tree
-        # data_for_tree = list(zip(dh_of_pairs, zrec_of_pairs, zsrc_of_pairs))
-        # tree = KDTree(data_for_tree)
-
-        if rank == 0:
-            print("\n\n")
-            print(title)
-            print("-"*len(title))
-
-        #Initialize performance counters
-        perf_time_begin = perf_counter()
-
-        perf_time_core = np.zeros(1,dtype=np.double)
-        perf_time_send = np.zeros(1,dtype=np.double)
-        perf_time_recv = np.zeros(1,dtype=np.double)
-        perf_time_conv = np.zeros(1,dtype=np.double)
-        perf_time_add = np.zeros(1,dtype=np.double)
-
-        if debugMPI:
-            # printMPI = lambda *args : print(*args)
-            fid_debug_mpi = open(f"rank_{rank}.debuginfo","w")
-            def printMPI(*args):
-                fid_debug_mpi.write(*args)
-                fid_debug_mpi.write("\n")
-
-        else:
-            import os
-            fid_debug_mpi = open(os.devnull,"w")
-            printMPI = lambda *args : None
-
-        self._logger.info('ShakerMaker.run - starting\n\tNumber of sources: {}\n\tNumber of receivers: {}\n'
-                          '\tTotal src-rcv pairs: {}\n\tdt: {}\n\tnfft: {}'
-                          .format(self._source.nsources, self._receivers.nstations,
-                                  self._source.nsources*self._receivers.nstations, dt, nfft))
-        if rank > 0:
-            writer = None
-
-        if writer and rank == 0:
-            assert isinstance(writer, StationListWriter), \
-                "'writer' must be an instance of the shakermaker.StationListWriter class or None"
-            writer.initialize(self._receivers, 2*nfft)
-            writer.write_metadata(self._receivers.metadata)
-
-
-        next_station = rank
-        skip_stations = nprocs
-
-        tstart = perf_counter()
-
-        #Stage one! Compute each station at each processor, no comm.
-        nsources = self._source.nsources
-        nstations = self._receivers.nstations
-        npairs = nsources*nstations
-
-        npairs_skip  = 0
-        ipair = 0
-
-        n_my_stations = 0
-
-        for i_station, station in enumerate(self._receivers):
-
-            tstart_source = perf_counter()
-            for i_psource, psource in enumerate(self._source):
-                aux_crust = copy.deepcopy(self._crust)
-
-                aux_crust.split_at_depth(psource.x[2])
-                aux_crust.split_at_depth(station.x[2])
-
-                if i_station == next_station:
-
-                    if verbose:
-                        print(f"{rank=} {nprocs=} {i_station=} {skip_stations=} {npairs=} !!")
-                    if True:  #All processors do this always all the time... 
-                        x_src = psource.x
-                        x_rec = station.x
-                    
-                        z_src = psource.x[2]
-                        z_rec = station.x[2]
-
-                        d = x_rec - x_src
-                        dh = np.sqrt(np.dot(d[0:2],d[0:2]))
-                        # dv = np.abs(d[2])
-
-                        # Get the target Green's Functions
-                        # OLD APPROACH ======================================================================================
-                        min_distance = float('inf')
-                        best_match_index = -1
-
-                        for i in range(len(dh_of_pairs)):
-                            dh_p, zrec_p, zsrc_p = dh_of_pairs[i], zrec_of_pairs[i], zsrc_of_pairs[i]
-                            
-                            # Check if the current pair is within the tolerances
-                            if (abs(dh - dh_p) < delta_h and \
-                               abs(z_src - zsrc_p) < delta_v_src and \
-                               abs(z_rec - zrec_p) < delta_v_rec) or \
-                               allow_out_of_bounds:
-
-                                distance = (abs(dh - dh_p) + 
-                                            abs(z_src - zsrc_p) + 
-                                            abs(z_rec - zrec_p))
-                            
-                                if distance < min_distance:
-                                    min_distance = distance
-                                    best_match_index = i
-
-                        if best_match_index != -1:
-                            # Use best_match_index as your best match within the tolerances
-                            ipair_target = best_match_index
-                        else:
-                            print(f"No suitable match found! {allow_out_of_bounds=} {min_distance=}")
-
-                        if ipair_target == len(dh_of_pairs):
-                            print("Target not found in database -- SKIPPING")
-                            npairs_skip += 1
-                            if npairs_skip > 500:
-                                print(f"Rank {rank} skipped too many pairs, giving up!")
-                                exit(-1)
-                                break
-                            else:
-                                continue
-                        # END OLD APPROACH ==================================================================================
-                        
-                        # NEW APPROACH ======================================================================================
-                        #New approach using KD-tree
-                        # Query for the current point
-                        # point = [dh, z_rec, z_src]
-                        # distance, best_match_index = tree.query(point)
-                        # # condition = lor(np.abs(dh - dh_of_pairs[:n_computed_pairs])      > delta_h,     \
-                        # #                 np.abs(z_src - zsrc_of_pairs[:n_computed_pairs]) > delta_v_src, \
-                        # #                 np.abs(z_rec - zrec_of_pairs[:n_computed_pairs]) > delta_v_rec)
-                        # # Check if the closest match is within the tolerances
-                        # if abs(dh - dh_of_pairs[best_match_index]) < delta_h and \
-                        #    abs(z_src - zsrc_of_pairs[best_match_index]) < delta_v_src and \
-                        #    abs(z_rec - zrec_of_pairs[best_match_index]) < delta_v_rec:
-                        #     ipair_target = best_match_index
-                        # else:
-                        #     print(f"No suitable match found! {best_match_index=}")
-                        #     print(f"{abs(dh - dh_of_pairs[best_match_index])=} < {delta_h=} -> {abs(dh - dh_of_pairs[best_match_index]) < delta_h}" )
-                        #     print(f"{abs(z_src - zsrc_of_pairs[best_match_index])=} < {delta_v_src=} -> {abs(z_src - zsrc_of_pairs[best_match_index]) < delta_v_src}" )
-                        #     print(f"{abs(z_rec - zrec_of_pairs[best_match_index])=} < {delta_v_rec=} -> {abs(z_rec - zrec_of_pairs[best_match_index]) < delta_v_rec}" )
-                        # END NEW APPROACH ==================================================================================
-
-
-
-                        ipair_string = "/tdata_dict/"+str(ipair_target)+"_tdata"
-                        tdata = hfile[ipair_string][:]
-
-                        if verbose:
-                            print("calling core FASTER START")
-                        t1 = perf_counter()
-                        z, e, n, t0 = self._call_core_fast(tdata, dt, nfft, tb, nx, sigma, smth, wc1, wc2, pmin, pmax, dk, kc,
-                                                             taper, aux_crust, psource, station, verbose)
-                        t2 = perf_counter()
-                        perf_time_core += t2 - t1
-                        if verbose:
-                            print("calling core FASTER END")
-
-
-                        t = np.arange(0, len(z)*dt, dt) + psource.tt + t0
-                        nfft2 = 2 * nfft
-                        # Guardar Green's functions temporales
-                        if station.metadata.get('save_gf', False):
-                            station.add_greens_function(z, e, n, t, tdata, t0, i_psource)
-
-                        # Guardar espectros
-                        if station.metadata.get('save_spectrum_gf', False):
-                            spectrum_z_temp = np.fft.rfft(z, n=nfft2)
-                            spectrum_e_temp = np.fft.rfft(e, n=nfft2)
-                            spectrum_n_temp = np.fft.rfft(n, n=nfft2)
-                            freqs = np.fft.rfftfreq(nfft2, dt)
-                            station.add_spectrum_greens_function(spectrum_z_temp, spectrum_e_temp, spectrum_n_temp, freqs, i_psource)
-
-
-                        t1 = perf_counter()
-                        
-                        psource.stf.dt = dt
-
-                        z_stf = psource.stf.convolve(z, t)
-                        e_stf = psource.stf.convolve(e, t)
-                        n_stf = psource.stf.convolve(n, t)
-                        t2 = perf_counter()
-                        perf_time_conv += t2 - t1
-
-                        try:
-                            t1 = perf_counter()
-                            station.add_to_response(z_stf, e_stf, n_stf, t, tmin, tmax)
-                            n_my_stations += 1
-                            t2 = perf_counter()
-                            perf_time_add += t2 - t1
-                        except:
-                            traceback.print_exc()
-
-                            if use_mpi and nprocs > 1:
-                                comm.Abort()
-
-                        if showProgress and rank == 0:
-                            #report progress to screen
-                            progress_percent = i_psource/nsources*100
-
-                            tnow = perf_counter()
-
-                            time_per_source = (tnow - tstart_source)/(i_psource+1) 
-
-                            time_left = (nsources - i_psource - 1)*time_per_source
-
-                            hh = np.floor(time_left / 3600)
-                            mm = np.floor((time_left - hh*3600)/60)
-                            ss = time_left - mm*60 - hh*3600
-
-                            if i_psource % 1000 == 0:
-                                print(f"   ! RANK {rank} Station {i_station} progress: {i_psource} of {nsources} ({progress_percent:.4f}%) ETA = {hh:.0f}:{mm:02.0f}:{ss:02.1f} {t[0]=:0.4f} {t[-1]=:0.4f}")# ({tmin=:0.4f} {tmax=:0.4f})")
-                else:  #if i_station == next_station:
-                    pass
-                ipair += 1
-            if verbose:
-                print(f'ShakerMaker.run - finished my station {i_station} -->  ({rank=} {ipair=} {next_station=})')
-            self._logger.debug(f'ShakerMaker.run - finished station {i_station} ({rank=} {ipair=} {next_station=})')
+            h5_database_name,
+            delta_h=0.04,
+            delta_v_rec=0.002,
+            delta_v_src=0.2,
+            dt=0.05, 
+            nfft=4096, 
+            tb=1000, 
+            smth=1, 
+            sigma=2, 
+            taper=0.9, 
+            wc1=1, 
+            wc2=2, 
+            pmin=0, 
+            pmax=1, 
+            dk=0.3,
+            nx=1, 
+            kc=15.0, 
+            writer=None,
+            verbose=False,
+            debugMPI=False,
+            tmin=0.,
+            tmax=100,
+            showProgress=True,
+            allow_out_of_bounds=False,
+            ):
+            """Run the simulation using pre-computed Green's functions database.
+            """
+            import h5py
+            title = f"ShakerMaker Run Faster begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
             
-            if i_station == next_station:
 
-                progress_percent = i_station/nstations*100
-                tnow = perf_counter()
+            if rank==0:
+                print(f"Loading pairs-to-compute info from HDF5 database: {h5_database_name}")
 
-                time_per_station = (tnow - tstart_source)
-                nstations_left_this_rank = (nstations - i_station - 1)//skip_stations
-                time_left = nstations_left_this_rank*time_per_station
 
-                hh = np.floor(time_left / 3600)
-                mm = np.floor((time_left - hh*3600)/60)
-                ss = time_left - mm*60 - hh*3600
+            if rank > 0:
+                hfile = h5py.File(h5_database_name + '.h5', 'r')
+            elif rank == 0:
+                hfile = h5py.File(h5_database_name + '.h5', 'r+')
 
-                print(f"{rank=} at {i_station=} of {nstations} ({progress_percent:.4f}%) ETA = {hh:.0f}:{mm:02.0f}:{ss:03.1f}")# {t[0]=:0.4f} {t[-1]=:0.4f} ({tmin=:0.4f} {tmax=:0.4f})")
 
-                next_station += skip_stations
-        
-        #Stage two! Collect all results at P0
+            pairs_to_compute = hfile["/pairs_to_compute"][:]
+            dh_of_pairs = hfile["/dh_of_pairs"][:]
+            zrec_of_pairs= hfile["/zrec_of_pairs"][:]
+            zsrc_of_pairs= hfile["/zsrc_of_pairs"][:]
 
-        #First all ranks other than 0 send their stuff to P0
-        if rank > 0:
+            node_pair_mapping_list = []
+            if rank == 0:
+                print("\n\n")
+                print(title)
+                print("-"*len(title))
+
+            perf_time_begin = perf_counter()
+
+            perf_time_core = np.zeros(1,dtype=np.double)
+            perf_time_send = np.zeros(1,dtype=np.double)
+            perf_time_recv = np.zeros(1,dtype=np.double)
+            perf_time_conv = np.zeros(1,dtype=np.double)
+            perf_time_add = np.zeros(1,dtype=np.double)
+
+            if debugMPI:
+                fid_debug_mpi = open(f"rank_{rank}.debuginfo","w")
+                def printMPI(*args):
+                    fid_debug_mpi.write(*args)
+                    fid_debug_mpi.write("\n")
+
+            else:
+                import os
+                fid_debug_mpi = open(os.devnull,"w")
+                printMPI = lambda *args : None
+
+            self._logger.info('ShakerMaker.run - starting\n\tNumber of sources: {}\n\tNumber of receivers: {}\n'
+                              '\tTotal src-rcv pairs: {}\n\tdt: {}\n\tnfft: {}'
+                              .format(self._source.nsources, self._receivers.nstations,
+                                      self._source.nsources*self._receivers.nstations, dt, nfft))
+            if rank > 0:
+                writer = None
+
+            if writer and rank == 0:
+                assert isinstance(writer, StationListWriter), \
+                    "'writer' must be an instance of the shakermaker.StationListWriter class or None"
+                writer.initialize(self._receivers, 2*nfft)
+                writer.write_metadata(self._receivers.metadata)
+
+
             next_station = rank
             skip_stations = nprocs
-            print(f"Rank {rank} is sending its data.")
-            for i_station, station in enumerate(self._receivers):
-                if i_station == next_station:
-                    z,e,n,t = station.get_response()
 
-                    #send to P0
-                    t1 = perf_counter()
-                    ant = np.array([len(z)], dtype=np.int32).copy()
-                    printMPI(f"Rank {rank} sending to P0 1")
-                    comm.Send(ant, dest=0, tag=2*i_station)
-                    data = np.empty((len(z),4), dtype=np.float64)
-                    printMPI(f"Rank {rank} done sending to P0 1")
-                    data[:,0] = z
-                    data[:,1] = e
-                    data[:,2] = n
-                    data[:,3] = t
-                    printMPI(f"Rank {rank} sending to P0 2 ")
-                    comm.Send(data, dest=0, tag=2*i_station+1)
-                    printMPI(f"Rank {rank} done sending to P0 2")
-                    t2 = perf_counter()
-                    perf_time_send += t2 - t1
+            tstart = perf_counter()
+
+            nsources = self._source.nsources
+            nstations = self._receivers.nstations
+            npairs = nsources*nstations
+
+            npairs_skip  = 0
+            ipair = 0
+
+            n_my_stations = 0
+
+            for i_station, station in enumerate(self._receivers):
+
+                tstart_source = perf_counter()
+                for i_psource, psource in enumerate(self._source):
+                    aux_crust = copy.deepcopy(self._crust)
+
+                    aux_crust.split_at_depth(psource.x[2])
+                    aux_crust.split_at_depth(station.x[2])
+
+                    if i_station == next_station:
+
+                        if verbose:
+                            print(f"{rank=} {nprocs=} {i_station=} {skip_stations=} {npairs=} !!")
+                        if True:
+                            x_src = psource.x
+                            x_rec = station.x
+                        
+                            z_src = psource.x[2]
+                            z_rec = station.x[2]
+
+                            d = x_rec - x_src
+                            dh = np.sqrt(np.dot(d[0:2],d[0:2]))
+
+                            min_distance = float('inf')
+                            best_match_index = -1
+
+                            for i in range(len(dh_of_pairs)):
+                                dh_p, zrec_p, zsrc_p = dh_of_pairs[i], zrec_of_pairs[i], zsrc_of_pairs[i]
+                                
+                                if (abs(dh - dh_p) < delta_h and \
+                                   abs(z_src - zsrc_p) < delta_v_src and \
+                                   abs(z_rec - zrec_p) < delta_v_rec) or \
+                                   allow_out_of_bounds:
+
+                                    distance = (abs(dh - dh_p) + 
+                                                abs(z_src - zsrc_p) + 
+                                                abs(z_rec - zrec_p))
+                                
+                                    if distance < min_distance:
+                                        min_distance = distance
+                                        best_match_index = i
+
+                            if best_match_index != -1:
+                                ipair_target = best_match_index
+                            else:
+                                print(f"No suitable match found! {allow_out_of_bounds=} {min_distance=}")
+
+                            if ipair_target == len(dh_of_pairs):
+                                print("Target not found in database -- SKIPPING")
+                                npairs_skip += 1
+                                if npairs_skip > 500:
+                                    print(f"Rank {rank} skipped too many pairs, giving up!")
+                                    exit(-1)
+                                    break
+                                else:
+                                    continue
+
+                            node_pair_mapping_list.append([i_station, i_psource, ipair_target])
+
+                            ipair_string = "/tdata_dict/"+str(ipair_target)+"_tdata"
+                            tdata = hfile[ipair_string][:]
+
+                            if verbose:
+                                print("calling core FASTER START")
+                            t1 = perf_counter()
+                            z, e, n, t0 = self._call_core_fast(tdata, dt, nfft, tb, nx, sigma, smth, wc1, wc2, pmin, pmax, dk, kc,
+                                                                 taper, aux_crust, psource, station, verbose)
+                            t2 = perf_counter()
+                            perf_time_core += t2 - t1
+                            if verbose:
+                                print("calling core FASTER END")
+
+
+                            t = np.arange(0, len(z)*dt, dt) + psource.tt + t0
+                            nfft2 = 2 * nfft
+
+                            if station.metadata.get('save_gf', False):
+                                station.add_greens_function(z, e, n, t, tdata, t0, i_psource)
+
+                            if station.metadata.get('save_spectrum_gf', False):
+                                spectrum_z_temp = np.fft.rfft(z, n=nfft2)
+                                spectrum_e_temp = np.fft.rfft(e, n=nfft2)
+                                spectrum_n_temp = np.fft.rfft(n, n=nfft2)
+                                freqs = np.fft.rfftfreq(nfft2, dt)
+                                station.add_spectrum_greens_function(spectrum_z_temp, spectrum_e_temp, spectrum_n_temp, freqs, i_psource)
+
+
+                            t1 = perf_counter()
+                            
+                            psource.stf.dt = dt
+
+                            z_stf = psource.stf.convolve(z, t)
+                            e_stf = psource.stf.convolve(e, t)
+                            n_stf = psource.stf.convolve(n, t)
+                            t2 = perf_counter()
+                            perf_time_conv += t2 - t1
+
+                            try:
+                                t1 = perf_counter()
+                                station.add_to_response(z_stf, e_stf, n_stf, t, tmin, tmax)
+                                n_my_stations += 1
+                                t2 = perf_counter()
+                                perf_time_add += t2 - t1
+                            except:
+                                traceback.print_exc()
+
+                                if use_mpi and nprocs > 1:
+                                    comm.Abort()
+
+                            if showProgress and rank == 0:
+                                progress_percent = i_psource/nsources*100
+
+                                tnow = perf_counter()
+
+                                time_per_source = (tnow - tstart_source)/(i_psource+1) 
+
+                                time_left = (nsources - i_psource - 1)*time_per_source
+
+                                hh = np.floor(time_left / 3600)
+                                mm = np.floor((time_left - hh*3600)/60)
+                                ss = time_left - mm*60 - hh*3600
+
+                                if i_psource % 1000 == 0:
+                                    print(f"   ! RANK {rank} Station {i_station} progress: {i_psource} of {nsources} ({progress_percent:.4f}%) ETA = {hh:.0f}:{mm:02.0f}:{ss:02.1f} {t[0]=:0.4f} {t[-1]=:0.4f}")
+                    else:
+                        pass
+                    ipair += 1
+                if verbose:
+                    print(f'ShakerMaker.run - finished my station {i_station} -->  ({rank=} {ipair=} {next_station=})')
+                self._logger.debug(f'ShakerMaker.run - finished station {i_station} ({rank=} {ipair=} {next_station=})')
+                
+                if i_station == next_station:
+
+                    progress_percent = i_station/nstations*100
+                    tnow = perf_counter()
+
+                    time_per_station = (tnow - tstart_source)
+                    nstations_left_this_rank = (nstations - i_station - 1)//skip_stations
+                    time_left = nstations_left_this_rank*time_per_station
+
+                    hh = np.floor(time_left / 3600)
+                    mm = np.floor((time_left - hh*3600)/60)
+                    ss = time_left - mm*60 - hh*3600
+
+                    print(f"{rank=} at {i_station=} of {nstations} ({progress_percent:.4f}%) ETA = {hh:.0f}:{mm:02.0f}:{ss:03.1f}")
 
                     next_station += skip_stations
+            
+            # ============================================================
+            # Stage two: Collect all results at P0
+            # ============================================================
 
-            print(f"Rank {rank} is DONE sending its data.")
+            if rank > 0:
+                next_station = rank
+                skip_stations = nprocs
+                print(f"Rank {rank} is sending its data.")
+                for i_station, station in enumerate(self._receivers):
+                    if i_station == next_station:
+                        z,e,n,t = station.get_response()
+
+                        t1 = perf_counter()
+                        ant = np.array([len(z)], dtype=np.int32).copy()
+                        printMPI(f"Rank {rank} sending to P0 1")
+                        comm.Send(ant, dest=0, tag=2*i_station)
+                        data = np.empty((len(z),4), dtype=np.float64)
+                        printMPI(f"Rank {rank} done sending to P0 1")
+                        data[:,0] = z
+                        data[:,1] = e
+                        data[:,2] = n
+                        data[:,3] = t
+                        printMPI(f"Rank {rank} sending to P0 2 ")
+                        comm.Send(data, dest=0, tag=2*i_station+1)
+
+                        # Send GFs
+                        gf_dict = station.get_greens_functions()
+                        n_subfaults = len(gf_dict)
+                        comm.Send(np.array([n_subfaults], dtype=np.int32), dest=0, tag=2*i_station+1000)
+                        
+                        for isub, (sub_idx, (z_gf, e_gf, n_gf, t_gf, tdata_gf, t0_gf)) in enumerate(gf_dict.items()):
+                            nt_gf = len(z_gf)
+                            nt_tdata = tdata_gf.shape[0]
+                            base_tag = 2*i_station + 2000 + isub*10
+                            
+                            comm.Send(np.array([sub_idx, nt_gf, nt_tdata], dtype=np.int32), dest=0, tag=base_tag)
+                            data_gf = np.column_stack([z_gf, e_gf, n_gf, t_gf])
+                            comm.Send(data_gf, dest=0, tag=base_tag+1)
+                            comm.Send(tdata_gf, dest=0, tag=base_tag+2)
+                            comm.Send(np.array([t0_gf], dtype=np.float64), dest=0, tag=base_tag+3)
+                            
+                        printMPI(f"Rank {rank} done sending to P0 2")
+                        t2 = perf_counter()
+                        perf_time_send += t2 - t1
+
+                        next_station += skip_stations
+
+                print(f"Rank {rank} is DONE sending its data.")
 
 
-        #Rank 0 recieves all the stuff
-        if rank == 0:
-            print("Rank 0 is gathering all the results and writing them to disk")
-            count_stations = 0
-            for remote_rank in range(1,nprocs):
-                next_station = remote_rank
+            if rank == 0:
+                print("Rank 0 is gathering all the results and writing them to disk")
+                count_stations = 0
+                for remote_rank in range(1,nprocs):
+                    next_station = remote_rank
+                    skip_stations = nprocs
+                    for i_station, station in enumerate(self._receivers):
+                        if i_station == next_station:
+                            t1 = perf_counter()
+                            ant = np.empty(1, dtype=np.int32)
+                            printMPI(f"P0 getting from remote {i_station} 1")
+                            comm.Recv(ant, source=remote_rank, tag=2*i_station)
+                            printMPI(f"P0 done getting from remote {i_station} 1")
+                            nt = ant[0]
+                            data = np.empty((nt,4), dtype=np.float64)
+                            printMPI(f"P0 getting from remote {i_station} 2")
+                            comm.Recv(data, source=remote_rank, tag=2*i_station+1)
+                            printMPI(f"P0 done getting from remote {i_station} 2")
+                            z = data[:,0]
+                            e = data[:,1]
+                            n = data[:,2]
+                            t = data[:,3]
+
+                            t2 = perf_counter()
+                            perf_time_recv += t2 - t1
+
+                            station.add_to_response(z, e, n, t, tmin, tmax)
+
+                            # Receive GFs
+                            n_subfaults_arr = np.empty(1, dtype=np.int32)
+                            comm.Recv(n_subfaults_arr, source=remote_rank, tag=2*i_station+1000)
+                            n_subfaults = n_subfaults_arr[0]
+                            
+                            for isub in range(n_subfaults):
+                                base_tag = 2*i_station + 2000 + isub*10
+                                
+                                meta = np.empty(3, dtype=np.int32)
+                                comm.Recv(meta, source=remote_rank, tag=base_tag)
+                                sub_idx, nt_gf, nt_tdata = meta[0], meta[1], meta[2]
+                                
+                                data_gf = np.empty((nt_gf, 4), dtype=np.float64)
+                                comm.Recv(data_gf, source=remote_rank, tag=base_tag+1)
+                                z_gf = data_gf[:, 0]
+                                e_gf = data_gf[:, 1]
+                                n_gf = data_gf[:, 2]
+                                t_gf = data_gf[:, 3]
+                                
+                                tdata_gf = np.empty((nt_tdata, 9), dtype=np.float64)
+                                comm.Recv(tdata_gf, source=remote_rank, tag=base_tag+2)
+                                
+                                t0_arr = np.empty(1, dtype=np.float64)
+                                comm.Recv(t0_arr, source=remote_rank, tag=base_tag+3)
+                                t0_gf = t0_arr[0]
+                                
+                                station.add_greens_function(z_gf, e_gf, n_gf, t_gf, tdata_gf, t0_gf, sub_idx)
+
+                            if writer:
+                                printMPI(f"Rank 0 is writing station {i_station}")
+                                writer.write_station(station, i_station)
+                                printMPI(f"Rank 0 is done writing station {i_station}")
+
+                            next_station += skip_stations
+                            count_stations += 1
+                print("Rank 0 is DONE gathering ")
+                print("Rank 0 writing its own stations ")
+
+                next_station = 0
                 skip_stations = nprocs
                 for i_station, station in enumerate(self._receivers):
                     if i_station == next_station:
-                        #get from remote
-                        t1 = perf_counter()
-                        ant = np.empty(1, dtype=np.int32)
-                        printMPI(f"P0 getting from remote {i_station} 1")
-                        comm.Recv(ant, source=remote_rank, tag=2*i_station)
-                        printMPI(f"P0 done getting from remote {i_station} 1")
-                        nt = ant[0]
-                        data = np.empty((nt,4), dtype=np.float64)
-                        printMPI(f"P0 getting from remote {i_station} 2")
-                        comm.Recv(data, source=remote_rank, tag=2*i_station+1)
-                        printMPI(f"P0 done getting from remote {i_station} 2")
-                        z = data[:,0]
-                        e = data[:,1]
-                        n = data[:,2]
-                        t = data[:,3]
-
-                        t2 = perf_counter()
-                        perf_time_recv += t2 - t1
-
-                        station.add_to_response(z, e, n, t, tmin, tmax)
-
                         if writer:
                             printMPI(f"Rank 0 is writing station {i_station}")
                             writer.write_station(station, i_station)
@@ -1206,90 +1192,101 @@ class ShakerMaker:
 
                         next_station += skip_stations
                         count_stations += 1
-            print("Rank 0 is DONE gathering ")
-            print("Rank 0 writing its own stations ")
-            #Now rank 0 writes its own stations
-            next_station = 0
-            skip_stations = nprocs
-            for i_station, station in enumerate(self._receivers):
-                if i_station == next_station:
-                    if writer:
-                        printMPI(f"Rank 0 is writing station {i_station}")
-                        writer.write_station(station, i_station)
-                        printMPI(f"Rank 0 is done writing station {i_station}")
 
-                    next_station += skip_stations
-                    count_stations += 1
+                count_stations += n_my_stations
+                print(f"Rank 0 got {count_stations} of {nstations} stations")
 
-            #print accouted for all stations
-            count_stations += n_my_stations
-            print(f"Rank 0 got {count_stations} of {nstations} stations")
-            # assert count_stations == nstations, f"Rank 0 only got {count_stations} of {nstations} stations"
+                if rank == 0 and writer is not None:
+                    full_mapping_list = []
+                    
+                    for i_sta in range(nstations):
+                        station = self._receivers.get_station_by_id(i_sta)
+                        for i_src, psource in enumerate(self._source):
+                            x_src = psource.x
+                            x_rec = station.x
+                            z_src = x_src[2]
+                            z_rec = x_rec[2]
+                            d = x_rec - x_src
+                            dh = np.sqrt(np.dot(d[0:2], d[0:2]))
+                            
+                            min_distance = float('inf')
+                            best_idx = -1
+                            
+                            for i in range(len(dh_of_pairs)):
+                                if (abs(dh - dh_of_pairs[i]) < delta_h and
+                                    abs(z_src - zsrc_of_pairs[i]) < delta_v_src and
+                                    abs(z_rec - zrec_of_pairs[i]) < delta_v_rec):
+                                    dist = abs(dh - dh_of_pairs[i]) + abs(z_src - zsrc_of_pairs[i]) + abs(z_rec - zrec_of_pairs[i])
+                                    if dist < min_distance:
+                                        min_distance = dist
+                                        best_idx = i
+                            
+                            full_mapping_list.append([i_sta, i_src, best_idx])
+                    
+                    writer.node_pair_mapping = np.array(full_mapping_list, dtype=np.int32)
+                    writer.pairs_to_compute_for_mapping = pairs_to_compute
 
-            if writer and rank == 0:
-                writer.close()
+                if writer and rank == 0:
+                    writer.close()
 
 
-            fid_debug_mpi.close()
+                fid_debug_mpi.close()
 
-            perf_time_end = perf_counter()
+                perf_time_end = perf_counter()
 
-            if rank == 0 and use_mpi:
-                perf_time_total = perf_time_end - perf_time_begin
+                if rank == 0 and use_mpi:
+                    perf_time_total = perf_time_end - perf_time_begin
 
-                print("\n\n")
-                print(f"ShakerMaker Run done. Total time: {perf_time_total} s")
-                print("------------------------------------------------")
+                    print("\n\n")
+                    print(f"ShakerMaker Run done. Total time: {perf_time_total} s")
+                    print("------------------------------------------------")
 
-        if use_mpi and nprocs > 1:
+            if use_mpi and nprocs > 1:
 
-            print(f"rank {rank} @ gather all performances stats")
+                print(f"rank {rank} @ gather all performances stats")
 
-            all_max_perf_time_core = np.array([-np.infty],dtype=np.double)
-            all_max_perf_time_send = np.array([-np.infty],dtype=np.double)
-            all_max_perf_time_recv = np.array([-np.infty],dtype=np.double)
-            all_max_perf_time_conv = np.array([-np.infty],dtype=np.double)
-            all_max_perf_time_add = np.array([-np.infty],dtype=np.double)
+                all_max_perf_time_core = np.array([-np.infty],dtype=np.double)
+                all_max_perf_time_send = np.array([-np.infty],dtype=np.double)
+                all_max_perf_time_recv = np.array([-np.infty],dtype=np.double)
+                all_max_perf_time_conv = np.array([-np.infty],dtype=np.double)
+                all_max_perf_time_add = np.array([-np.infty],dtype=np.double)
 
-            all_min_perf_time_core = np.array([np.infty],dtype=np.double)
-            all_min_perf_time_send = np.array([np.infty],dtype=np.double)
-            all_min_perf_time_recv = np.array([np.infty],dtype=np.double)
-            all_min_perf_time_conv = np.array([np.infty],dtype=np.double)
-            all_min_perf_time_add = np.array([np.infty],dtype=np.double)
+                all_min_perf_time_core = np.array([np.infty],dtype=np.double)
+                all_min_perf_time_send = np.array([np.infty],dtype=np.double)
+                all_min_perf_time_recv = np.array([np.infty],dtype=np.double)
+                all_min_perf_time_conv = np.array([np.infty],dtype=np.double)
+                all_min_perf_time_add = np.array([np.infty],dtype=np.double)
 
-            # Gather statistics from all processes
+                comm.Reduce(perf_time_core,
+                    all_max_perf_time_core, op = MPI.MAX, root = 0)
+                comm.Reduce(perf_time_send,
+                    all_max_perf_time_send, op = MPI.MAX, root = 0)
+                comm.Reduce(perf_time_recv,
+                    all_max_perf_time_recv, op = MPI.MAX, root = 0)
+                comm.Reduce(perf_time_conv,
+                    all_max_perf_time_conv, op = MPI.MAX, root = 0)
+                comm.Reduce(perf_time_add,
+                    all_max_perf_time_add, op = MPI.MAX, root = 0)
 
-            comm.Reduce(perf_time_core,
-                all_max_perf_time_core, op = MPI.MAX, root = 0)
-            comm.Reduce(perf_time_send,
-                all_max_perf_time_send, op = MPI.MAX, root = 0)
-            comm.Reduce(perf_time_recv,
-                all_max_perf_time_recv, op = MPI.MAX, root = 0)
-            comm.Reduce(perf_time_conv,
-                all_max_perf_time_conv, op = MPI.MAX, root = 0)
-            comm.Reduce(perf_time_add,
-                all_max_perf_time_add, op = MPI.MAX, root = 0)
+                comm.Reduce(perf_time_core,
+                    all_min_perf_time_core, op = MPI.MIN, root = 0)
+                comm.Reduce(perf_time_send,
+                    all_min_perf_time_send, op = MPI.MIN, root = 0)
+                comm.Reduce(perf_time_recv,
+                    all_min_perf_time_recv, op = MPI.MIN, root = 0)
+                comm.Reduce(perf_time_conv,
+                    all_min_perf_time_conv, op = MPI.MIN, root = 0)
+                comm.Reduce(perf_time_add,
+                    all_min_perf_time_add, op = MPI.MIN, root = 0)
 
-            comm.Reduce(perf_time_core,
-                all_min_perf_time_core, op = MPI.MIN, root = 0)
-            comm.Reduce(perf_time_send,
-                all_min_perf_time_send, op = MPI.MIN, root = 0)
-            comm.Reduce(perf_time_recv,
-                all_min_perf_time_recv, op = MPI.MIN, root = 0)
-            comm.Reduce(perf_time_conv,
-                all_min_perf_time_conv, op = MPI.MIN, root = 0)
-            comm.Reduce(perf_time_add,
-                all_min_perf_time_add, op = MPI.MIN, root = 0)
-
-            if rank == 0:
-                print("\n")
-                print("Performance statistics for all processes")
-                print(f"time_core     :  max: {all_max_perf_time_core[0]} ({all_max_perf_time_core[0]/perf_time_total*100:0.3f}%) min: {all_min_perf_time_core[0]} ({all_min_perf_time_core[0]/perf_time_total*100:0.3f}%)")
-                print(f"time_send     :  max: {all_max_perf_time_send[0]} ({all_max_perf_time_send[0]/perf_time_total*100:0.3f}%) min: {all_min_perf_time_send[0]} ({all_min_perf_time_send[0]/perf_time_total*100:0.3f}%)")
-                print(f"time_recv     :  max: {all_max_perf_time_recv[0]} ({all_max_perf_time_recv[0]/perf_time_total*100:0.3f}%) min: {all_min_perf_time_recv[0]} ({all_min_perf_time_recv[0]/perf_time_total*100:0.3f}%)")
-                print(f"time_conv :  max: {all_max_perf_time_conv[0]} ({all_max_perf_time_conv[0]/perf_time_total*100:0.3f}%) min: {all_min_perf_time_conv[0]} ({all_min_perf_time_conv[0]/perf_time_total*100:0.3f}%)")
-                print(f"time_add      :  max: {all_max_perf_time_add[0]} ({all_max_perf_time_add[0]/perf_time_total*100:0.3f}%) min: {all_min_perf_time_add[0]} ({all_min_perf_time_add[0]/perf_time_total*100:0.3f}%)")
-
+                if rank == 0:
+                    print("\n")
+                    print("Performance statistics for all processes")
+                    print(f"time_core     :  max: {all_max_perf_time_core[0]} ({all_max_perf_time_core[0]/perf_time_total*100:0.3f}%) min: {all_min_perf_time_core[0]} ({all_min_perf_time_core[0]/perf_time_total*100:0.3f}%)")
+                    print(f"time_send     :  max: {all_max_perf_time_send[0]} ({all_max_perf_time_send[0]/perf_time_total*100:0.3f}%) min: {all_min_perf_time_send[0]} ({all_min_perf_time_send[0]/perf_time_total*100:0.3f}%)")
+                    print(f"time_recv     :  max: {all_max_perf_time_recv[0]} ({all_max_perf_time_recv[0]/perf_time_total*100:0.3f}%) min: {all_min_perf_time_recv[0]} ({all_min_perf_time_recv[0]/perf_time_total*100:0.3f}%)")
+                    print(f"time_conv :  max: {all_max_perf_time_conv[0]} ({all_max_perf_time_conv[0]/perf_time_total*100:0.3f}%) min: {all_min_perf_time_conv[0]} ({all_min_perf_time_conv[0]/perf_time_total*100:0.3f}%)")
+                    print(f"time_add      :  max: {all_max_perf_time_add[0]} ({all_max_perf_time_add[0]/perf_time_total*100:0.3f}%) min: {all_min_perf_time_add[0]} ({all_min_perf_time_add[0]/perf_time_total*100:0.3f}%)")
 
 
 
@@ -2071,7 +2068,7 @@ class ShakerMaker:
             -------
             None
             """
-            title = f"🎉 ¡LARGA VIDA AL LADRUNO755! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+            title = f"🎉 ¡LARGA VIDA AL LADRUNO200! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
             if rank == 0:
                 print("\n\n")
                 print(title)

@@ -201,6 +201,12 @@ class DRMHDF5StationListWriter(HDF5StationListWriter):
             grp_gf_db.attrs['delta_v_src'] = self.gf_db_delta_v_src
             print(f"[WRITER] GF Database info saved to output file")
 
+        # Write node-to-donor mapping for GF lookup
+        if hasattr(self, 'node_pair_mapping') and self.node_pair_mapping is not None:
+            grp_map = self._h5file.create_group('Node_Mapping')
+            grp_map.create_dataset('node_to_pair_mapping', data=self.node_pair_mapping, compression='gzip')
+            grp_map.create_dataset('pairs_to_compute', data=self.pairs_to_compute_for_mapping, compression='gzip')
+                
         self._h5file.close()
 
     def _write_gfs(self):
