@@ -116,7 +116,7 @@ class ShakerMaker:
         
 
         """
-        title = f"🎉 ¡LARGA VIDA AL LADRUNO200! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+        title = f"🎉 ¡LARGA VIDA AL LADRUNO400! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
         
         if rank == 0:
             print("\n\n")
@@ -168,7 +168,8 @@ class ShakerMaker:
         if writer and rank == 0:
             assert isinstance(writer, StationListWriter), \
                 "'writer' must be an instance of the shakermaker.StationListWriter class or None"
-            writer.initialize(self._receivers, 2*nfft)
+            # writer.initialize(self._receivers, 2*nfft)
+            writer.initialize(self._receivers, 2*nfft, tmin=tmin, tmax=tmax, dt=dt) #progresive mode
             writer.write_metadata(self._receivers.metadata)
         ipair = 0
         if nprocs == 1 or rank == 0:
@@ -575,7 +576,8 @@ class ShakerMaker:
         if writer and rank == 0:
             assert isinstance(writer, StationListWriter), \
                 "'writer' must be an instance of the shakermaker.StationListWriter class or None"
-            writer.initialize(self._receivers, 2*nfft)
+            # writer.initialize(self._receivers, 2*nfft)
+            writer.initialize(self._receivers, 2*nfft, tmin=tmin, tmax=tmax, dt=dt) #progresive mode
             writer.write_metadata(self._receivers.metadata)
         ipair = 0
         if nprocs == 1 or rank == 0:
@@ -2068,7 +2070,7 @@ class ShakerMaker:
             -------
             None
             """
-            title = f"🎉 ¡LARGA VIDA AL LADRUNO200! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+            title = f"🎉 ¡LARGA VIDA AL LADRUNO400! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
             if rank == 0:
                 print("\n\n")
                 print(title)

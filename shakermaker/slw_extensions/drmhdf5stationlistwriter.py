@@ -16,14 +16,19 @@ class DRMHDF5StationListWriter(HDF5StationListWriter):
 
         self._h5file = None
 
+        # Variables for legacy mode (when tmin, tmax, dt are not passed)
         self._velocities = {}
         self._tstart = np.infty
         self._tend = -np.infty
         self._dt = 0.
         self._gfs = {}
         self._spectrum_gfs = {}
+        
+        # Variables for progressive mode (new)
+        self._progressive_mode = False
+        self._t_final = None
 
-    def initialize(self, station_list, num_samples):
+    def initialize(self, station_list, num_samples, tmin=None, tmax=None, dt=None):
         assert isinstance(station_list, DRMBox), \
             "DRMHDF5StationListWriter.initialize - 'station_list' Should be a DRMBox"
 
@@ -59,6 +64,44 @@ class DRMHDF5StationListWriter(HDF5StationListWriter):
 
         grp_drm_qa_data.create_dataset("xyz", (1, 3), dtype=np.double)
         # self.station_list = station_list
+        
+        # === NEW: Progressive mode if tmin, tmax, dt are passed ===
+        if tmin is not None and tmax is not None and dt is not None:
+            self._progressive_mode = True
+            self._dt = dt
+            self._tstart = tmin
+            self._tend = tmax
+            self._t_final = np.arange(tmin, tmax, dt)
+            num_samples_final = len(self._t_final)
+            
+            # Pre-create datasets with known size
+            grp_drm_data.create_dataset("velocity", (3 * self.nstations, num_samples_final), 
+                                        dtype=np.double, chunks=(3, num_samples_final))
+            grp_drm_data.create_dataset("displacement", (3 * self.nstations, num_samples_final), 
+                                        dtype=np.double, chunks=(3, num_samples_final))
+            grp_drm_data.create_dataset("acceleration", (3 * self.nstations, num_samples_final), 
+                                        dtype=np.double, chunks=(3, num_samples_final))
+            grp_drm_qa_data.create_dataset("velocity", (3, num_samples_final), 
+                                           dtype=np.double, chunks=(3, num_samples_final))
+            grp_drm_qa_data.create_dataset("displacement", (3, num_samples_final), 
+                                           dtype=np.double, chunks=(3, num_samples_final))
+            grp_drm_qa_data.create_dataset("acceleration", (3, num_samples_final), 
+                                           dtype=np.double, chunks=(3, num_samples_final))
+            
+            # Write time metadata now
+            grp_metadata = self._h5file['DRM_Metadata']
+            grp_metadata.create_dataset("dt", data=self._dt)
+            grp_metadata.create_dataset("tstart", data=self._tstart)
+            grp_metadata.create_dataset("tend", data=self._tend)
+            
+            # Create group for GFs
+            self._h5file.create_group('GF')
+            
+            print(f"[WRITER] Progressive mode enabled: tmin={tmin}, tmax={tmax}, dt={dt}, num_samples={num_samples_final}")
+        else:
+            # Legacy mode: accumulate in memory
+            self._progressive_mode = False
+            print(f"[WRITER] Legacy mode: accumulating in memory")
 
     def write_metadata(self, metadata):
         assert self._h5file, "DRMHDF5StationListWriter.write_metadata uninitialized HDF5 file"
@@ -74,7 +117,8 @@ class DRMHDF5StationListWriter(HDF5StationListWriter):
 
         for key, value in metadata.items():
             print(f"key = {key} {value}")
-            grp_metadata.create_dataset(key, data=value)
+            if key not in grp_metadata:  # Avoid duplicates with dt, tstart, tend
+                grp_metadata.create_dataset(key, data=value)
 
     def write_station(self, station, index):
         assert self._h5file, "DRMHDF5StationListWriter.write_station uninitialized HDF5 file"
@@ -99,23 +143,147 @@ class DRMHDF5StationListWriter(HDF5StationListWriter):
         is_QA = False
         if station.metadata["name"] == "QA":
             is_QA = True
-        self._velocities[index] = (zz, ee, nn, t, is_QA)
-        self._tstart = min(t[0],self._tstart)
-        self._tend = max(t[-1],self._tend)
-        self._dt = t[1] - t[0]
+        
+        # === NEW: Progressive mode - write directly ===
+        if self._progressive_mode:
+            self._write_station_progressive(station, index, zz, ee, nn, t, is_QA)
+        else:
+            # Legacy mode: accumulate in memory
+            self._velocities[index] = (zz, ee, nn, t, is_QA)
+            self._tstart = min(t[0], self._tstart)
+            self._tend = max(t[-1], self._tend)
+            self._dt = t[1] - t[0]
 
+            gf_dict = station.get_greens_functions()
+            if gf_dict:
+                self._gfs[index] = gf_dict
+            spec_dict = station.get_spectrum_greens()
+            if spec_dict:
+                self._spectrum_gfs[index] = spec_dict
+
+    def _write_station_progressive(self, station, index, zz, ee, nn, t, is_QA):
+        """Write a station directly to HDF5 without accumulating in memory."""
+        
+        def interpolatorfun(told, yold, tnew):
+            return interp1d(told, yold,
+                fill_value=(yold[0], yold[-1]),
+                bounds_error=False)(tnew)
+        
+        t_final = self._t_final
+        dt = self._dt
+        
+        # Interpolate to t_final
+        ve = interpolatorfun(t, ee, t_final)
+        vn = interpolatorfun(t, nn, t_final)
+        vz = interpolatorfun(t, zz, t_final)
+        
+        # Calculate acceleration and displacement
+        Nt = len(ve)
+        ae = np.zeros(Nt)
+        ae[1:] = (ve[1:] - ve[0:-1]) / dt
+        an = np.zeros(Nt)
+        an[1:] = (vn[1:] - vn[0:-1]) / dt
+        az = np.zeros(Nt)
+        az[1:] = (vz[1:] - vz[0:-1]) / dt
+        
+        de = cumulative_trapezoid(ve, t_final, initial=0.)
+        dn = cumulative_trapezoid(vn, t_final, initial=0.)
+        dz = cumulative_trapezoid(vz, t_final, initial=0.)
+        
+        # Write directly to HDF5
+        if not is_QA:
+            self._h5file['DRM_Data/displacement'][3 * index, :] = de
+            self._h5file['DRM_Data/displacement'][3 * index + 1, :] = dn
+            self._h5file['DRM_Data/displacement'][3 * index + 2, :] = dz
+            self._h5file['DRM_Data/velocity'][3 * index, :] = ve
+            self._h5file['DRM_Data/velocity'][3 * index + 1, :] = vn
+            self._h5file['DRM_Data/velocity'][3 * index + 2, :] = vz
+            self._h5file['DRM_Data/acceleration'][3 * index, :] = ae
+            self._h5file['DRM_Data/acceleration'][3 * index + 1, :] = an
+            self._h5file['DRM_Data/acceleration'][3 * index + 2, :] = az
+        else:
+            self._h5file['DRM_QA_Data/velocity'][0, :] = ve
+            self._h5file['DRM_QA_Data/velocity'][1, :] = vn
+            self._h5file['DRM_QA_Data/velocity'][2, :] = vz
+            self._h5file['DRM_QA_Data/displacement'][0, :] = de
+            self._h5file['DRM_QA_Data/displacement'][1, :] = dn
+            self._h5file['DRM_QA_Data/displacement'][2, :] = dz
+            self._h5file['DRM_QA_Data/acceleration'][0, :] = ae
+            self._h5file['DRM_QA_Data/acceleration'][1, :] = an
+            self._h5file['DRM_QA_Data/acceleration'][2, :] = az
+        
+        # Write GFs directly
         gf_dict = station.get_greens_functions()
         if gf_dict:
-            self._gfs[index] = gf_dict
+            self._write_station_gfs_progressive(index, gf_dict)
+        
+        # Write spectrums directly
         spec_dict = station.get_spectrum_greens()
         if spec_dict:
-            self._spectrum_gfs[index] = spec_dict
+            self._write_station_spectrum_progressive(index, spec_dict)
+        
+        # Flush to ensure data is written to disk
+        self._h5file.flush()
 
+    def _write_station_gfs_progressive(self, sta_idx, gf_dict):
+        """Write Green's functions of a station directly to HDF5."""
+        grp_gf = self._h5file['GF']
+        grp_sta = grp_gf.create_group(f'sta_{sta_idx}')
+        
+        for sub_idx, (z, e, n, t, tdata, t0) in gf_dict.items():
+            grp_sub = grp_sta.create_group(f'sub_{sub_idx}')
+            grp_sub.create_dataset('z', data=z, compression='gzip')
+            grp_sub.create_dataset('e', data=e, compression='gzip')
+            grp_sub.create_dataset('n', data=n, compression='gzip')
+            grp_sub.create_dataset('t', data=t, compression='gzip')
+            grp_sub.create_dataset('tdata', data=tdata, compression='gzip')
+            grp_sub.create_dataset('t0', data=t0)
 
-
-
+    def _write_station_spectrum_progressive(self, sta_idx, spec_dict):
+        """Write spectrums of a station directly to HDF5."""
+        if 'GF_Spectrum' not in self._h5file:
+            self._h5file.create_group('GF_Spectrum')
+        
+        grp_spec = self._h5file['GF_Spectrum']
+        grp_sta = grp_spec.create_group(f'sta_{sta_idx}')
+        
+        for sub_idx, (sz, se, sn, freqs) in spec_dict.items():
+            grp_sub = grp_sta.create_group(f'sub_{sub_idx}')
+            grp_sub.create_dataset('spectrum_z_real', data=sz.real, compression='gzip')
+            grp_sub.create_dataset('spectrum_z_imag', data=sz.imag, compression='gzip')
+            grp_sub.create_dataset('spectrum_e_real', data=se.real, compression='gzip')
+            grp_sub.create_dataset('spectrum_e_imag', data=se.imag, compression='gzip')
+            grp_sub.create_dataset('spectrum_n_real', data=sn.real, compression='gzip')
+            grp_sub.create_dataset('spectrum_n_imag', data=sn.imag, compression='gzip')
+            grp_sub.create_dataset('freqs', data=freqs, compression='gzip')
 
     def close(self):
+        
+        # === NEW: If progressive mode, just close ===
+        if self._progressive_mode:
+            # Save GF database info if exists (for stages created in run_fast_faster)
+            if hasattr(self, 'gf_db_pairs') and self.gf_db_pairs is not None:
+                grp_gf_db = self._h5file.create_group('GF_Database_Info')
+                grp_gf_db.create_dataset('pairs_to_compute', data=self.gf_db_pairs, compression='gzip')
+                grp_gf_db.create_dataset('dh_of_pairs', data=self.gf_db_dh, compression='gzip')
+                grp_gf_db.create_dataset('zrec_of_pairs', data=self.gf_db_zrec, compression='gzip')
+                grp_gf_db.create_dataset('zsrc_of_pairs', data=self.gf_db_zsrc, compression='gzip')
+                grp_gf_db.attrs['delta_h'] = self.gf_db_delta_h
+                grp_gf_db.attrs['delta_v_rec'] = self.gf_db_delta_v_rec
+                grp_gf_db.attrs['delta_v_src'] = self.gf_db_delta_v_src
+                print(f"[WRITER] GF Database info saved to output file")
+
+            # Write node-to-donor mapping for GF lookup
+            if hasattr(self, 'node_pair_mapping') and self.node_pair_mapping is not None:
+                grp_map = self._h5file.create_group('Node_Mapping')
+                grp_map.create_dataset('node_to_pair_mapping', data=self.node_pair_mapping, compression='gzip')
+                grp_map.create_dataset('pairs_to_compute', data=self.pairs_to_compute_for_mapping, compression='gzip')
+            
+            print(f"[WRITER] Progressive mode: closing file (all data already written)")
+            self._h5file.close()
+            return
+        
+        # === Legacy mode: original behavior ===
         t_final = np.arange(self._tstart, self._tend, self._dt)
         num_samples = len(t_final)
 
@@ -189,7 +357,7 @@ class DRMHDF5StationListWriter(HDF5StationListWriter):
         if self._spectrum_gfs:
             self._write_spectrum_gfs()
 
-        # Guardar info de GF database si existe (para los stages creados en run_fast_faster)
+        # Save GF database info if exists (for stages created in run_fast_faster)
         if hasattr(self, 'gf_db_pairs') and self.gf_db_pairs is not None:
             grp_gf_db = self._h5file.create_group('GF_Database_Info')
             grp_gf_db.create_dataset('pairs_to_compute', data=self.gf_db_pairs, compression='gzip')
