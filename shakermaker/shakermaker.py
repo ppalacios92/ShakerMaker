@@ -116,7 +116,7 @@ class ShakerMaker:
         
 
         """
-        title = f"🎉 ¡LARGA VIDA AL LADRUNO2000! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+        title = f"🎉 ¡LARGA VIDA AL LADRUNO5000! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
         
         if rank == 0:
             print("\n\n")
@@ -912,7 +912,11 @@ class ShakerMaker:
             # ============================================================
             # NEW: Create temporary HDF5 file for this rank to store GFs
             # ============================================================
-            temp_gf_filename = f"_temp_gf_rank_{rank}.h5"
+            temp_gf_filename = f".shakermaker_temp/_temp_gf_rank_{rank}.h5"
+            if rank == 0:
+                os.makedirs(".shakermaker_temp", exist_ok=True)
+            if use_mpi and nprocs > 1:
+                comm.Barrier()
             temp_gf_file = h5py.File(temp_gf_filename, 'w')
             temp_gf_file.create_group('GF')
             temp_gf_file.create_group('GF_Spectrum')
@@ -2113,7 +2117,7 @@ class ShakerMaker:
             -------
             None
             """
-            title = f"🎉 ¡LARGA VIDA AL LADRUNO2000! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+            title = f"🎉 ¡LARGA VIDA AL LADRUNO5000! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
             if rank == 0:
                 print("\n\n")
                 print(title)
