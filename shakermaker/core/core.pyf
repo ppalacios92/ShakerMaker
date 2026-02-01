@@ -3,7 +3,7 @@
 
 python module core ! in 
     interface  ! in :core
-        subroutine subgreen(mb,src,rcv,stype,updn,d,a,b,rho,qa,qb,dt,nfft,tb,nx,sigma,smth,wc1,wc2,pmin,pmax,dk,kc,taper,x,pf,df,lf,tdata,spectrum,sx,sy,rx,ry,zz,ee,nn,t0) ! in :core:subgreen.f
+        subroutine subgreen(mb,src,rcv,stype,updn,d,a,b,rho,qa,qb,dt,nfft,tb,nx,sigma,smth,wc1,wc2,pmin,pmax,dk,kc,taper,x,pf,df,lf,tdata,sx,sy,rx,ry,zz,ee,nn,t0) ! in :core:subgreen.f
             integer :: mb
             integer :: src
             integer :: rcv
@@ -33,7 +33,6 @@ python module core ! in
             real :: df
             real :: lf
             real depend(nx), depend(nfft), intent(out), dimension(nx,9,2*nfft) :: tdata
-            complex depend(nx), depend(nfft), intent(out), dimension(nx,9,2*nfft) :: spectrum
             real :: sx
             real :: sy
             real :: rx

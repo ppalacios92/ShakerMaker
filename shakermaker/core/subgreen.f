@@ -1,6 +1,6 @@
       subroutine subgreen(mb,src,rcv,stype,updn,d,a,b,rho,qa,qb,
      & dt,nfft,tb,nx,sigma,smth,wc1,wc2,pmin,pmax,dk,
-     & kc,taper,x,pf,df,lf,tdata,spectrum,sx,sy,rx,ry,
+     & kc,taper,x,pf,df,lf,tdata,sx,sy,rx,ry,
      & zz,ee,nn,t0)
       IMPLICIT NONE
       include 'constants.h'
@@ -11,7 +11,6 @@
       real pmin,pmax,kc
       real qa(mb),qb(mb),a(mb),b(mb),x(nx),t0(nx)
       real tdata(nx,9,2*nfft)
-      complex spectrum(nx,9,2*nfft)
       real tt0
       real zz(2*nfft),ee(2*nfft),nn(2*nfft)
       real pf,df,lf,sx,sy,rx,ry
@@ -76,7 +75,7 @@ C         if (xmax .LT. x(ix)) xmax=x(ix)+hs ! OJO!!!
 C       write(*,*) "xmax=", xmax
       call subfk(mb,stype,src,rcv,a,b,qa,qb,d,rho,mu,xi,si,
      &  vs,hs,xmax,flip,updn,
-     &  nfft,dt,smth,sigma,pmin,pmax,dk,kc,taper,nx,x,t0,tdata,spectrum)
+     &  nfft,dt,smth,sigma,pmin,pmax,dk,kc,taper,nx,x,t0,tdata)
 C       write(*,*)"pre-subfocal"
 C       do i=1,2*nt
 C         write(*,*) i, tdata(j,1,i)

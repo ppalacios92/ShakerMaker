@@ -116,7 +116,7 @@ class ShakerMaker:
         
 
         """
-        title = f"🎉 ¡LARGA VIDA AL LADRUNO5000! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+        title = f"🎉 ¡LARGA VIDA AL LADRUNO0100! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
         
         if rank == 0:
             print("\n\n")
@@ -180,7 +180,6 @@ class ShakerMaker:
             skip_pairs = nprocs-1
 
         npairs = self._receivers.nstations*len(self._source._pslist)
-        nfft2 = 2 * nfft
         for i_station, station in enumerate(self._receivers):
             for i_psource, psource in enumerate(self._source):
                 aux_crust = copy.deepcopy(self._crust)
@@ -201,22 +200,12 @@ class ShakerMaker:
                         if verbose:
                             print("calling core START")
                         t1 = perf_counter()
-                        tdata, spectrum, z, e, n, t0= self._call_core(dt, nfft, tb, nx, sigma, smth, wc1, wc2, pmin, pmax, dk, kc,
+                        tdata, z, e, n, t0 = self._call_core(dt, nfft, tb, nx, sigma, smth, wc1, wc2, pmin, pmax, dk, kc,
                                                              taper, aux_crust, psource, station, verbose)
                         t2 = perf_counter()
                         perf_time_core += t2 - t1
                         if verbose:
                             print("calling core END")
-                        # Calculate spectrum only if needed
-                        if station.metadata.get('save_spectrum_gf', False):
-                            pf, df, lf = psource.angles[0], psource.angles[1], psource.angles[2]
-                            sx, sy = psource.x[0], psource.x[1]
-                            rx, ry = station.x[0], station.x[1]
-                            freqs = np.arange(nfft2) * (1.0 / (2 * nfft * dt))
-                            spectrum_z, spectrum_e, spectrum_n = self.calculate_zen_spectrum(spectrum, pf, df, lf, sx, sy, rx, ry)
-                        
-                        nt = len(z)
-                        # spectrum ----------------
 
                         nt = len(z)
                         dd = psource.x - station.x
@@ -257,18 +246,6 @@ class ShakerMaker:
                             data_gf[:,3] = t
                             printMPI(f"Rank {rank} sending GF to P0")
                             comm.Send(data_gf, dest=0, tag=2*ipair+100)
-                            
-                            # Send spectrum only if needed
-                            if station.metadata.get('save_spectrum_gf', False):
-                                data_spec = np.empty((nfft2, 7), dtype=np.float64)
-                                data_spec[:,0] = spectrum_z.real
-                                data_spec[:,1] = spectrum_z.imag
-                                data_spec[:,2] = spectrum_e.real
-                                data_spec[:,3] = spectrum_e.imag
-                                data_spec[:,4] = spectrum_n.real
-                                data_spec[:,5] = spectrum_n.imag
-                                data_spec[:,6] = freqs
-                                comm.Send(data_spec, dest=0, tag=2*ipair+200)
 
                             # Send tdata and t0 - transpose from (1,9,nt) to (nt,9)
                             nt_tdata = tdata.shape[2]
@@ -313,15 +290,6 @@ class ShakerMaker:
                                 n_gf = data_gf[:,2]
                                 t_gf = data_gf[:,3]
                                 
-                                # Receive spectrum only if needed
-                                if station.metadata.get('save_spectrum_gf', False):
-                                    data_spec = np.empty((nfft2,7), dtype=np.float64)
-                                    comm.Recv(data_spec, source=remote, tag=2*ipair+200)
-                                    sz_gf = data_spec[:,0] + 1j*data_spec[:,1]
-                                    se_gf = data_spec[:,2] + 1j*data_spec[:,3]
-                                    sn_gf = data_spec[:,4] + 1j*data_spec[:,5]
-                                    freqs_gf = data_spec[:,6]
-                                
                               # Receive tdata and t0 - already in (nt,9) format
                                 nt_tdata = np.empty(1, dtype=np.int32)
                                 comm.Recv(nt_tdata, source=remote, tag=2*ipair+299)
@@ -333,18 +301,14 @@ class ShakerMaker:
                                 t2 = perf_counter()
                                 perf_time_recv += t2 - t1
                         next_pair += 1
-                        # add green functions 
+                        # Add green functions to station
                         if nprocs > 1:
                             station.add_greens_function(z_gf, e_gf, n_gf, t_gf, tdata, t0, i_psource)
-                            if station.metadata.get('save_spectrum_gf', False):
-                                station.add_spectrum_greens_function(sz_gf, se_gf, sn_gf, freqs_gf, i_psource)
                         else:
                             tdata_transposed = np.empty((tdata.shape[2], 9), dtype=np.float64)
                             for comp in range(9):
                                 tdata_transposed[:, comp] = tdata[0, comp, :]
                             station.add_greens_function(z, e, n, t, tdata_transposed, t0, i_psource)
-                            if station.metadata.get('save_spectrum_gf', False):
-                                station.add_spectrum_greens_function(spectrum_z, spectrum_e, spectrum_n, freqs, i_psource)
 
                         # add green functions 
                         try:
@@ -905,23 +869,34 @@ class ShakerMaker:
             if writer and rank == 0:
                 assert isinstance(writer, StationListWriter), \
                     "'writer' must be an instance of the shakermaker.StationListWriter class or None"
-                # writer.initialize(self._receivers, 2*nfft)
-                writer.initialize(self._receivers, 2*nfft, tmin=tmin, tmax=tmax, dt=dt)
+                # LEGACY MODE (default): No temp files, write directly to writer
+                writer.initialize(self._receivers, 2*nfft)
+                # PROGRESSIVE MODE: Use temp files for memory efficiency
+                # writer.initialize(self._receivers, 2*nfft, tmin=tmin, tmax=tmax, dt=dt)
                 writer.write_metadata(self._receivers.metadata)
-
-            # ============================================================
-            # NEW: Create temporary HDF5 file for this rank to store GFs
-            # ============================================================
-            temp_gf_filename = f".shakermaker_temp/_temp_gf_rank_{rank}.h5"
-            if rank == 0:
-                os.makedirs(".shakermaker_temp", exist_ok=True)
+            
+            # Determine if we use temporary files based on writer mode
+            use_temp_files = False
+            if writer and rank == 0 and hasattr(writer, '_progressive_mode'):
+                use_temp_files = writer._progressive_mode
+            
+            # Broadcast use_temp_files to all ranks
             if use_mpi and nprocs > 1:
-                comm.Barrier()
-            temp_gf_file = h5py.File(temp_gf_filename, 'w')
-            temp_gf_file.create_group('GF')
-            temp_gf_file.create_group('GF_Spectrum')
-            temp_gf_file.create_group('responses')  # Store velocity responses too
-            print(f"[Rank {rank}] Created temporary GF file: {temp_gf_filename}")
+                use_temp_files = comm.bcast(use_temp_files, root=0)
+
+            # Create temporary HDF5 file only if using progressive mode
+            temp_gf_file = None
+            temp_gf_filename = None
+            if use_temp_files:
+                temp_gf_filename = f".shakermaker_temp/_temp_gf_rank_{rank}.h5"
+                if rank == 0:
+                    os.makedirs(".shakermaker_temp", exist_ok=True)
+                if use_mpi and nprocs > 1:
+                    comm.Barrier()
+                temp_gf_file = h5py.File(temp_gf_filename, 'w')
+                temp_gf_file.create_group('GF')
+                temp_gf_file.create_group('responses')
+                print(f"[Rank {rank}] Created temporary GF file: {temp_gf_filename}")
 
             next_station = rank
             skip_stations = nprocs
@@ -936,7 +911,6 @@ class ShakerMaker:
             ipair = 0
 
             n_my_stations = 0
-            nfft2 = 2 * nfft  # Moved outside loop for spectrum calculation
 
             for i_station, station in enumerate(self._receivers):
 
@@ -945,11 +919,9 @@ class ShakerMaker:
                 # NEW: Track if this is my station to process
                 is_my_station = (i_station == next_station)
                 
-                # NEW: Create station group in temp file at the start of processing
-                if is_my_station:
+                # Create station group in temp file at the start of processing (only if using temp files)
+                if is_my_station and use_temp_files and station.metadata.get('save_gf', False):
                     sta_grp = temp_gf_file['GF'].create_group(f'sta_{i_station}')
-                    if station.metadata.get('save_spectrum_gf', False):
-                        spec_sta_grp = temp_gf_file['GF_Spectrum'].create_group(f'sta_{i_station}')
                 
                 for i_psource, psource in enumerate(self._source):
                     aux_crust = copy.deepcopy(self._crust)
@@ -1023,10 +995,8 @@ class ShakerMaker:
 
                             t = np.arange(0, len(z)*dt, dt) + psource.tt + t0
 
-                            # ============================================================
-                            # NEW: Write GF directly to temporary file instead of accumulating
-                            # ============================================================
-                            if station.metadata.get('save_gf', False):
+                            # Write GF directly to temporary file if save_gf is True AND using temp files
+                            if use_temp_files and station.metadata.get('save_gf', False):
                                 # Write directly to temp HDF5 file
                                 grp_sub = sta_grp.create_group(f'sub_{i_psource}')
                                 grp_sub.create_dataset('z', data=z, compression='gzip')
@@ -1035,24 +1005,6 @@ class ShakerMaker:
                                 grp_sub.create_dataset('t', data=t, compression='gzip')
                                 grp_sub.create_dataset('tdata', data=tdata, compression='gzip')
                                 grp_sub.create_dataset('t0', data=t0)
-
-                            # ============================================================
-                            # NEW: Write spectrum GF directly to temporary file
-                            # ============================================================
-                            if station.metadata.get('save_spectrum_gf', False):
-                                spectrum_z_temp = np.fft.rfft(z, n=nfft2)
-                                spectrum_e_temp = np.fft.rfft(e, n=nfft2)
-                                spectrum_n_temp = np.fft.rfft(n, n=nfft2)
-                                freqs = np.fft.rfftfreq(nfft2, dt)
-                                
-                                grp_spec_sub = spec_sta_grp.create_group(f'sub_{i_psource}')
-                                grp_spec_sub.create_dataset('spectrum_z_real', data=spectrum_z_temp.real, compression='gzip')
-                                grp_spec_sub.create_dataset('spectrum_z_imag', data=spectrum_z_temp.imag, compression='gzip')
-                                grp_spec_sub.create_dataset('spectrum_e_real', data=spectrum_e_temp.real, compression='gzip')
-                                grp_spec_sub.create_dataset('spectrum_e_imag', data=spectrum_e_temp.imag, compression='gzip')
-                                grp_spec_sub.create_dataset('spectrum_n_real', data=spectrum_n_temp.real, compression='gzip')
-                                grp_spec_sub.create_dataset('spectrum_n_imag', data=spectrum_n_temp.imag, compression='gzip')
-                                grp_spec_sub.create_dataset('freqs', data=freqs, compression='gzip')
 
 
                             t1 = perf_counter()
@@ -1114,170 +1066,146 @@ class ShakerMaker:
 
                     print(f"{rank=} at {i_station=} of {nstations} ({progress_percent:.4f}%) ETA = {hh:.0f}:{mm:02.0f}:{ss:03.1f}")
 
-                    # ============================================================
-                    # NEW: Save the station response to temp file and flush
-                    # ============================================================
-                    z_resp, e_resp, n_resp, t_resp = station.get_response()
-                    resp_grp = temp_gf_file['responses'].create_group(f'sta_{i_station}')
-                    resp_grp.create_dataset('z', data=z_resp)
-                    resp_grp.create_dataset('e', data=e_resp)
-                    resp_grp.create_dataset('n', data=n_resp)
-                    resp_grp.create_dataset('t', data=t_resp)
-                    resp_grp.create_dataset('x', data=station.x)
-                    resp_grp.create_dataset('is_internal', data=station.is_internal)
-                    resp_grp.attrs['name'] = station.metadata.get('name', '')
-                    
-                    # Flush to ensure data is written to disk
-                    temp_gf_file.flush()
-                    
-                    # Clear station memory to avoid accumulation
-                    station._z = None
-                    station._e = None
-                    station._n = None
-                    station._t = None
-                    station._initialized = False
-
-                    next_station += skip_stations
-            
-            # ============================================================
-            # Close temporary file and synchronize all ranks
-            # ============================================================
-            temp_gf_file.close()
-            print(f"[Rank {rank}] Closed temporary GF file: {temp_gf_filename}")
-            
-            if use_mpi and nprocs > 1:
-                comm.Barrier()
-                print(f"[Rank {rank}] Barrier passed - all ranks finished computation")
-            
-            # ============================================================
-            # Stage two: Rank 0 consolidates all temporary files
-            # ============================================================
-            if rank == 0:
-                print("\n" + "="*60)
-                print("CONSOLIDATION PHASE: Rank 0 merging all temporary files")
-                print("="*60)
-                
-                # Process each rank's temporary file
-                for src_rank in range(nprocs):
-                    src_filename = f"_temp_gf_rank_{src_rank}.h5"
-                    print(f"[Rank 0] Processing: {src_filename}")
-                    
-                    src_file = h5py.File(src_filename, 'r')
-                    
-                    # Process each station in this rank's file
-                    for sta_key in src_file['responses'].keys():
-                        i_station = int(sta_key.split('_')[1])
-                        station = self._receivers.get_station_by_id(i_station)
-                        
-                        # Load response data
-                        resp_grp = src_file['responses'][sta_key]
-                        z_resp = resp_grp['z'][:]
-                        e_resp = resp_grp['e'][:]
-                        n_resp = resp_grp['n'][:]
-                        t_resp = resp_grp['t'][:]
-                        
-                        # Restore response to station object
-                        station._z = z_resp
-                        station._e = e_resp
-                        station._n = n_resp
-                        station._t = t_resp
-                        station._initialized = True
-                        
-                        # Load GFs into station object temporarily for writer
-                        if f'sta_{i_station}' in src_file['GF']:
-                            gf_grp = src_file['GF'][f'sta_{i_station}']
-                            station._greens_functions = {}
-                            for sub_key in gf_grp.keys():
-                                sub_idx = int(sub_key.split('_')[1])
-                                sub_grp = gf_grp[sub_key]
-                                z_gf = sub_grp['z'][:]
-                                e_gf = sub_grp['e'][:]
-                                n_gf = sub_grp['n'][:]
-                                t_gf = sub_grp['t'][:]
-                                tdata_gf = sub_grp['tdata'][:]
-                                t0_gf = sub_grp['t0'][()]
-                                station._greens_functions[sub_idx] = (z_gf, e_gf, n_gf, t_gf, tdata_gf, t0_gf)
-                        
-                        # Load spectrum GFs if present
-                        if f'sta_{i_station}' in src_file['GF_Spectrum']:
-                            spec_grp = src_file['GF_Spectrum'][f'sta_{i_station}']
-                            station._spectrum_greens = {}
-                            for sub_key in spec_grp.keys():
-                                sub_idx = int(sub_key.split('_')[1])
-                                sub_grp = spec_grp[sub_key]
-                                sz_real = sub_grp['spectrum_z_real'][:]
-                                sz_imag = sub_grp['spectrum_z_imag'][:]
-                                se_real = sub_grp['spectrum_e_real'][:]
-                                se_imag = sub_grp['spectrum_e_imag'][:]
-                                sn_real = sub_grp['spectrum_n_real'][:]
-                                sn_imag = sub_grp['spectrum_n_imag'][:]
-                                freqs = sub_grp['freqs'][:]
-                                sz = sz_real + 1j * sz_imag
-                                se = se_real + 1j * se_imag
-                                sn = sn_real + 1j * sn_imag
-                                station._spectrum_greens[sub_idx] = (sz, se, sn, freqs)
-                        
-                        # Write to final output using writer
-                        if writer:
-                            writer.write_station(station, i_station)
-                        
-                        # Clear station memory after writing
-                        station._greens_functions = {}
-                        station._spectrum_greens = {}
+                    # Save station data based on mode
+                    if use_temp_files:
+                        # PROGRESSIVE MODE: Save to temp file
+                        z_resp, e_resp, n_resp, t_resp = station.get_response()
+                        resp_grp = temp_gf_file['responses'].create_group(f'sta_{i_station}')
+                        resp_grp.create_dataset('z', data=z_resp)
+                        resp_grp.create_dataset('e', data=e_resp)
+                        resp_grp.create_dataset('n', data=n_resp)
+                        resp_grp.create_dataset('t', data=t_resp)
+                        resp_grp.create_dataset('x', data=station.x)
+                        resp_grp.create_dataset('is_internal', data=station.is_internal)
+                        resp_grp.attrs['name'] = station.metadata.get('name', '')
+                        temp_gf_file.flush()
+                        # Clear station memory
                         station._z = None
                         station._e = None
                         station._n = None
                         station._t = None
                         station._initialized = False
-                        
-                        print(f"[Rank 0] Written station {i_station}")
-                    
-                    src_file.close()
-                    
-                    # Delete temporary file after processing
-                    os.remove(src_filename)
-                    print(f"[Rank 0] Deleted: {src_filename}")
+                    else:
+                        # LEGACY MODE: Write directly to writer (only rank 0 has writer)
+                        if rank == 0 and writer:
+                            writer.write_station(station, i_station)
+
+                    next_station += skip_stations
+            
+            # ============================================================
+            # Close temporary file and synchronize all ranks (only if using temp files)
+            # ============================================================
+            if use_temp_files:
+                temp_gf_file.close()
+                print(f"[Rank {rank}] Closed temporary GF file: {temp_gf_filename}")
                 
-                print("="*60)
-                print("CONSOLIDATION COMPLETE")
-                print("="*60 + "\n")
-
-                # Build mapping list for writer
-                if writer is not None:
-                    full_mapping_list = []
+                if use_mpi and nprocs > 1:
+                    comm.Barrier()
+                    print(f"[Rank {rank}] Barrier passed - all ranks finished computation")
+                
+                # Stage two: Rank 0 consolidates all temporary files
+                if rank == 0:
+                    print("\n" + "="*60)
+                    print("CONSOLIDATION PHASE: Rank 0 merging all temporary files")
+                    print("="*60)
                     
-                    for i_sta in range(nstations):
-                        station = self._receivers.get_station_by_id(i_sta)
-                        for i_src, psource in enumerate(self._source):
-                            x_src = psource.x
-                            x_rec = station.x
-                            z_src = x_src[2]
-                            z_rec = x_rec[2]
-                            d = x_rec - x_src
-                            dh = np.sqrt(np.dot(d[0:2], d[0:2]))
+                    # Process each rank's temporary file
+                    for src_rank in range(nprocs):
+                        src_filename = f".shakermaker_temp/_temp_gf_rank_{src_rank}.h5"
+                        print(f"[Rank 0] Processing: {src_filename}")
+                        
+                        src_file = h5py.File(src_filename, 'r')
+                        
+                        # Process each station in this rank's file
+                        for sta_key in src_file['responses'].keys():
+                            i_station = int(sta_key.split('_')[1])
+                            station = self._receivers.get_station_by_id(i_station)
                             
-                            min_distance = float('inf')
-                            best_idx = -1
+                            # Load response data
+                            resp_grp = src_file['responses'][sta_key]
+                            z_resp = resp_grp['z'][:]
+                            e_resp = resp_grp['e'][:]
+                            n_resp = resp_grp['n'][:]
+                            t_resp = resp_grp['t'][:]
                             
-                            for i in range(len(dh_of_pairs)):
-                                if (abs(dh - dh_of_pairs[i]) < delta_h and
-                                    abs(z_src - zsrc_of_pairs[i]) < delta_v_src and
-                                    abs(z_rec - zrec_of_pairs[i]) < delta_v_rec):
-                                    dist = abs(dh - dh_of_pairs[i]) + abs(z_src - zsrc_of_pairs[i]) + abs(z_rec - zrec_of_pairs[i])
-                                    if dist < min_distance:
-                                        min_distance = dist
-                                        best_idx = i
+                            # Restore response to station object
+                            station._z = z_resp
+                            station._e = e_resp
+                            station._n = n_resp
+                            station._t = t_resp
+                            station._initialized = True
                             
-                            full_mapping_list.append([i_sta, i_src, best_idx])
+                            # Load GFs into station object temporarily for writer
+                            if f'sta_{i_station}' in src_file['GF']:
+                                gf_grp = src_file['GF'][f'sta_{i_station}']
+                                station._greens_functions = {}
+                                for sub_key in gf_grp.keys():
+                                    sub_idx = int(sub_key.split('_')[1])
+                                    sub_grp = gf_grp[sub_key]
+                                    z_gf = sub_grp['z'][:]
+                                    e_gf = sub_grp['e'][:]
+                                    n_gf = sub_grp['n'][:]
+                                    t_gf = sub_grp['t'][:]
+                                    tdata_gf = sub_grp['tdata'][:]
+                                    t0_gf = sub_grp['t0'][()]
+                                    station._greens_functions[sub_idx] = (z_gf, e_gf, n_gf, t_gf, tdata_gf, t0_gf)
+                            
+                            # Write to final output using writer
+                            if writer:
+                                writer.write_station(station, i_station)
+                            
+                            # Clear station memory after writing
+                            station._greens_functions = {}
+                            station._z = None
+                            station._e = None
+                            station._n = None
+                            station._t = None
+                            station._initialized = False
+                            
+                            print(f"[Rank 0] Written station {i_station}")
+                        
+                        src_file.close()
+                        
+                        # Delete temporary file after processing
+                        os.remove(src_filename)
+                        print(f"[Rank 0] Deleted: {src_filename}")
                     
-                    writer.node_pair_mapping = np.array(full_mapping_list, dtype=np.int32)
-                    writer.pairs_to_compute_for_mapping = pairs_to_compute
+                    print("="*60)
+                    print("CONSOLIDATION COMPLETE")
+                    print("="*60 + "\n")
 
-                if writer:
-                    writer.close()
-
-            # Note: Rank 0 already deleted all temp files during consolidation
-            # Non-zero ranks don't need to delete anything
+            # Build mapping list for writer (both modes)
+            if rank == 0 and writer is not None:
+                full_mapping_list = []
+                
+                for i_sta in range(nstations):
+                    station = self._receivers.get_station_by_id(i_sta)
+                    for i_src, psource in enumerate(self._source):
+                        x_src = psource.x
+                        x_rec = station.x
+                        z_src = x_src[2]
+                        z_rec = x_rec[2]
+                        d = x_rec - x_src
+                        dh = np.sqrt(np.dot(d[0:2], d[0:2]))
+                        
+                        min_distance = float('inf')
+                        best_idx = -1
+                        
+                        for i in range(len(dh_of_pairs)):
+                            if (abs(dh - dh_of_pairs[i]) < delta_h and
+                                abs(z_src - zsrc_of_pairs[i]) < delta_v_src and
+                                abs(z_rec - zrec_of_pairs[i]) < delta_v_rec):
+                                dist = abs(dh - dh_of_pairs[i]) + abs(z_src - zsrc_of_pairs[i]) + abs(z_rec - zrec_of_pairs[i])
+                                if dist < min_distance:
+                                    min_distance = dist
+                                    best_idx = i
+                        
+                        full_mapping_list.append([i_sta, i_src, best_idx])
+                
+                writer.node_pair_mapping = np.array(full_mapping_list, dtype=np.int32)
+                writer.pairs_to_compute_for_mapping = pairs_to_compute
+                
+                writer.close()
 
             fid_debug_mpi.close()
             hfile.close()
@@ -1492,7 +1420,7 @@ class ShakerMaker:
                         if verbose:
                             print("calling core START")
                         t1 = perf_counter()
-                        tdata, spectrum , z, e, n, t0 = self._call_core(dt, nfft, tb, nx, sigma, smth, wc1, wc2, pmin, pmax, dk, kc,
+                        tdata, z, e, n, t0 = self._call_core(dt, nfft, tb, nx, sigma, smth, wc1, wc2, pmin, pmax, dk, kc,
                                                              taper, aux_crust, psource, station, verbose)
                         t2 = perf_counter()
                         perf_time_core += t2 - t1
@@ -1896,29 +1824,6 @@ class ShakerMaker:
     @property
     def mpi_nprocs(self):
         return self._mpi_nprocs
-    # calculate the principal components with the 9x9 tensor
-    def calculate_zen_spectrum(self, spectrum, pf, df, lf, sx, sy, rx, ry):
-        dx = rx - sx
-        dy = ry - sy
-        p = np.arctan2(dy, dx)
-        f1 = np.cos(lf)*np.cos(pf) + np.sin(lf)*np.cos(df)*np.sin(pf)
-        f2 = np.cos(lf)*np.sin(pf) - np.sin(lf)*np.cos(df)*np.cos(pf)
-        f3 = -np.sin(lf)*np.sin(df)
-        n1 = -np.sin(pf)*np.sin(df)
-        n2 = np.cos(pf)*np.sin(df)
-        n3 = -np.cos(df)
-        sz = (spectrum[0, 6, :] * ((f1*n1-f2*n2)*np.cos(2*p) + (f1*n2+f2*n1)*np.sin(2*p)) +
-              spectrum[0, 3, :] * ((f1*n3+f3*n1)*np.cos(p) + (f2*n3+f3*n2)*np.sin(p)) +
-              spectrum[0, 0, :] * (f3*n3))
-        sr = (spectrum[0, 7, :] * ((f1*n1-f2*n2)*np.cos(2*p) + (f1*n2+f2*n1)*np.sin(2*p)) +
-              spectrum[0, 4, :] * ((f1*n3+f3*n1)*np.cos(p) + (f2*n3+f3*n2)*np.sin(p)) +
-              spectrum[0, 1, :] * (f3*n3))
-        st = (spectrum[0, 8, :] * ((f1*n1-f2*n2)*np.sin(2*p) - (f1*n2+f2*n1)*np.cos(2*p)) +
-              spectrum[0, 5, :] * ((f1*n3+f3*n1)*np.sin(p) - (f2*n3+f3*n2)*np.cos(p)))
-        se = -sr*np.sin(p) - st*np.cos(p)
-        sn = -sr*np.cos(p) + st*np.sin(p)
-        return sz, se, sn
-
     def _call_core(self, dt, nfft, tb, nx, sigma, smth, wc1, wc2, pmin, pmax, dk, kc, taper, crust, psource, station, verbose=False):
         mb = crust.nlayers
 
@@ -1966,13 +1871,13 @@ class ShakerMaker:
                    .format(mb, src, rcv, stype, updn, d, a, b, rho, qa, qb, dt, nfft, tb, nx, sigma, smth, wc1,
                            wc2, pmin, pmax, dk, kc, taper, x, pf, df, lf, sx, sy, rx, ry))
 
-        # Execute the core subgreen fortran routing
-        tdata, spectrum, z, e, n, t0 = core.subgreen(mb, src, rcv, stype, updn, d, a, b, rho, qa, qb, dt, nfft, tb, nx, sigma,
+        # Execute the core subgreen fortran routine
+        tdata, z, e, n, t0 = core.subgreen(mb, src, rcv, stype, updn, d, a, b, rho, qa, qb, dt, nfft, tb, nx, sigma,
                                            smth, wc1, wc2, pmin, pmax, dk, kc, taper, x, pf, df, lf, sx, sy, rx, ry)
 
         self._logger.debug('ShakerMaker._call_core - core.subgreen returned: z_size'.format(len(z)))
 
-        return tdata, spectrum, z, e, n, t0
+        return tdata, z, e, n, t0
 
 
     def _call_core_fast(self, tdata, dt, nfft, tb, nx, sigma, smth, wc1, wc2, pmin, pmax, dk, kc, taper, crust, psource, station, verbose=False):
@@ -2117,7 +2022,7 @@ class ShakerMaker:
             -------
             None
             """
-            title = f"🎉 ¡LARGA VIDA AL LADRUNO5000! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+            title = f"🎉 ¡LARGA VIDA AL LADRUNO0100! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
             if rank == 0:
                 print("\n\n")
                 print(title)
