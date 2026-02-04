@@ -1316,12 +1316,33 @@ class FFSPSource:
         plt.tight_layout()
         plt.show()
 
+
+
     def plot_spacial_distribution(self, figsize=(10, 8), field='rise_time', 
-                                      cmap='coolwarm', show_contours=True, 
-                                      contour_field='rupture_time', show_hypocenter=True,
-                                      save_fig=False, model_name='model'):
-        """Plot spatial distribution of subfault parameters."""
+                                  cmap='coolwarm', show_contours=True, 
+                                  contour_field='rupture_time', show_hypocenter=True,
+                                  contour_interval=None, contour_color='blue',
+                                  internal_ref=None, external_coord=None,
+                                  save_fig=False, model_name='model'):
+        """
+        Plot spatial distribution of subfault parameters with strike rotation.
+        """
         
+        import matplotlib.colors as mcolors
+        import matplotlib.pyplot as plt
+
+        # Get colormap (new way)
+        cmap_base = plt.get_cmap('YlOrRd', 256)
+
+        # Create new colormap starting with white
+        colors = cmap_base(np.linspace(0, 1, 256))
+        colors[0] = [1, 1, 1, 1]  # White
+
+        cmap_white = mcolors.ListedColormap(colors)
+        if cmap == 'cmap_white':
+            cmap = cmap_white
+
+
         nx = int(self.params['nsubx'])
         ny = int(self.params['nsuby'])
         lx = self.params['fault_length']
@@ -1330,6 +1351,7 @@ class FFSPSource:
         dy = self.dy
         cxp = self.params['x_hypc']
         cyp = self.params['y_hypc']
+        strike = self.params['strike']
         
         # Validate fields
         valid_fields = ['slip', 'rupture_time', 'rise_time', 'peak_time', 
@@ -1338,46 +1360,121 @@ class FFSPSource:
             raise ValueError(f"field must be one of {valid_fields}")
         if contour_field not in valid_fields:
             raise ValueError(f"contour_field must be one of {valid_fields}")
+        
         # Prepare data
         field_data = np.transpose(self.subfaults[field].reshape(nx, ny))
         contour_data = np.transpose(self.subfaults[contour_field].reshape(nx, ny))
-        x = np.linspace(-lx/2, lx/2, nx)
-        y = np.linspace(-ly/2, ly/2, ny)
-        X, Y = np.meshgrid(x, y)
+        
+        # Create local coordinates CENTERED ON HYPOCENTER
+        x_local = np.linspace(-lx/2, lx/2, nx)
+        y_local = np.linspace(0, ly, ny)
+
+        # Convert strike to radians
+        strike_rad = np.radians(strike)
+
+        # Create meshgrid centered on hypocenter
+        X_local, Y_local = np.meshgrid(x_local, y_local)
+
+        # Shift to center on hypocenter before rotating
+        X_centered = X_local - (cxp - lx/2)
+        Y_centered = Y_local - cyp
+
+        # Rotate around hypocenter
+        X_rot = X_centered * np.sin(strike_rad) + Y_centered * np.cos(strike_rad)
+        Y_rot = X_centered * np.cos(strike_rad) - Y_centered * np.sin(strike_rad)
+        
+        # Apply coordinate transformation if provided
+        if internal_ref is not None and external_coord is not None:
+            ref_x, ref_y = internal_ref
+            ext_x, ext_y = external_coord
+            
+            # Rotate the reference point
+            ref_x_rot = ref_x * np.sin(strike_rad) + ref_y * np.cos(strike_rad)
+            ref_y_rot = ref_x * np.cos(strike_rad) - ref_y * np.sin(strike_rad)
+            
+            # Calculate offset to place ref at external coord
+            offset_x = ext_x - ref_x_rot
+            offset_y = ext_y - ref_y_rot
+            
+            # Apply offset
+            X = X_rot + offset_x
+            Y = Y_rot + offset_y
+            
+            # Transform hypocenter
+            hypo_x = self.params['xref_hypc'] * np.sin(strike_rad) + self.params['yref_hypc'] * np.cos(strike_rad) + offset_x
+            hypo_y = self.params['xref_hypc'] * np.cos(strike_rad) - self.params['yref_hypc'] * np.sin(strike_rad) + offset_y
+            
+            xlabel = 'UTM Easting, X [km]'
+            ylabel = 'UTM Northing, Y [km]'
+        else:
+            # No transformation, use xref/yref as offset
+            X = X_rot + self.params['xref_hypc']
+            Y = Y_rot + self.params['yref_hypc']
+            
+            hypo_x = self.params['xref_hypc']
+            hypo_y = self.params['yref_hypc']
+            
+            xlabel = 'Along Dip [km]'
+            ylabel = 'Along Strike [km]'
+        
         # Labels
         field_labels = {
             'slip': 'Slip [m]', 'rupture_time': 'Rupture Time [s]',
             'rise_time': 'Rise Time [s]', 'peak_time': 'Peak Time [s]',
             'strike': 'Strike [°]', 'dip': 'Dip [°]', 'rake': 'Rake [°]',
         }
+        
         # Plot
-        plt.figure(figsize=figsize)
-        plt.imshow(field_data[::-1], cmap=cmap, 
-                  extent=(-lx/2-dx/2, lx/2+dx/2, -ly/2-dy/2, ly/2+dy/2), 
-                  interpolation='nearest')
-        plt.colorbar(label=field_labels[field], shrink=ly/lx)
+        fig, ax = plt.subplots(figsize=figsize)
+        
+        # Use pcolormesh for rotated coordinates
+        vmin = field_data.min()
+        vmax = field_data.max()  
+
+        im = ax.pcolormesh(X, Y, field_data, cmap=cmap, shading='auto',
+                    vmin=vmin, vmax=vmax)
+
+        plt.colorbar(im, label=field_labels[field], shrink=1.0, ax=ax)
+        
         # Contours
         if show_contours:
-            contours = plt.contour(X, Y, contour_data, 8, colors='blue', linewidths=1.5)
-            plt.clabel(contours, fontsize=10, fmt='%2.1f', inline=1)
+            if contour_interval is not None:
+                # Custom interval
+                levels = np.arange(0, contour_data.max() + contour_interval, contour_interval)
+                contours = ax.contour(X, Y, contour_data, levels=levels, colors=contour_color, linewidths=1.5)
+            else:
+                # Automatic levels
+                contours = ax.contour(X, Y, contour_data, 8, colors='blue', linewidths=1.5)
             
+            ax.clabel(contours, fontsize=10, fmt='%2.1f', inline=1)
+            ax.plot([], [], color='blue', linewidth=1.5, label=f'Isochrones ({field_labels[contour_field]})')
+
         # Hypocenter
         if show_hypocenter:
-            plt.scatter(cxp-lx/2, cyp-ly/2, c='red', s=300, marker='*', 
+            ax.scatter(hypo_x, hypo_y, c='red', s=300, marker='*', 
                        edgecolors='white', linewidth=2, label='Hypocenter', zorder=10)
-            plt.legend(loc='upper right')
-        plt.xlabel('Along Strike [km]')
-        plt.ylabel('Down Dip [km]')
         
-        if show_contours:
-            plt.title(f'{field_labels[field]} Distribution (contours: {field_labels[contour_field]})', 
-                     fontsize=14, fontweight='bold')
-        else:
-            plt.title(f'{field_labels[field]} Distribution', fontsize=14, fontweight='bold')
-        
-        plt.gca().invert_yaxis()
-        plt.gca().set_aspect('equal')
+        ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.1), ncol=2, frameon=True)
+
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+        ax.set_title(f'{field_labels[field]} Distribution', fontsize=14, fontweight='bold')
+        ax.set_aspect('equal')
+        # Add margins to the plot (10% padding)
+        x_min, x_max = X.min(), X.max()
+        y_min, y_max = Y.min(), Y.max()
+        x_range = x_max - x_min
+        y_range = y_max - y_min
+        padding = 0.01
+
+        ax.set_xlim(x_min - padding * x_range, x_max + padding * x_range)
+        ax.set_ylim(y_min - padding * y_range, y_max + padding * y_range)
+
+        for spine in ax.spines.values():
+            spine.set_visible(True)
+
         plt.tight_layout()
+
         
         # Save figure if requested
         if save_fig:
@@ -1389,6 +1486,144 @@ class FFSPSource:
                         facecolor='none')
         
         plt.show()
+
+
+
+    def plot_rupture_snapshot(self, time_snapshot, figsize=(10, 8), 
+                             field='slip', cmap='YlOrRd',
+                             show_rupture_front=True,
+                             internal_ref=None, external_coord=None,
+                             save_fig=False, model_name='model'):
+        """
+        Plot rupture propagation snapshot at a specific time.
+        """
+        
+        import matplotlib.colors as mcolors
+        import matplotlib.pyplot as plt
+        
+        # Custom colormap with white start
+        cmap_base = plt.get_cmap('YlOrRd', 256)
+        colors = cmap_base(np.linspace(0, 1, 256))
+        colors[0] = [1, 1, 1, 1]  # White
+        cmap_white = mcolors.ListedColormap(colors)
+        if cmap == 'cmap_white':
+            cmap = cmap_white
+        
+        # If cmap is still a string, create custom colormap
+        if isinstance(cmap, str):
+            cmap_base = plt.get_cmap(cmap, 256)
+            colors = cmap_base(np.linspace(0, 1, 256))
+            colors[0] = [1, 1, 1, 1]
+            cmap_custom = mcolors.ListedColormap(colors)
+        else:
+            cmap_custom = cmap
+        
+        nx = int(self.params['nsubx'])
+        ny = int(self.params['nsuby'])
+        lx = self.params['fault_length']
+        ly = self.params['fault_width']
+        cxp = self.params['x_hypc']
+        cyp = self.params['y_hypc']
+        strike = self.params['strike']
+        
+        # Get data
+        rupture_time = np.transpose(self.subfaults['rupture_time'].reshape(nx, ny))
+        field_data = np.transpose(self.subfaults[field].reshape(nx, ny))
+        
+        # Get vmin/vmax from FULL field (before masking)
+        vmin = field_data.min()
+        vmax = field_data.max()
+        
+        # NOW apply mask
+        mask = rupture_time <= time_snapshot
+        field_masked = np.ma.masked_where(~mask, field_data)
+        
+        # Coordinates
+        x_local = np.linspace(-lx/2, lx/2, nx)
+        y_local = np.linspace(0, ly, ny)
+        strike_rad = np.radians(strike)
+        X_local, Y_local = np.meshgrid(x_local, y_local)
+        
+        X_centered = X_local - (cxp - lx/2)
+        Y_centered = Y_local - cyp
+        X_rot = X_centered * np.sin(strike_rad) + Y_centered * np.cos(strike_rad)
+        Y_rot = X_centered * np.cos(strike_rad) - Y_centered * np.sin(strike_rad)
+        
+        if internal_ref is not None and external_coord is not None:
+            ref_x, ref_y = internal_ref
+            ext_x, ext_y = external_coord
+            ref_x_rot = ref_x * np.sin(strike_rad) + ref_y * np.cos(strike_rad)
+            ref_y_rot = ref_x * np.cos(strike_rad) - ref_y * np.sin(strike_rad)
+            offset_x = ext_x - ref_x_rot
+            offset_y = ext_y - ref_y_rot
+            X = X_rot + offset_x
+            Y = Y_rot + offset_y
+            hypo_x = self.params['xref_hypc'] * np.sin(strike_rad) + self.params['yref_hypc'] * np.cos(strike_rad) + offset_x
+            hypo_y = self.params['xref_hypc'] * np.cos(strike_rad) - self.params['yref_hypc'] * np.sin(strike_rad) + offset_y
+            xlabel = 'UTM Easting, X [km]'
+            ylabel = 'UTM Northing, Y [km]'
+        else:
+            X = X_rot + self.params['xref_hypc']
+            Y = Y_rot + self.params['yref_hypc']
+            hypo_x = self.params['xref_hypc']
+            hypo_y = self.params['yref_hypc']
+            xlabel = 'Along Dip [km]'
+            ylabel = 'Along Strike [km]'
+        
+        # Labels
+        field_labels = {
+            'slip': 'Slip [m]',
+            'rise_time': 'Rise Time [s]',
+            'peak_time': 'Peak Time [s]',
+        }
+        
+        # Plot
+        fig, ax = plt.subplots(figsize=figsize)
+        
+        # Gray background for unruptured areas
+        ax.set_facecolor('#E8E8E8')
+        
+        # Plot masked field with fixed vmin/vmax
+        im = ax.pcolormesh(X, Y, field_masked, cmap=cmap_custom, shading='auto',
+                           vmin=vmin, vmax=vmax)
+        cbar = plt.colorbar(im, label=field_labels[field], shrink=1.0, ax=ax)
+        
+        # Blue contour at rupture front
+        if show_rupture_front:
+            contours = ax.contour(X, Y, rupture_time, levels=[time_snapshot], 
+                                 colors='tab:blue', linewidths=2, zorder=5)
+        
+        # Hypocenter
+        ax.scatter(hypo_x, hypo_y, c='white', s=400, marker='*', 
+                   edgecolors='black', linewidth=3, label='Hypocenter', zorder=10)
+        
+        ax.legend(loc='upper right', frameon=True)
+        ax.set_xlabel(xlabel, fontsize=12)
+        ax.set_ylabel(ylabel, fontsize=12)
+        ax.set_title(f'T={time_snapshot:.2f}s', fontsize=14, fontweight='bold', loc='left')
+        ax.set_aspect('equal')
+        
+        # Margins
+        x_min, x_max = X.min(), X.max()
+        y_min, y_max = Y.min(), Y.max()
+        x_range = x_max - x_min
+        y_range = y_max - y_min
+        padding = 0.05
+        ax.set_xlim(x_min - padding * x_range, x_max + padding * x_range)
+        ax.set_ylim(y_min - padding * y_range, y_max + padding * y_range)
+        
+        for spine in ax.spines.values():
+            spine.set_visible(True)
+        
+        plt.tight_layout()
+        
+        if save_fig:
+            plt.savefig(f'{model_name}_snapshot_t{time_snapshot:.2f}s.png', 
+                        dpi=300, bbox_inches='tight')
+        
+        plt.show()
+
+
 
     def plot_quality_metrics(self, figsize=(14, 5)):
         """Plot PDF and Spectral Error side by side."""
@@ -1489,28 +1724,37 @@ class FFSPSource:
         octave = self.source_stats['spectrum_octave']
         plt.figure(figsize=figsize)
         
-        # Subplot 1: Full Spectrum
+        # Normalize to compare shapes
+        synth_norm = spectrum['moment_rate_synth'] / spectrum['moment_rate_synth'].max()
+        dcf_norm = spectrum['moment_rate_dcf'] / spectrum['moment_rate_dcf'].max()
+        
+        # Subplot 1: Full Spectrum (normalized)
         plt.subplot(1, 2, 1)
-        plt.loglog(spectrum['freq'], spectrum['moment_rate_synth'], color='tab:blue', lw=2.5, label='Synthetic Model')
-        plt.loglog(spectrum['freq'], spectrum['moment_rate_dcf'], color='tab:red', lw=2.5, ls='--', label='DCF Target')
+        plt.loglog(spectrum['freq'], synth_norm, color='tab:blue', lw=2.5, label='Synthetic Model')
+        plt.loglog(spectrum['freq'], dcf_norm, color='tab:red', lw=2.5, ls='--', label='DCF Target')
         plt.xlabel('Frequency (Hz)', fontsize=12)
-        plt.ylabel('Moment Rate Spectrum', fontsize=12)
+        plt.ylabel('Normalized Moment Rate', fontsize=12)
         plt.title('Moment Rate Spectrum', fontsize=13, fontweight='bold')
         plt.legend(fontsize=11)
         plt.grid(True, which='both', alpha=0.3)
         
-        # Subplot 2: Octave-Averaged
+        # Subplot 2: Octave-Averaged (normalize in log space)
         plt.subplot(1, 2, 2)
-        plt.semilogx(octave['freq_center'], octave['logmean_synth'], 'o-', color='tab:blue', lw=2.5, markersize=8, label='Synthetic (log-mean)')
-        plt.semilogx(octave['freq_center'], octave['logmean_dcf'], 's--', color='tab:red', lw=2.5, markersize=8, label='DCF Target (log-mean)')
+
+        # Normalize: subtract minimum, then divide by max to get 0-1 range
+        synth_log_norm = octave['logmean_synth'] - octave['logmean_synth'].min()
+        synth_log_norm = synth_log_norm / synth_log_norm.max()
+
+        dcf_log_norm = octave['logmean_dcf'] - octave['logmean_dcf'].min()
+        dcf_log_norm = dcf_log_norm / dcf_log_norm.max()
+
+        plt.semilogx(octave['freq_center'], synth_log_norm, 'o-', color='tab:blue', lw=2.5, markersize=8, label='Synthetic (log-mean)')
+        plt.semilogx(octave['freq_center'], dcf_log_norm, 's--', color='tab:red', lw=2.5, markersize=8, label='DCF Target (log-mean)')
         plt.xlabel('Frequency (Hz)', fontsize=12)
-        plt.ylabel('Log Mean Amplitude', fontsize=12)
+        plt.ylabel('Normalized Log Mean Amplitude', fontsize=12)
         plt.title('Octave-Averaged Spectrum', fontsize=13, fontweight='bold')
         plt.legend(fontsize=11)
         plt.grid(alpha=0.3)
-        
-        plt.tight_layout()
-        plt.show()
 
     def plot_source_time_function(self, figsize=(10, 6),xlim=None):
         """Plot Source Time Function (STF)."""
