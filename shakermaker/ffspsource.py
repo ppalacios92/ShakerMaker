@@ -924,6 +924,314 @@ class FFSPSource:
         return obj
     
     
+    @classmethod
+    def from_ffsp_format(cls, input_dir: str, output_name: str = "FFSP_OUTPUT"):
+        """
+        Load FFSPSource from original FFSP format files.
+        
+        Reads files from a directory containing:
+        - FFSP_OUTPUT.001, .002, ... (realizations)
+        - FFSP_OUTPUT.bst (best realization)
+        - source_model.score (statistics)
+        - source_model.list (metadata)
+        - calsvf.dat, calsvf_tim.dat, logsvf.dat (spectral data, optional)
+        
+        Parameters
+        ----------
+        input_dir : str
+            Directory containing FFSP files
+        output_name : str, optional
+            Base name of FFSP files (default: "FFSP_OUTPUT")
+        
+        Returns
+        -------
+        FFSPSource
+            Loaded FFSPSource object
+        """
+        
+        print(f"\nLoading FFSP format files from: {input_dir}")
+        print(f"Output name: {output_name}")
+        
+        # Read metadata from source_model.list
+        list_file = os.path.join(input_dir, "source_model.list")
+        with open(list_file, 'r') as f:
+            line1 = f.readline().split()
+            id_sf_type = int(line1[0])
+            nsubx = int(line1[1])
+            nsuby = int(line1[2])
+            dx = float(line1[3])
+            dy = float(line1[4])
+            x_hypc = float(line1[5])
+            y_hypc = float(line1[6])
+            
+            line2 = f.readline().split()
+            xref_hypc = float(line2[0])
+            yref_hypc = float(line2[1])
+            angle_north_to_x = float(line2[2])
+        
+        fault_length = dx * nsubx
+        fault_width = dy * nsuby
+        npts = nsubx * nsuby
+        
+        print(f"  ✓ Read metadata: {nsubx}x{nsuby} subfaults")
+        
+        # Read statistics from source_model.score
+        score_file = os.path.join(input_dir, "source_model.score")
+        with open(score_file, 'r') as f:
+            n_realizations = int(f.readline().strip())
+            f.readline()  # Skip "Target:" line
+            
+            ave_tr = []
+            ave_tp = []
+            ave_vr = []
+            err_spectra = []
+            pdf = []
+            
+            for i in range(n_realizations):
+                f.readline()  # Skip filename line
+                values = f.readline().split()
+                ave_tr.append(float(values[0]))
+                ave_tp.append(float(values[1]))
+                ave_vr.append(float(values[2]))
+                err_spectra.append(float(values[3]))
+                pdf.append(float(values[4]))
+        
+        ave_tr = np.array(ave_tr)
+        ave_tp = np.array(ave_tp)
+        ave_vr = np.array(ave_vr)
+        err_spectra = np.array(err_spectra)
+        pdf = np.array(pdf)
+        
+        print(f"  ✓ Read statistics for {n_realizations} realizations")
+        
+        # Read all realizations
+        x = np.zeros((npts, n_realizations))
+        y = np.zeros((npts, n_realizations))
+        z = np.zeros((npts, n_realizations))
+        slip = np.zeros((npts, n_realizations))
+        rupture_time = np.zeros((npts, n_realizations))
+        rise_time = np.zeros((npts, n_realizations))
+        peak_time = np.zeros((npts, n_realizations))
+        strike = np.zeros((npts, n_realizations))
+        dip = np.zeros((npts, n_realizations))
+        rake = np.zeros((npts, n_realizations))
+        
+        for i in range(n_realizations):
+            filename = os.path.join(input_dir, f"{output_name}.{i+1:03d}")
+            with open(filename, 'r') as f:
+                header = f.readline().split()
+                nseg = int(header[0])
+                npts_file = int(header[1])
+                
+                for j in range(npts):
+                    values = f.readline().split()
+                    x[j, i] = float(values[0])
+                    y[j, i] = float(values[1])
+                    z[j, i] = float(values[2])
+                    slip[j, i] = float(values[3])
+                    rupture_time[j, i] = float(values[4])
+                    rise_time[j, i] = float(values[5])
+                    peak_time[j, i] = float(values[6])
+                    strike[j, i] = float(values[7])
+                    dip[j, i] = float(values[8])
+                    rake[j, i] = float(values[9])
+        
+        print(f"  ✓ Read {n_realizations} realization files")
+        
+        # Read best realization
+        best_file = os.path.join(input_dir, f"{output_name}.bst")
+        best_x = np.zeros(npts)
+        best_y = np.zeros(npts)
+        best_z = np.zeros(npts)
+        best_slip = np.zeros(npts)
+        best_rupture_time = np.zeros(npts)
+        best_rise_time = np.zeros(npts)
+        best_peak_time = np.zeros(npts)
+        best_strike = np.zeros(npts)
+        best_dip = np.zeros(npts)
+        best_rake = np.zeros(npts)
+        
+        with open(best_file, 'r') as f:
+            header = f.readline().split()
+            for j in range(npts):
+                values = f.readline().split()
+                best_x[j] = float(values[0])
+                best_y[j] = float(values[1])
+                best_z[j] = float(values[2])
+                best_slip[j] = float(values[3])
+                best_rupture_time[j] = float(values[4])
+                best_rise_time[j] = float(values[5])
+                best_peak_time[j] = float(values[6])
+                best_strike[j] = float(values[7])
+                best_dip[j] = float(values[8])
+                best_rake[j] = float(values[9])
+        
+        print(f"  ✓ Read best realization file")
+        
+        # Read spectral data (optional)
+        spectrum = None
+        stf_time = None
+        spectrum_octave = None
+        
+        calsvf_file = os.path.join(input_dir, "calsvf.dat")
+        if os.path.exists(calsvf_file):
+            with open(calsvf_file, 'r') as f:
+                nphf_spec = int(f.readline().strip())
+                freq_spec = np.zeros(nphf_spec)
+                moment_rate = np.zeros(nphf_spec)
+                dcf = np.zeros(nphf_spec)
+                
+                for i in range(nphf_spec):
+                    values = f.readline().split()
+                    freq_spec[i] = float(values[0])
+                    moment_rate[i] = float(values[1])
+                    dcf[i] = float(values[2])
+            
+            spectrum = {
+                'freq': freq_spec,
+                'moment_rate_synth': moment_rate,
+                'moment_rate_dcf': dcf,
+            }
+            print(f"  ✓ Read spectrum (calsvf.dat)")
+        
+        calsvf_tim_file = os.path.join(input_dir, "calsvf_tim.dat")
+        if os.path.exists(calsvf_tim_file):
+            with open(calsvf_tim_file, 'r') as f:
+                ntime_spec = int(f.readline().strip())
+                time = np.zeros(ntime_spec)
+                stf = np.zeros(ntime_spec)
+                
+                for i in range(ntime_spec):
+                    values = f.readline().split()
+                    time[i] = float(values[0])
+                    stf[i] = float(values[1])
+            
+            stf_time = {
+                'time': time,
+                'stf': stf,
+            }
+            print(f"  ✓ Read STF time (calsvf_tim.dat)")
+        
+        logsvf_file = os.path.join(input_dir, "logsvf.dat")
+        if os.path.exists(logsvf_file):
+            with open(logsvf_file, 'r') as f:
+                lnpt_spec = int(f.readline().strip())
+                freq_center = np.zeros(lnpt_spec)
+                logmean_synth = np.zeros(lnpt_spec)
+                logmean_dcf = np.zeros(lnpt_spec)
+                
+                for i in range(lnpt_spec):
+                    values = f.readline().split()
+                    freq_center[i] = float(values[0])
+                    logmean_synth[i] = float(values[1])
+                    logmean_dcf[i] = float(values[2])
+            
+            spectrum_octave = {
+                'freq_center': freq_center,
+                'logmean_synth': logmean_synth,
+                'logmean_dcf': logmean_dcf,
+            }
+            print(f"  ✓ Read octave spectrum (logsvf.dat)")
+        
+        # Create dummy crust model (user needs to provide correct one)
+        from .crustmodel import CrustModel
+        crust_model = CrustModel(1)
+        crust_model.add_layer(50.0, 6.0, 3.5, 2.7, 600.0, 300.0)
+        print(f"  ! Using dummy crust model (replace with correct model)")
+        
+        # Create object with minimal parameters
+        obj = cls(
+            id_sf_type=id_sf_type,
+            freq_min=0.0,  # Unknown, set default
+            freq_max=10.0,  # Unknown, set default
+            fault_length=fault_length,
+            fault_width=fault_width,
+            x_hypc=x_hypc,
+            y_hypc=y_hypc,
+            depth_hypc=0.0,  # Unknown, set default
+            xref_hypc=xref_hypc,
+            yref_hypc=yref_hypc,
+            magnitude=0.0,  # Unknown, set default
+            fc_main_1=0.0,  # Unknown, set default
+            fc_main_2=0.0,  # Unknown, set default
+            rv_avg=ave_vr.mean(),  # Use average from data
+            ratio_rise=0.0,  # Unknown, set default
+            strike=strike[:, 0].mean(),  # Use mean from first realization
+            dip=dip[:, 0].mean(),
+            rake=rake[:, 0].mean(),
+            pdip_max=0.0,  # Unknown, set default
+            prake_max=0.0,  # Unknown, set default
+            nsubx=nsubx,
+            nsuby=nsuby,
+            nb_taper_trbl=[0, 0, 0, 0],  # Unknown, set default
+            seeds=[0, 0, 0],  # Unknown, set default
+            id_ran1=1,
+            id_ran2=n_realizations,
+            angle_north_to_x=angle_north_to_x,
+            is_moment=1,  # Unknown, set default
+            crust_model=crust_model,
+            output_name=output_name,
+            verbose=False
+        )
+        
+        # Store loaded data
+        obj.all_realizations = {
+            'n_realizations': n_realizations,
+            'nseg': nseg,
+            'npts': npts,
+            'x': x,
+            'y': y,
+            'z': z,
+            'slip': slip,
+            'rupture_time': rupture_time,
+            'rise_time': rise_time,
+            'peak_time': peak_time,
+            'strike': strike,
+            'dip': dip,
+            'rake': rake,
+        }
+        
+        obj.best_realization = {
+            'nseg': nseg,
+            'npts': npts,
+            'x': best_x,
+            'y': best_y,
+            'z': best_z,
+            'slip': best_slip,
+            'rupture_time': best_rupture_time,
+            'rise_time': best_rise_time,
+            'peak_time': best_peak_time,
+            'strike': best_strike,
+            'dip': best_dip,
+            'rake': best_rake,
+        }
+        
+        obj.source_stats = {
+            'source_score': {
+                'n_realizations': n_realizations,
+                'ave_tr': ave_tr,
+                'ave_tp': ave_tp,
+                'ave_vr': ave_vr,
+                'err_spectra': err_spectra,
+                'pdf': pdf,
+            }
+        }
+        
+        if spectrum is not None:
+            obj.source_stats['spectrum'] = spectrum
+        if stf_time is not None:
+            obj.source_stats['stf_time'] = stf_time
+        if spectrum_octave is not None:
+            obj.source_stats['spectrum_octave'] = spectrum_octave
+        
+        obj.subfaults = obj.best_realization
+        obj.active_realization = 'best'
+        
+        print(f"\n✓ Loaded {n_realizations} realizations from FFSP format")
+        print(f"✓ Best realization PDF={pdf.min():.6f}\n")
+        
+        return obj
+    
     # ============ PLOTTING METHODS ============
     
     def plot_histogram(self, field='slip', bins=50, figsize=(7, 5)):
@@ -962,8 +1270,9 @@ class FFSPSource:
         plt.show()
 
     def plot_spacial_distribution(self, figsize=(10, 8), field='rise_time', 
-                                  cmap='coolwarm', show_contours=True, 
-                                  contour_field='rupture_time', show_hypocenter=True):
+                                      cmap='coolwarm', show_contours=True, 
+                                      contour_field='rupture_time', show_hypocenter=True,
+                                      save_fig=False, model_name='model'):
         """Plot spatial distribution of subfault parameters."""
         
         nx = int(self.params['nsubx'])
@@ -982,28 +1291,24 @@ class FFSPSource:
             raise ValueError(f"field must be one of {valid_fields}")
         if contour_field not in valid_fields:
             raise ValueError(f"contour_field must be one of {valid_fields}")
-
         # Prepare data
         field_data = np.transpose(self.subfaults[field].reshape(nx, ny))
         contour_data = np.transpose(self.subfaults[contour_field].reshape(nx, ny))
         x = np.linspace(-lx/2, lx/2, nx)
         y = np.linspace(-ly/2, ly/2, ny)
         X, Y = np.meshgrid(x, y)
-
         # Labels
         field_labels = {
             'slip': 'Slip [m]', 'rupture_time': 'Rupture Time [s]',
             'rise_time': 'Rise Time [s]', 'peak_time': 'Peak Time [s]',
             'strike': 'Strike [°]', 'dip': 'Dip [°]', 'rake': 'Rake [°]',
         }
-
         # Plot
         plt.figure(figsize=figsize)
         plt.imshow(field_data[::-1], cmap=cmap, 
                   extent=(-lx/2-dx/2, lx/2+dx/2, -ly/2-dy/2, ly/2+dy/2), 
                   interpolation='nearest')
         plt.colorbar(label=field_labels[field], shrink=ly/lx)
-
         # Contours
         if show_contours:
             contours = plt.contour(X, Y, contour_data, 8, colors='blue', linewidths=1.5)
@@ -1014,7 +1319,6 @@ class FFSPSource:
             plt.scatter(cxp-lx/2, cyp-ly/2, c='red', s=300, marker='*', 
                        edgecolors='white', linewidth=2, label='Hypocenter', zorder=10)
             plt.legend(loc='upper right')
-
         plt.xlabel('Along Strike [km]')
         plt.ylabel('Down Dip [km]')
         
@@ -1027,6 +1331,16 @@ class FFSPSource:
         plt.gca().invert_yaxis()
         plt.gca().set_aspect('equal')
         plt.tight_layout()
+        
+        # Save figure if requested
+        if save_fig:
+            plt.savefig(f'{model_name}_spatial_distribution.svg', 
+                        format='svg', 
+                        dpi=600, 
+                        bbox_inches='tight', 
+                        transparent=True,
+                        facecolor='none')
+        
         plt.show()
 
     def plot_quality_metrics(self, figsize=(14, 5)):
