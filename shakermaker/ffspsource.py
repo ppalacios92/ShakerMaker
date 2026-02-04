@@ -856,9 +856,9 @@ class FFSPSource:
                         params[key] = float(parts[1])
             
             self.params = params
-            self.dx = params['dx']
-            self.dy = params['dy']
-            self.area = params['area']
+            self.dx = params['fault_length'] / params['nsubx']
+            self.dy = params['fault_width'] / params['nsuby']
+            self.area = self.dx * self.dy
             self.output_name = params.get('output_name', 'FFSP_OUTPUT')
             self.verbose = True
             
@@ -1027,8 +1027,257 @@ class FFSPSource:
         
         obj.load_ffsp_format(input_dir, output_name)
         return obj
-
-
+    
+    @classmethod
+    def from_ffsp_format_legacy(cls, input_dir: str, output_name: str = "FFSP_OUTPUT"):
+        """
+        Load FFSPSource from legacy/old FFSP format (pre-2025).
+        Reads from .inp and .vel files instead of source_model.params.
+        
+        Parameters
+        ----------
+        input_dir : str
+            Directory containing FFSP files
+        output_name : str, optional
+            Base name of FFSP files (default: "FFSP_OUTPUT")
+        
+        Returns
+        -------
+        FFSPSource
+            Loaded FFSPSource object
+        """
+        
+        print(f"Loading legacy FFSP: {input_dir}")
+        
+        # Find .inp file by extension
+        import glob
+        inp_files = glob.glob(os.path.join(input_dir, "*.inp"))
+        if not inp_files:
+            raise FileNotFoundError(f"No .inp file found in {input_dir}")
+        inp_file = inp_files[0]
+        
+        # Read parameters from .inp
+        with open(inp_file, 'r') as f:
+            lines = f.readlines()
+        
+        # Parse .inp
+        parts = lines[0].split()
+        id_sf_type = int(parts[0])
+        freq_min = float(parts[1])
+        freq_max = float(parts[2])
+        
+        parts = lines[1].split()
+        fault_length = float(parts[0])
+        fault_width = float(parts[1])
+        
+        parts = lines[2].split()
+        x_hypc = float(parts[0])
+        y_hypc = float(parts[1])
+        depth_hypc = float(parts[2])
+        
+        parts = lines[3].split()
+        xref_hypc = float(parts[0])
+        yref_hypc = float(parts[1])
+        
+        parts = lines[4].split()
+        magnitude = float(parts[0])
+        fc_main_1 = float(parts[1])
+        fc_main_2 = float(parts[2])
+        rv_avg = float(parts[3])
+        
+        ratio_rise = float(lines[5].strip())
+        
+        parts = lines[6].split()
+        strike = float(parts[0])
+        dip = float(parts[1])
+        rake = float(parts[2])
+        
+        parts = lines[7].split()
+        pdip_max = float(parts[0])
+        prake_max = float(parts[1])
+        
+        parts = lines[8].split()
+        nsubx = int(parts[0])
+        nsuby = int(parts[1])
+        
+        parts = lines[9].split()
+        nb_taper_trbl = [int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3])]
+        
+        parts = lines[10].split()
+        seeds = [int(parts[0]), int(parts[1]), int(parts[2])]
+        
+        parts = lines[11].split()
+        id_ran1 = int(parts[0])
+        id_ran2 = int(parts[1])
+        
+        vel_filename = lines[12].strip()
+        angle_north_to_x = float(lines[13].strip())
+        is_moment = int(lines[14].strip())
+        
+        if len(lines) > 15:
+            output_name_from_file = lines[15].strip()
+            if output_name == "FFSP_OUTPUT" and output_name_from_file:
+                output_name = output_name_from_file
+        
+        # Find .vel file (try specified name first, then any .vel)
+        vel_file = os.path.join(input_dir, vel_filename)
+        if not os.path.exists(vel_file):
+            vel_files = glob.glob(os.path.join(input_dir, "*.vel"))
+            if not vel_files:
+                raise FileNotFoundError(f"No .vel file found in {input_dir}")
+            vel_file = vel_files[0]
+        
+        # Read crust model from .vel file (old format: vp vs rho thickness qa qb)
+        from .crustmodel import CrustModel
+        with open(vel_file, 'r') as f:
+            line = f.readline().strip().split()
+            nlayers = int(line[0])  # First number only
+            crust_model = CrustModel(nlayers)
+            for i in range(nlayers):
+                values = f.readline().split()
+                # Old format: vp vs rho thickness qa qb
+                crust_model.add_layer(float(values[3]), float(values[0]), float(values[1]),
+                                     float(values[2]), float(values[4]), float(values[5]))
+        # Create object
+        obj = cls(
+            id_sf_type=id_sf_type, freq_min=freq_min, freq_max=freq_max,
+            fault_length=fault_length, fault_width=fault_width,
+            x_hypc=x_hypc, y_hypc=y_hypc, depth_hypc=depth_hypc,
+            xref_hypc=xref_hypc, yref_hypc=yref_hypc,
+            magnitude=magnitude, fc_main_1=fc_main_1, fc_main_2=fc_main_2,
+            rv_avg=rv_avg, ratio_rise=ratio_rise,
+            strike=strike, dip=dip, rake=rake,
+            pdip_max=pdip_max, prake_max=prake_max,
+            nsubx=nsubx, nsuby=nsuby,
+            nb_taper_trbl=nb_taper_trbl, seeds=seeds,
+            id_ran1=id_ran1, id_ran2=id_ran2,
+            angle_north_to_x=angle_north_to_x, is_moment=is_moment,
+            crust_model=crust_model, output_name=output_name,
+            verbose=False
+        )
+        
+        # Load data files
+        obj._load_ffsp_data_legacy(input_dir, output_name)
+        return obj
+    
+    def _load_ffsp_data_legacy(self, input_dir: str, output_name: str):
+        """Helper to load FFSP data files for legacy format"""
+        
+        # Read source_model.score
+        score_file = os.path.join(input_dir, "source_model.score")
+        with open(score_file, 'r') as f:
+            n_realizations = int(f.readline().strip())
+            f.readline()
+            ave_tr, ave_tp, ave_vr, err_spectra, pdf = [], [], [], [], []
+            for i in range(n_realizations):
+                f.readline()
+                values = f.readline().split()
+                ave_tr.append(float(values[0]))
+                ave_tp.append(float(values[1]))
+                ave_vr.append(float(values[2]))
+                err_spectra.append(float(values[3]))
+                pdf.append(float(values[4]))
+        
+        npts = self.params['nsubx'] * self.params['nsuby']
+        x = np.zeros((npts, n_realizations))
+        y = np.zeros((npts, n_realizations))
+        z = np.zeros((npts, n_realizations))
+        slip = np.zeros((npts, n_realizations))
+        rupture_time = np.zeros((npts, n_realizations))
+        rise_time = np.zeros((npts, n_realizations))
+        peak_time = np.zeros((npts, n_realizations))
+        strike = np.zeros((npts, n_realizations))
+        dip = np.zeros((npts, n_realizations))
+        rake = np.zeros((npts, n_realizations))
+        
+        for i in range(n_realizations):
+            filename = os.path.join(input_dir, f"{output_name}.{i+1:03d}")
+            with open(filename, 'r') as f:
+                header = f.readline().split()
+                nseg = int(header[0])
+                for j in range(npts):
+                    values = f.readline().split()
+                    x[j, i] = float(values[0])
+                    y[j, i] = float(values[1])
+                    z[j, i] = float(values[2])
+                    slip[j, i] = float(values[3])
+                    rupture_time[j, i] = float(values[4])
+                    rise_time[j, i] = float(values[5])
+                    peak_time[j, i] = float(values[6])
+                    strike[j, i] = float(values[7])
+                    dip[j, i] = float(values[8])
+                    rake[j, i] = float(values[9])
+        
+        self.all_realizations = {
+            'n_realizations': n_realizations, 'nseg': nseg, 'npts': npts,
+            'x': x, 'y': y, 'z': z, 'slip': slip, 'rupture_time': rupture_time,
+            'rise_time': rise_time, 'peak_time': peak_time, 'strike': strike,
+            'dip': dip, 'rake': rake,
+        }
+        
+        # Read best realization
+        best_file = os.path.join(input_dir, f"{output_name}.bst")
+        best_x, best_y, best_z = np.zeros(npts), np.zeros(npts), np.zeros(npts)
+        best_slip, best_rupture_time, best_rise_time = np.zeros(npts), np.zeros(npts), np.zeros(npts)
+        best_peak_time, best_strike, best_dip, best_rake = np.zeros(npts), np.zeros(npts), np.zeros(npts), np.zeros(npts)
+        
+        with open(best_file, 'r') as f:
+            f.readline()
+            for j in range(npts):
+                values = f.readline().split()
+                best_x[j], best_y[j], best_z[j] = float(values[0]), float(values[1]), float(values[2])
+                best_slip[j], best_rupture_time[j], best_rise_time[j] = float(values[3]), float(values[4]), float(values[5])
+                best_peak_time[j], best_strike[j], best_dip[j], best_rake[j] = float(values[6]), float(values[7]), float(values[8]), float(values[9])
+        
+        self.best_realization = {
+            'nseg': nseg, 'npts': npts, 'x': best_x, 'y': best_y, 'z': best_z,
+            'slip': best_slip, 'rupture_time': best_rupture_time, 'rise_time': best_rise_time,
+            'peak_time': best_peak_time, 'strike': best_strike, 'dip': best_dip, 'rake': best_rake,
+        }
+        
+        self.source_stats = {
+            'source_score': {
+                'n_realizations': n_realizations,
+                'ave_tr': np.array(ave_tr), 'ave_tp': np.array(ave_tp), 'ave_vr': np.array(ave_vr),
+                'err_spectra': np.array(err_spectra), 'pdf': np.array(pdf),
+            }
+        }
+        
+        # Load spectral data if available
+        calsvf_file = os.path.join(input_dir, "calsvf.dat")
+        if os.path.exists(calsvf_file):
+            with open(calsvf_file, 'r') as f:
+                nphf_spec = int(f.readline().strip())
+                freq_spec, moment_rate, dcf = np.zeros(nphf_spec), np.zeros(nphf_spec), np.zeros(nphf_spec)
+                for i in range(nphf_spec):
+                    values = f.readline().split()
+                    freq_spec[i], moment_rate[i], dcf[i] = float(values[0]), float(values[1]), float(values[2])
+            self.source_stats['spectrum'] = {'freq': freq_spec, 'moment_rate_synth': moment_rate, 'moment_rate_dcf': dcf}
+            
+            calsvf_tim = os.path.join(input_dir, "calsvf_tim.dat")
+            if os.path.exists(calsvf_tim):
+                with open(calsvf_tim, 'r') as f:
+                    ntime_spec = int(f.readline().strip())
+                    time, stf = np.zeros(ntime_spec), np.zeros(ntime_spec)
+                    for i in range(ntime_spec):
+                        values = f.readline().split()
+                        time[i], stf[i] = float(values[0]), float(values[1])
+                self.source_stats['stf_time'] = {'time': time, 'stf': stf}
+            
+            logsvf = os.path.join(input_dir, "logsvf.dat")
+            if os.path.exists(logsvf):
+                with open(logsvf, 'r') as f:
+                    lnpt_spec = int(f.readline().strip())
+                    freq_center, logmean_synth, logmean_dcf = np.zeros(lnpt_spec), np.zeros(lnpt_spec), np.zeros(lnpt_spec)
+                    for i in range(lnpt_spec):
+                        values = f.readline().split()
+                        freq_center[i], logmean_synth[i], logmean_dcf[i] = float(values[0]), float(values[1]), float(values[2])
+                self.source_stats['spectrum_octave'] = {'freq_center': freq_center, 'logmean_synth': logmean_synth, 'logmean_dcf': logmean_dcf}
+        
+        self.subfaults = self.best_realization
+        self.active_realization = 'best'
+        
+        print(f"✓ Legacy FFSP loaded\n")
 
     # ============ PLOTTING METHODS ============
     
@@ -1282,5 +1531,42 @@ class FFSPSource:
         plt.grid(alpha=0.3)
         if xlim is not None:
             plt.xlim(xlim)
+        plt.tight_layout()
+        plt.show()
+
+    def plot_crust_layers(self, figsize=(6, 4)):
+        """Plot crust model layers"""
+        import matplotlib.pyplot as plt
+        import numpy as np
+        
+        nlayers = self.crust_model.nlayers
+        thicknesses = []
+        labels = []
+        
+        for i in range(nlayers):
+            if self.crust_model.d[i] == 0:  # Half-space
+                thicknesses.append(10)  # Arbitrary for plotting
+                labels.append(f'Layer {i+1}: ∞ (Half-space)')
+            else:
+                thicknesses.append(self.crust_model.d[i])
+                labels.append(f'Layer {i+1}: {self.crust_model.d[i]:.1f} km')
+        
+        fig, ax = plt.subplots(figsize=figsize)
+        
+        colors = plt.cm.Pastel1(np.linspace(0, 1, nlayers))
+        
+        bottom = 0
+        for i in range(nlayers):
+            ax.bar(0, thicknesses[i], bottom=bottom, width=1,
+                   color=colors[i], edgecolor='black', linewidth=1.5,
+                   label=labels[i])
+            bottom += thicknesses[i]
+        
+        ax.set_ylabel('Depth (km)', fontsize=12)
+        ax.set_title('Crust Model Layers', fontsize=14, fontweight='bold')
+        ax.set_xlim(-0.5, 0.5)
+        ax.set_ylim(bottom, 0)  # Inverted
+        ax.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+        ax.set_xticks([])
         plt.tight_layout()
         plt.show()
