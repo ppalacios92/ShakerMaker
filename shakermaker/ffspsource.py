@@ -1756,7 +1756,8 @@ class FFSPSource:
         plt.legend(fontsize=11)
         plt.grid(alpha=0.3)
 
-    def plot_source_time_function(self, figsize=(10, 6),xlim=None):
+    def plot_source_time_function(self, figsize=(10, 6),xlim=None,
+                                save_fig=False, model_name='source'):
         """Plot Source Time Function (STF)."""
         if self.source_stats is None:
             print("No source statistics available. Run simulation first.")
@@ -1776,6 +1777,18 @@ class FFSPSource:
         if xlim is not None:
             plt.xlim(xlim)
         plt.tight_layout()
+
+        # Save figure if requested
+        if save_fig:
+           plt.savefig(
+               f'{model_name}_source_time_function.svg',
+               format='svg',
+               dpi=600,
+               bbox_inches='tight',
+               transparent=True,
+               facecolor='none'
+           )
+
         plt.show()
 
     def plot_crust_layers(self, figsize=(6, 4)):
