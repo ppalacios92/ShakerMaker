@@ -917,7 +917,9 @@ class ShakerMaker:
                 tstart_source = perf_counter()
                 
                 # NEW: Track if this is my station to process
-                is_my_station = (i_station == next_station)
+                # is_my_station = (i_station == next_station)
+                is_qa = (i_station == nstations - 1) and station.metadata.get('name') == 'QA'
+                is_my_station = (i_station == next_station) or (is_qa and rank == 0)
                 
                 # Create station group in temp file at the start of processing (only if using temp files)
                 if is_my_station and use_temp_files and station.metadata.get('save_gf', False):
