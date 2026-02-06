@@ -116,7 +116,7 @@ class ShakerMaker:
         
 
         """
-        title = f"🎉 ¡LARGA VIDA AL LADRUNO0100! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+        title = f"🎉 ¡LARGA VIDA AL LADRUNO1000_SURFACE! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
         
         if rank == 0:
             print("\n\n")
@@ -784,491 +784,631 @@ class ShakerMaker:
 
 
     def run_faster(self, 
-            h5_database_name,
-            delta_h=0.04,
-            delta_v_rec=0.002,
-            delta_v_src=0.2,
-            dt=0.05, 
-            nfft=4096, 
-            tb=1000, 
-            smth=1, 
-            sigma=2, 
-            taper=0.9, 
-            wc1=1, 
-            wc2=2, 
-            pmin=0, 
-            pmax=1, 
-            dk=0.3,
-            nx=1, 
-            kc=15.0, 
-            writer=None,
-            verbose=False,
-            debugMPI=False,
-            tmin=0.,
-            tmax=100,
-            showProgress=True,
-            allow_out_of_bounds=False,
-            ):
-            """Run the simulation using pre-computed Green's functions database.
-            
-            Modified to write Green's functions progressively to temporary HDF5 files
-            to avoid memory accumulation (OOM errors with large number of subfaults).
-            """
-            import h5py
-            import os
-            title = f"ShakerMaker Run Faster begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
-            
-
-            if rank==0:
-                print(f"Loading pairs-to-compute info from HDF5 database: {h5_database_name}")
-
-
-            if rank > 0:
-                hfile = h5py.File(h5_database_name + '.h5', 'r')
-            elif rank == 0:
-                hfile = h5py.File(h5_database_name + '.h5', 'r+')
-
-
-            pairs_to_compute = hfile["/pairs_to_compute"][:]
-            dh_of_pairs = hfile["/dh_of_pairs"][:]
-            zrec_of_pairs= hfile["/zrec_of_pairs"][:]
-            zsrc_of_pairs= hfile["/zsrc_of_pairs"][:]
-
-            node_pair_mapping_list = []
-            if rank == 0:
-                print("\n\n")
-                print(title)
-                print("-"*len(title))
-
-            perf_time_begin = perf_counter()
-
-            perf_time_core = np.zeros(1,dtype=np.double)
-            perf_time_send = np.zeros(1,dtype=np.double)
-            perf_time_recv = np.zeros(1,dtype=np.double)
-            perf_time_conv = np.zeros(1,dtype=np.double)
-            perf_time_add = np.zeros(1,dtype=np.double)
-
-            if debugMPI:
-                fid_debug_mpi = open(f"rank_{rank}.debuginfo","w")
-                def printMPI(*args):
-                    fid_debug_mpi.write(*args)
-                    fid_debug_mpi.write("\n")
-
-            else:
+                h5_database_name,
+                delta_h=0.04,
+                delta_v_rec=0.002,
+                delta_v_src=0.2,
+                dt=0.05, 
+                nfft=4096, 
+                tb=1000, 
+                smth=1, 
+                sigma=2, 
+                taper=0.9, 
+                wc1=1, 
+                wc2=2, 
+                pmin=0, 
+                pmax=1, 
+                dk=0.3,
+                nx=1, 
+                kc=15.0, 
+                writer=None,
+                verbose=False,
+                debugMPI=False,
+                tmin=0.,
+                tmax=100,
+                showProgress=True,
+                allow_out_of_bounds=False,
+                ):
+                """Run the simulation using pre-computed Green's functions database.
+                
+                Modified to write Green's functions progressively to temporary HDF5 files
+                to avoid memory accumulation (OOM errors with large number of subfaults).
+                """
+                import h5py
                 import os
-                fid_debug_mpi = open(os.devnull,"w")
-                printMPI = lambda *args : None
+                title = f"ShakerMaker Run Faster begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+                
 
-            self._logger.info('ShakerMaker.run - starting\n\tNumber of sources: {}\n\tNumber of receivers: {}\n'
-                              '\tTotal src-rcv pairs: {}\n\tdt: {}\n\tnfft: {}'
-                              .format(self._source.nsources, self._receivers.nstations,
-                                      self._source.nsources*self._receivers.nstations, dt, nfft))
-            if rank > 0:
-                writer = None
+                if rank==0:
+                    print(f"Loading pairs-to-compute info from HDF5 database: {h5_database_name}")
 
-            if writer and rank == 0:
-                assert isinstance(writer, StationListWriter), \
-                    "'writer' must be an instance of the shakermaker.StationListWriter class or None"
-                # LEGACY MODE (default): No temp files, write directly to writer
-                writer.initialize(self._receivers, 2*nfft)
-                # PROGRESSIVE MODE: Use temp files for memory efficiency
-                # writer.initialize(self._receivers, 2*nfft, tmin=tmin, tmax=tmax, dt=dt)
-                writer.write_metadata(self._receivers.metadata)
-            
-            # Determine if we use temporary files based on writer mode
-            use_temp_files = False
-            if writer and rank == 0 and hasattr(writer, '_progressive_mode'):
-                use_temp_files = writer._progressive_mode
-            
-            # Broadcast use_temp_files to all ranks
-            if use_mpi and nprocs > 1:
-                use_temp_files = comm.bcast(use_temp_files, root=0)
 
-            # Create temporary HDF5 file only if using progressive mode
-            temp_gf_file = None
-            temp_gf_filename = None
-            if use_temp_files:
-                temp_gf_filename = f".shakermaker_temp/_temp_gf_rank_{rank}.h5"
+                if rank > 0:
+                    hfile = h5py.File(h5_database_name + '.h5', 'r')
+                elif rank == 0:
+                    hfile = h5py.File(h5_database_name + '.h5', 'r+')
+
+
+                pairs_to_compute = hfile["/pairs_to_compute"][:]
+                dh_of_pairs = hfile["/dh_of_pairs"][:]
+                zrec_of_pairs= hfile["/zrec_of_pairs"][:]
+                zsrc_of_pairs= hfile["/zsrc_of_pairs"][:]
+
+                node_pair_mapping_list = []
                 if rank == 0:
-                    os.makedirs(".shakermaker_temp", exist_ok=True)
+                    print("\n\n")
+                    print(title)
+                    print("-"*len(title))
+
+                perf_time_begin = perf_counter()
+
+                perf_time_core = np.zeros(1,dtype=np.double)
+                perf_time_send = np.zeros(1,dtype=np.double)
+                perf_time_recv = np.zeros(1,dtype=np.double)
+                perf_time_conv = np.zeros(1,dtype=np.double)
+                perf_time_add = np.zeros(1,dtype=np.double)
+
+                if debugMPI:
+                    fid_debug_mpi = open(f"rank_{rank}.debuginfo","w")
+                    def printMPI(*args):
+                        fid_debug_mpi.write(*args)
+                        fid_debug_mpi.write("\n")
+
+                else:
+                    import os
+                    fid_debug_mpi = open(os.devnull,"w")
+                    printMPI = lambda *args : None
+
+                self._logger.info('ShakerMaker.run - starting\n\tNumber of sources: {}\n\tNumber of receivers: {}\n'
+                                  '\tTotal src-rcv pairs: {}\n\tdt: {}\n\tnfft: {}'
+                                  .format(self._source.nsources, self._receivers.nstations,
+                                          self._source.nsources*self._receivers.nstations, dt, nfft))
+                if rank > 0:
+                    writer = None
+
+                if writer and rank == 0:
+                    assert isinstance(writer, StationListWriter), \
+                        "'writer' must be an instance of the shakermaker.StationListWriter class or None"
+                    # LEGACY MODE (default): No temp files, write directly to writer
+                    writer.initialize(self._receivers, 2*nfft)
+                    # PROGRESSIVE MODE: Use temp files for memory efficiency
+                    # writer.initialize(self._receivers, 2*nfft, tmin=tmin, tmax=tmax, dt=dt)
+                    writer.write_metadata(self._receivers.metadata)
+                
+                # Determine if we use temporary files based on writer mode
+                use_temp_files = False
+                if writer and rank == 0 and hasattr(writer, '_progressive_mode'):
+                    use_temp_files = writer._progressive_mode
+                
+                # Broadcast use_temp_files to all ranks
                 if use_mpi and nprocs > 1:
-                    comm.Barrier()
-                temp_gf_file = h5py.File(temp_gf_filename, 'w')
-                temp_gf_file.create_group('GF')
-                temp_gf_file.create_group('responses')
-                print(f"[Rank {rank}] Created temporary GF file: {temp_gf_filename}")
+                    use_temp_files = comm.bcast(use_temp_files, root=0)
 
-            next_station = rank
-            skip_stations = nprocs
+                # Create temporary HDF5 file only if using progressive mode
+                temp_gf_file = None
+                temp_gf_filename = None
+                if use_temp_files:
+                    temp_gf_filename = f".shakermaker_temp/_temp_gf_rank_{rank}.h5"
+                    if rank == 0:
+                        os.makedirs(".shakermaker_temp", exist_ok=True)
+                    if use_mpi and nprocs > 1:
+                        comm.Barrier()
+                    temp_gf_file = h5py.File(temp_gf_filename, 'w')
+                    temp_gf_file.create_group('GF')
+                    temp_gf_file.create_group('responses')
+                    print(f"[Rank {rank}] Created temporary GF file: {temp_gf_filename}")
 
-            tstart = perf_counter()
+                next_station = rank
+                skip_stations = nprocs
 
-            nsources = self._source.nsources
-            nstations = self._receivers.nstations
-            npairs = nsources*nstations
+                tstart = perf_counter()
 
-            npairs_skip  = 0
-            ipair = 0
+                nsources = self._source.nsources
+                nstations = self._receivers.nstations
+                npairs = nsources*nstations
 
-            n_my_stations = 0
+                npairs_skip  = 0
+                ipair = 0
 
-            for i_station, station in enumerate(self._receivers):
-
-                tstart_source = perf_counter()
+                n_my_stations = 0
                 
-                # NEW: Track if this is my station to process
-                # is_my_station = (i_station == next_station)
-                is_qa = (i_station == nstations - 1) and station.metadata.get('name') == 'QA'
-                is_my_station = (i_station == next_station) or (is_qa and rank == 0)
-                
-                # Create station group in temp file at the start of processing (only if using temp files)
-                if is_my_station and use_temp_files and station.metadata.get('save_gf', False):
-                    sta_grp = temp_gf_file['GF'].create_group(f'sta_{i_station}')
-                
-                for i_psource, psource in enumerate(self._source):
-                    aux_crust = copy.deepcopy(self._crust)
+                # Storage for legacy mode: each rank stores its computed data
+                my_stations_data = {}
 
-                    aux_crust.split_at_depth(psource.x[2])
-                    aux_crust.split_at_depth(station.x[2])
+                for i_station, station in enumerate(self._receivers):
 
+                    tstart_source = perf_counter()
+                    
+                    # Track if this is my station to process
+                    # QA (last station) is always processed by rank 0
+                    is_qa = (i_station == nstations - 1) and station.metadata.get('name') == 'QA'
+                    is_my_station = (i_station == next_station) or (is_qa and rank == 0)
+                    
+                    # Create station group in temp file at the start of processing (only if using temp files)
+                    if is_my_station and use_temp_files and station.metadata.get('save_gf', False):
+                        sta_grp = temp_gf_file['GF'].create_group(f'sta_{i_station}')
+                    
+                    # Storage for GFs in legacy mode
+                    station_gfs = {} if (not use_temp_files and station.metadata.get('save_gf', False)) else None
+                    
+                    for i_psource, psource in enumerate(self._source):
+                        aux_crust = copy.deepcopy(self._crust)
+
+                        aux_crust.split_at_depth(psource.x[2])
+                        aux_crust.split_at_depth(station.x[2])
+
+                        if is_my_station:
+
+                            if verbose:
+                                print(f"{rank=} {nprocs=} {i_station=} {skip_stations=} {npairs=} !!")
+                            if True:
+                                x_src = psource.x
+                                x_rec = station.x
+                            
+                                z_src = psource.x[2]
+                                z_rec = station.x[2]
+
+                                d = x_rec - x_src
+                                dh = np.sqrt(np.dot(d[0:2],d[0:2]))
+
+                                min_distance = float('inf')
+                                best_match_index = -1
+
+                                for i in range(len(dh_of_pairs)):
+                                    dh_p, zrec_p, zsrc_p = dh_of_pairs[i], zrec_of_pairs[i], zsrc_of_pairs[i]
+                                    
+                                    if (abs(dh - dh_p) < delta_h and \
+                                       abs(z_src - zsrc_p) < delta_v_src and \
+                                       abs(z_rec - zrec_p) < delta_v_rec) or \
+                                       allow_out_of_bounds:
+
+                                        distance = (abs(dh - dh_p) + 
+                                                    abs(z_src - zsrc_p) + 
+                                                    abs(z_rec - zrec_p))
+                                    
+                                        if distance < min_distance:
+                                            min_distance = distance
+                                            best_match_index = i
+
+                                if best_match_index != -1:
+                                    ipair_target = best_match_index
+                                else:
+                                    print(f"No suitable match found! {allow_out_of_bounds=} {min_distance=}")
+
+                                if ipair_target == len(dh_of_pairs):
+                                    print("Target not found in database -- SKIPPING")
+                                    npairs_skip += 1
+                                    if npairs_skip > 500:
+                                        print(f"Rank {rank} skipped too many pairs, giving up!")
+                                        exit(-1)
+                                        break
+                                    else:
+                                        continue
+
+                                node_pair_mapping_list.append([i_station, i_psource, ipair_target])
+
+                                ipair_string = "/tdata_dict/"+str(ipair_target)+"_tdata"
+                                tdata = hfile[ipair_string][:]
+
+                                if verbose:
+                                    print("calling core FASTER START")
+                                t1 = perf_counter()
+                                z, e, n, t0 = self._call_core_fast(tdata, dt, nfft, tb, nx, sigma, smth, wc1, wc2, pmin, pmax, dk, kc,
+                                                                     taper, aux_crust, psource, station, verbose)
+                                t2 = perf_counter()
+                                perf_time_core += t2 - t1
+                                if verbose:
+                                    print("calling core FASTER END")
+
+
+                                t = np.arange(0, len(z)*dt, dt) + psource.tt + t0
+
+                                # Save GF based on mode
+                                if station.metadata.get('save_gf', False):
+                                    if use_temp_files:
+                                        # PROGRESSIVE MODE: Write directly to temp HDF5 file
+                                        grp_sub = sta_grp.create_group(f'sub_{i_psource}')
+                                        grp_sub.create_dataset('z', data=z, compression='gzip')
+                                        grp_sub.create_dataset('e', data=e, compression='gzip')
+                                        grp_sub.create_dataset('n', data=n, compression='gzip')
+                                        grp_sub.create_dataset('t', data=t, compression='gzip')
+                                        grp_sub.create_dataset('tdata', data=tdata, compression='gzip')
+                                        grp_sub.create_dataset('t0', data=t0)
+                                    else:
+                                        # LEGACY MODE: Store in memory for later sending
+                                        station_gfs[i_psource] = (z.copy(), e.copy(), n.copy(), t.copy(), tdata.copy(), t0)
+
+
+                                t1 = perf_counter()
+                                
+                                psource.stf.dt = dt
+
+                                z_stf = psource.stf.convolve(z, t)
+                                e_stf = psource.stf.convolve(e, t)
+                                n_stf = psource.stf.convolve(n, t)
+                                t2 = perf_counter()
+                                perf_time_conv += t2 - t1
+
+                                try:
+                                    t1 = perf_counter()
+                                    station.add_to_response(z_stf, e_stf, n_stf, t, tmin, tmax)
+                                    n_my_stations += 1
+                                    t2 = perf_counter()
+                                    perf_time_add += t2 - t1
+                                except:
+                                    traceback.print_exc()
+
+                                    if use_mpi and nprocs > 1:
+                                        comm.Abort()
+
+                                if showProgress and rank == 0:
+                                    progress_percent = i_psource/nsources*100
+
+                                    tnow = perf_counter()
+
+                                    time_per_source = (tnow - tstart_source)/(i_psource+1) 
+
+                                    time_left = (nsources - i_psource - 1)*time_per_source
+
+                                    hh = np.floor(time_left / 3600)
+                                    mm = np.floor((time_left - hh*3600)/60)
+                                    ss = time_left - mm*60 - hh*3600
+
+                                    if i_psource % 1000 == 0:
+                                        print(f"   ! RANK {rank} Station {i_station} progress: {i_psource} of {nsources} ({progress_percent:.4f}%) ETA = {hh:.0f}:{mm:02.0f}:{ss:02.1f} {t[0]=:0.4f} {t[-1]=:0.4f}")
+                        else:
+                            pass
+                        ipair += 1
+                    if verbose:
+                        print(f'ShakerMaker.run - finished my station {i_station} -->  ({rank=} {ipair=} {next_station=})')
+                    self._logger.debug(f'ShakerMaker.run - finished station {i_station} ({rank=} {ipair=} {next_station=})')
+                    
                     if is_my_station:
 
-                        if verbose:
-                            print(f"{rank=} {nprocs=} {i_station=} {skip_stations=} {npairs=} !!")
-                        if True:
-                            x_src = psource.x
-                            x_rec = station.x
-                        
-                            z_src = psource.x[2]
-                            z_rec = station.x[2]
+                        progress_percent = i_station/nstations*100
+                        tnow = perf_counter()
 
-                            d = x_rec - x_src
-                            dh = np.sqrt(np.dot(d[0:2],d[0:2]))
+                        time_per_station = (tnow - tstart_source)
+                        nstations_left_this_rank = (nstations - i_station - 1)//skip_stations
+                        time_left = nstations_left_this_rank*time_per_station
 
-                            min_distance = float('inf')
-                            best_match_index = -1
+                        hh = np.floor(time_left / 3600)
+                        mm = np.floor((time_left - hh*3600)/60)
+                        ss = time_left - mm*60 - hh*3600
 
-                            for i in range(len(dh_of_pairs)):
-                                dh_p, zrec_p, zsrc_p = dh_of_pairs[i], zrec_of_pairs[i], zsrc_of_pairs[i]
-                                
-                                if (abs(dh - dh_p) < delta_h and \
-                                   abs(z_src - zsrc_p) < delta_v_src and \
-                                   abs(z_rec - zrec_p) < delta_v_rec) or \
-                                   allow_out_of_bounds:
+                        print(f"{rank=} at {i_station=} of {nstations} ({progress_percent:.4f}%) ETA = {hh:.0f}:{mm:02.0f}:{ss:03.1f}")
 
-                                    distance = (abs(dh - dh_p) + 
-                                                abs(z_src - zsrc_p) + 
-                                                abs(z_rec - zrec_p))
-                                
-                                    if distance < min_distance:
-                                        min_distance = distance
-                                        best_match_index = i
-
-                            if best_match_index != -1:
-                                ipair_target = best_match_index
-                            else:
-                                print(f"No suitable match found! {allow_out_of_bounds=} {min_distance=}")
-
-                            if ipair_target == len(dh_of_pairs):
-                                print("Target not found in database -- SKIPPING")
-                                npairs_skip += 1
-                                if npairs_skip > 500:
-                                    print(f"Rank {rank} skipped too many pairs, giving up!")
-                                    exit(-1)
-                                    break
-                                else:
-                                    continue
-
-                            node_pair_mapping_list.append([i_station, i_psource, ipair_target])
-
-                            ipair_string = "/tdata_dict/"+str(ipair_target)+"_tdata"
-                            tdata = hfile[ipair_string][:]
-
-                            if verbose:
-                                print("calling core FASTER START")
-                            t1 = perf_counter()
-                            z, e, n, t0 = self._call_core_fast(tdata, dt, nfft, tb, nx, sigma, smth, wc1, wc2, pmin, pmax, dk, kc,
-                                                                 taper, aux_crust, psource, station, verbose)
-                            t2 = perf_counter()
-                            perf_time_core += t2 - t1
-                            if verbose:
-                                print("calling core FASTER END")
-
-
-                            t = np.arange(0, len(z)*dt, dt) + psource.tt + t0
-
-                            # Write GF directly to temporary file if save_gf is True AND using temp files
-                            if use_temp_files and station.metadata.get('save_gf', False):
-                                # Write directly to temp HDF5 file
-                                grp_sub = sta_grp.create_group(f'sub_{i_psource}')
-                                grp_sub.create_dataset('z', data=z, compression='gzip')
-                                grp_sub.create_dataset('e', data=e, compression='gzip')
-                                grp_sub.create_dataset('n', data=n, compression='gzip')
-                                grp_sub.create_dataset('t', data=t, compression='gzip')
-                                grp_sub.create_dataset('tdata', data=tdata, compression='gzip')
-                                grp_sub.create_dataset('t0', data=t0)
-
-
-                            t1 = perf_counter()
-                            
-                            psource.stf.dt = dt
-
-                            z_stf = psource.stf.convolve(z, t)
-                            e_stf = psource.stf.convolve(e, t)
-                            n_stf = psource.stf.convolve(n, t)
-                            t2 = perf_counter()
-                            perf_time_conv += t2 - t1
-
-                            try:
-                                t1 = perf_counter()
-                                station.add_to_response(z_stf, e_stf, n_stf, t, tmin, tmax)
-                                n_my_stations += 1
-                                t2 = perf_counter()
-                                perf_time_add += t2 - t1
-                            except:
-                                traceback.print_exc()
-
-                                if use_mpi and nprocs > 1:
-                                    comm.Abort()
-
-                            if showProgress and rank == 0:
-                                progress_percent = i_psource/nsources*100
-
-                                tnow = perf_counter()
-
-                                time_per_source = (tnow - tstart_source)/(i_psource+1) 
-
-                                time_left = (nsources - i_psource - 1)*time_per_source
-
-                                hh = np.floor(time_left / 3600)
-                                mm = np.floor((time_left - hh*3600)/60)
-                                ss = time_left - mm*60 - hh*3600
-
-                                if i_psource % 1000 == 0:
-                                    print(f"   ! RANK {rank} Station {i_station} progress: {i_psource} of {nsources} ({progress_percent:.4f}%) ETA = {hh:.0f}:{mm:02.0f}:{ss:02.1f} {t[0]=:0.4f} {t[-1]=:0.4f}")
-                    else:
-                        pass
-                    ipair += 1
-                if verbose:
-                    print(f'ShakerMaker.run - finished my station {i_station} -->  ({rank=} {ipair=} {next_station=})')
-                self._logger.debug(f'ShakerMaker.run - finished station {i_station} ({rank=} {ipair=} {next_station=})')
-                
-                if is_my_station:
-
-                    progress_percent = i_station/nstations*100
-                    tnow = perf_counter()
-
-                    time_per_station = (tnow - tstart_source)
-                    nstations_left_this_rank = (nstations - i_station - 1)//skip_stations
-                    time_left = nstations_left_this_rank*time_per_station
-
-                    hh = np.floor(time_left / 3600)
-                    mm = np.floor((time_left - hh*3600)/60)
-                    ss = time_left - mm*60 - hh*3600
-
-                    print(f"{rank=} at {i_station=} of {nstations} ({progress_percent:.4f}%) ETA = {hh:.0f}:{mm:02.0f}:{ss:03.1f}")
-
-                    # Save station data based on mode
-                    if use_temp_files:
-                        # PROGRESSIVE MODE: Save to temp file
-                        z_resp, e_resp, n_resp, t_resp = station.get_response()
-                        resp_grp = temp_gf_file['responses'].create_group(f'sta_{i_station}')
-                        resp_grp.create_dataset('z', data=z_resp)
-                        resp_grp.create_dataset('e', data=e_resp)
-                        resp_grp.create_dataset('n', data=n_resp)
-                        resp_grp.create_dataset('t', data=t_resp)
-                        resp_grp.create_dataset('x', data=station.x)
-                        resp_grp.create_dataset('is_internal', data=station.is_internal)
-                        resp_grp.attrs['name'] = station.metadata.get('name', '')
-                        temp_gf_file.flush()
-                        # Clear station memory
-                        station._z = None
-                        station._e = None
-                        station._n = None
-                        station._t = None
-                        station._initialized = False
-                    else:
-                        # LEGACY MODE: Write directly to writer (only rank 0 has writer)
-                        if rank == 0 and writer:
-                            writer.write_station(station, i_station)
-
-                    next_station += skip_stations
-            
-            # ============================================================
-            # Close temporary file and synchronize all ranks (only if using temp files)
-            # ============================================================
-            if use_temp_files:
-                temp_gf_file.close()
-                print(f"[Rank {rank}] Closed temporary GF file: {temp_gf_filename}")
-                
-                if use_mpi and nprocs > 1:
-                    comm.Barrier()
-                    print(f"[Rank {rank}] Barrier passed - all ranks finished computation")
-                
-                # Stage two: Rank 0 consolidates all temporary files
-                if rank == 0:
-                    print("\n" + "="*60)
-                    print("CONSOLIDATION PHASE: Rank 0 merging all temporary files")
-                    print("="*60)
-                    
-                    # Process each rank's temporary file
-                    for src_rank in range(nprocs):
-                        src_filename = f".shakermaker_temp/_temp_gf_rank_{src_rank}.h5"
-                        print(f"[Rank 0] Processing: {src_filename}")
-                        
-                        src_file = h5py.File(src_filename, 'r')
-                        
-                        # Process each station in this rank's file
-                        for sta_key in src_file['responses'].keys():
-                            i_station = int(sta_key.split('_')[1])
-                            station = self._receivers.get_station_by_id(i_station)
-                            
-                            # Load response data
-                            resp_grp = src_file['responses'][sta_key]
-                            z_resp = resp_grp['z'][:]
-                            e_resp = resp_grp['e'][:]
-                            n_resp = resp_grp['n'][:]
-                            t_resp = resp_grp['t'][:]
-                            
-                            # Restore response to station object
-                            station._z = z_resp
-                            station._e = e_resp
-                            station._n = n_resp
-                            station._t = t_resp
-                            station._initialized = True
-                            
-                            # Load GFs into station object temporarily for writer
-                            if f'sta_{i_station}' in src_file['GF']:
-                                gf_grp = src_file['GF'][f'sta_{i_station}']
-                                station._greens_functions = {}
-                                for sub_key in gf_grp.keys():
-                                    sub_idx = int(sub_key.split('_')[1])
-                                    sub_grp = gf_grp[sub_key]
-                                    z_gf = sub_grp['z'][:]
-                                    e_gf = sub_grp['e'][:]
-                                    n_gf = sub_grp['n'][:]
-                                    t_gf = sub_grp['t'][:]
-                                    tdata_gf = sub_grp['tdata'][:]
-                                    t0_gf = sub_grp['t0'][()]
-                                    station._greens_functions[sub_idx] = (z_gf, e_gf, n_gf, t_gf, tdata_gf, t0_gf)
-                            
-                            # Write to final output using writer
-                            if writer:
-                                writer.write_station(station, i_station)
-                            
-                            # Clear station memory after writing
-                            station._greens_functions = {}
+                        # Save station data based on mode
+                        if use_temp_files:
+                            # PROGRESSIVE MODE: Save to temp file
+                            z_resp, e_resp, n_resp, t_resp = station.get_response()
+                            resp_grp = temp_gf_file['responses'].create_group(f'sta_{i_station}')
+                            resp_grp.create_dataset('z', data=z_resp)
+                            resp_grp.create_dataset('e', data=e_resp)
+                            resp_grp.create_dataset('n', data=n_resp)
+                            resp_grp.create_dataset('t', data=t_resp)
+                            resp_grp.create_dataset('x', data=station.x)
+                            resp_grp.create_dataset('is_internal', data=station.is_internal)
+                            resp_grp.attrs['name'] = station.metadata.get('name', '')
+                            temp_gf_file.flush()
+                            # Clear station memory
                             station._z = None
                             station._e = None
                             station._n = None
                             station._t = None
                             station._initialized = False
-                            
-                            print(f"[Rank 0] Written station {i_station}")
-                        
-                        src_file.close()
-                        
-                        # Delete temporary file after processing
-                        os.remove(src_filename)
-                        print(f"[Rank 0] Deleted: {src_filename}")
+                        else:
+                            # LEGACY MODE: Store data for later gathering
+                            z_resp, e_resp, n_resp, t_resp = station.get_response()
+                            my_stations_data[i_station] = {
+                                'response': (z_resp.copy(), e_resp.copy(), n_resp.copy(), t_resp.copy()),
+                                'x': station.x.copy(),
+                                'is_internal': station.is_internal,
+                                'gfs': station_gfs if station_gfs else None
+                            }
+
+                        if not is_qa:
+                            next_station += skip_stations
+                
+                # ============================================================
+                # Close temporary file and synchronize all ranks (only if using temp files)
+                # ============================================================
+                if use_temp_files:
+                    temp_gf_file.close()
+                    print(f"[Rank {rank}] Closed temporary GF file: {temp_gf_filename}")
                     
-                    print("="*60)
-                    print("CONSOLIDATION COMPLETE")
-                    print("="*60 + "\n")
-
-            # Build mapping list for writer (both modes)
-            if rank == 0 and writer is not None:
-                full_mapping_list = []
-                
-                for i_sta in range(nstations):
-                    station = self._receivers.get_station_by_id(i_sta)
-                    for i_src, psource in enumerate(self._source):
-                        x_src = psource.x
-                        x_rec = station.x
-                        z_src = x_src[2]
-                        z_rec = x_rec[2]
-                        d = x_rec - x_src
-                        dh = np.sqrt(np.dot(d[0:2], d[0:2]))
+                    if use_mpi and nprocs > 1:
+                        comm.Barrier()
+                        print(f"[Rank {rank}] Barrier passed - all ranks finished computation")
+                    
+                    # Stage two: Rank 0 consolidates all temporary files
+                    if rank == 0:
+                        print("\n" + "="*60)
+                        print("CONSOLIDATION PHASE: Rank 0 merging all temporary files")
+                        print("="*60)
                         
-                        min_distance = float('inf')
-                        best_idx = -1
+                        # Process each rank's temporary file
+                        for src_rank in range(nprocs):
+                            src_filename = f".shakermaker_temp/_temp_gf_rank_{src_rank}.h5"
+                            print(f"[Rank 0] Processing: {src_filename}")
+                            
+                            src_file = h5py.File(src_filename, 'r')
+                            
+                            # Process each station in this rank's file
+                            for sta_key in src_file['responses'].keys():
+                                i_station = int(sta_key.split('_')[1])
+                                station = self._receivers.get_station_by_id(i_station)
+                                
+                                # Load response data
+                                resp_grp = src_file['responses'][sta_key]
+                                z_resp = resp_grp['z'][:]
+                                e_resp = resp_grp['e'][:]
+                                n_resp = resp_grp['n'][:]
+                                t_resp = resp_grp['t'][:]
+                                
+                                # Restore response to station object
+                                station._z = z_resp
+                                station._e = e_resp
+                                station._n = n_resp
+                                station._t = t_resp
+                                station._initialized = True
+                                
+                                # Load GFs into station object temporarily for writer
+                                if f'sta_{i_station}' in src_file['GF']:
+                                    gf_grp = src_file['GF'][f'sta_{i_station}']
+                                    station._greens_functions = {}
+                                    for sub_key in gf_grp.keys():
+                                        sub_idx = int(sub_key.split('_')[1])
+                                        sub_grp = gf_grp[sub_key]
+                                        z_gf = sub_grp['z'][:]
+                                        e_gf = sub_grp['e'][:]
+                                        n_gf = sub_grp['n'][:]
+                                        t_gf = sub_grp['t'][:]
+                                        tdata_gf = sub_grp['tdata'][:]
+                                        t0_gf = sub_grp['t0'][()]
+                                        station._greens_functions[sub_idx] = (z_gf, e_gf, n_gf, t_gf, tdata_gf, t0_gf)
+                                
+                                # Write to final output using writer
+                                if writer:
+                                    writer.write_station(station, i_station)
+                                
+                                # Clear station memory after writing
+                                station._greens_functions = {}
+                                station._z = None
+                                station._e = None
+                                station._n = None
+                                station._t = None
+                                station._initialized = False
+                                
+                                print(f"[Rank 0] Written station {i_station}")
+                            
+                            src_file.close()
+                            
+                            # Delete temporary file after processing
+                            os.remove(src_filename)
+                            print(f"[Rank 0] Deleted: {src_filename}")
                         
-                        for i in range(len(dh_of_pairs)):
-                            if (abs(dh - dh_of_pairs[i]) < delta_h and
-                                abs(z_src - zsrc_of_pairs[i]) < delta_v_src and
-                                abs(z_rec - zrec_of_pairs[i]) < delta_v_rec):
-                                dist = abs(dh - dh_of_pairs[i]) + abs(z_src - zsrc_of_pairs[i]) + abs(z_rec - zrec_of_pairs[i])
-                                if dist < min_distance:
-                                    min_distance = dist
-                                    best_idx = i
+                        print("="*60)
+                        print("CONSOLIDATION COMPLETE")
+                        print("="*60 + "\n")
+
+                else:
+                    # ============================================================
+                    # LEGACY MODE: Gather all station data to rank 0 via MPI
+                    # ============================================================
+                    if use_mpi and nprocs > 1:
+                        comm.Barrier()
                         
-                        full_mapping_list.append([i_sta, i_src, best_idx])
-                
-                writer.node_pair_mapping = np.array(full_mapping_list, dtype=np.int32)
-                writer.pairs_to_compute_for_mapping = pairs_to_compute
-                
-                writer.close()
+                        if rank == 0:
+                            print("\n" + "="*60)
+                            print("LEGACY MODE: Gathering data from all ranks")
+                            print("="*60)
+                            
+                            # First write rank 0's own stations
+                            for i_sta, data in my_stations_data.items():
+                                station = self._receivers.get_station_by_id(i_sta)
+                                z_resp, e_resp, n_resp, t_resp = data['response']
+                                station._z = z_resp
+                                station._e = e_resp
+                                station._n = n_resp
+                                station._t = t_resp
+                                station._initialized = True
+                                
+                                if data['gfs']:
+                                    station._greens_functions = data['gfs']
+                                
+                                if writer:
+                                    writer.write_station(station, i_sta)
+                                print(f"[Rank 0] Written own station {i_sta}")
+                            
+                            # Now receive from other ranks
+                            for src_rank in range(1, nprocs):
+                                # Receive number of stations from this rank
+                                n_stations_from_rank = comm.recv(source=src_rank, tag=10000)
+                                print(f"[Rank 0] Receiving {n_stations_from_rank} stations from rank {src_rank}")
+                                
+                                for _ in range(n_stations_from_rank):
+                                    # Receive station index
+                                    i_sta = comm.recv(source=src_rank, tag=10001)
+                                    
+                                    # Receive response data
+                                    z_resp = comm.recv(source=src_rank, tag=10002)
+                                    e_resp = comm.recv(source=src_rank, tag=10003)
+                                    n_resp = comm.recv(source=src_rank, tag=10004)
+                                    t_resp = comm.recv(source=src_rank, tag=10005)
+                                    
+                                    # Receive GFs flag and data
+                                    has_gfs = comm.recv(source=src_rank, tag=10006)
+                                    gfs = None
+                                    if has_gfs:
+                                        gfs = comm.recv(source=src_rank, tag=10007)
+                                    
+                                    # Restore to station and write
+                                    station = self._receivers.get_station_by_id(i_sta)
+                                    station._z = z_resp
+                                    station._e = e_resp
+                                    station._n = n_resp
+                                    station._t = t_resp
+                                    station._initialized = True
+                                    
+                                    if gfs:
+                                        station._greens_functions = gfs
+                                    
+                                    if writer:
+                                        writer.write_station(station, i_sta)
+                                    
+                                    # Clear memory
+                                    station._greens_functions = {}
+                                    station._z = None
+                                    station._e = None
+                                    station._n = None
+                                    station._t = None
+                                    station._initialized = False
+                                    
+                                    print(f"[Rank 0] Written station {i_sta} from rank {src_rank}")
+                            
+                            print("="*60)
+                            print("LEGACY GATHERING COMPLETE")
+                            print("="*60 + "\n")
+                        
+                        else:
+                            # Non-zero ranks send their data to rank 0
+                            comm.send(len(my_stations_data), dest=0, tag=10000)
+                            
+                            for i_sta, data in my_stations_data.items():
+                                comm.send(i_sta, dest=0, tag=10001)
+                                
+                                z_resp, e_resp, n_resp, t_resp = data['response']
+                                comm.send(z_resp, dest=0, tag=10002)
+                                comm.send(e_resp, dest=0, tag=10003)
+                                comm.send(n_resp, dest=0, tag=10004)
+                                comm.send(t_resp, dest=0, tag=10005)
+                                
+                                has_gfs = data['gfs'] is not None
+                                comm.send(has_gfs, dest=0, tag=10006)
+                                if has_gfs:
+                                    comm.send(data['gfs'], dest=0, tag=10007)
+                            
+                            print(f"[Rank {rank}] Sent {len(my_stations_data)} stations to rank 0")
+                    
+                    else:
+                        # Single process: write directly
+                        if rank == 0 and writer:
+                            for i_sta, data in my_stations_data.items():
+                                station = self._receivers.get_station_by_id(i_sta)
+                                z_resp, e_resp, n_resp, t_resp = data['response']
+                                station._z = z_resp
+                                station._e = e_resp
+                                station._n = n_resp
+                                station._t = t_resp
+                                station._initialized = True
+                                
+                                if data['gfs']:
+                                    station._greens_functions = data['gfs']
+                                
+                                writer.write_station(station, i_sta)
 
-            fid_debug_mpi.close()
-            hfile.close()
+                # Build mapping list for writer (both modes)
+                if rank == 0 and writer is not None:
+                    full_mapping_list = []
+                    
+                    for i_sta in range(nstations):
+                        station = self._receivers.get_station_by_id(i_sta)
+                        for i_src, psource in enumerate(self._source):
+                            x_src = psource.x
+                            x_rec = station.x
+                            z_src = x_src[2]
+                            z_rec = x_rec[2]
+                            d = x_rec - x_src
+                            dh = np.sqrt(np.dot(d[0:2], d[0:2]))
+                            
+                            min_distance = float('inf')
+                            best_idx = -1
+                            
+                            for i in range(len(dh_of_pairs)):
+                                if (abs(dh - dh_of_pairs[i]) < delta_h and
+                                    abs(z_src - zsrc_of_pairs[i]) < delta_v_src and
+                                    abs(z_rec - zrec_of_pairs[i]) < delta_v_rec):
+                                    dist = abs(dh - dh_of_pairs[i]) + abs(z_src - zsrc_of_pairs[i]) + abs(z_rec - zrec_of_pairs[i])
+                                    if dist < min_distance:
+                                        min_distance = dist
+                                        best_idx = i
+                            
+                            full_mapping_list.append([i_sta, i_src, best_idx])
+                    
+                    writer.node_pair_mapping = np.array(full_mapping_list, dtype=np.int32)
+                    writer.pairs_to_compute_for_mapping = pairs_to_compute
+                    
+                    # Write xyz for all stations (excluding QA)
+                    for i_sta in range(nstations - 1):
+                        sta = self._receivers.get_station_by_id(i_sta)
+                        writer._h5file['DRM_Data/xyz'][i_sta, :] = sta.x
+                        writer._h5file['DRM_Data/internal'][i_sta] = sta.is_internal
 
-            perf_time_end = perf_counter()
+                    # Write QA position
+                    qa_sta = self._receivers.get_station_by_id(nstations - 1)
+                    writer._h5file['DRM_QA_Data/xyz'][0, :] = qa_sta.x
 
-            if rank == 0 and use_mpi:
-                perf_time_total = perf_time_end - perf_time_begin
+                    writer.close()
 
-                print("\n\n")
-                print(f"ShakerMaker Run done. Total time: {perf_time_total} s")
-                print("------------------------------------------------")
+                fid_debug_mpi.close()
+                hfile.close()
 
-            if use_mpi and nprocs > 1:
+                perf_time_end = perf_counter()
 
-                print(f"rank {rank} @ gather all performances stats")
+                if rank == 0 and use_mpi:
+                    perf_time_total = perf_time_end - perf_time_begin
 
-                all_max_perf_time_core = np.array([-np.infty],dtype=np.double)
-                all_max_perf_time_send = np.array([-np.infty],dtype=np.double)
-                all_max_perf_time_recv = np.array([-np.infty],dtype=np.double)
-                all_max_perf_time_conv = np.array([-np.infty],dtype=np.double)
-                all_max_perf_time_add = np.array([-np.infty],dtype=np.double)
+                    print("\n\n")
+                    print(f"ShakerMaker Run done. Total time: {perf_time_total} s")
+                    print("------------------------------------------------")
 
-                all_min_perf_time_core = np.array([np.infty],dtype=np.double)
-                all_min_perf_time_send = np.array([np.infty],dtype=np.double)
-                all_min_perf_time_recv = np.array([np.infty],dtype=np.double)
-                all_min_perf_time_conv = np.array([np.infty],dtype=np.double)
-                all_min_perf_time_add = np.array([np.infty],dtype=np.double)
+                if use_mpi and nprocs > 1:
 
-                comm.Reduce(perf_time_core,
-                    all_max_perf_time_core, op = MPI.MAX, root = 0)
-                comm.Reduce(perf_time_send,
-                    all_max_perf_time_send, op = MPI.MAX, root = 0)
-                comm.Reduce(perf_time_recv,
-                    all_max_perf_time_recv, op = MPI.MAX, root = 0)
-                comm.Reduce(perf_time_conv,
-                    all_max_perf_time_conv, op = MPI.MAX, root = 0)
-                comm.Reduce(perf_time_add,
-                    all_max_perf_time_add, op = MPI.MAX, root = 0)
+                    print(f"rank {rank} @ gather all performances stats")
 
-                comm.Reduce(perf_time_core,
-                    all_min_perf_time_core, op = MPI.MIN, root = 0)
-                comm.Reduce(perf_time_send,
-                    all_min_perf_time_send, op = MPI.MIN, root = 0)
-                comm.Reduce(perf_time_recv,
-                    all_min_perf_time_recv, op = MPI.MIN, root = 0)
-                comm.Reduce(perf_time_conv,
-                    all_min_perf_time_conv, op = MPI.MIN, root = 0)
-                comm.Reduce(perf_time_add,
-                    all_min_perf_time_add, op = MPI.MIN, root = 0)
+                    all_max_perf_time_core = np.array([-np.infty],dtype=np.double)
+                    all_max_perf_time_send = np.array([-np.infty],dtype=np.double)
+                    all_max_perf_time_recv = np.array([-np.infty],dtype=np.double)
+                    all_max_perf_time_conv = np.array([-np.infty],dtype=np.double)
+                    all_max_perf_time_add = np.array([-np.infty],dtype=np.double)
 
-                if rank == 0:
-                    print("\n")
-                    print("Performance statistics for all processes")
-                    print(f"time_core     :  max: {all_max_perf_time_core[0]} ({all_max_perf_time_core[0]/perf_time_total*100:0.3f}%) min: {all_min_perf_time_core[0]} ({all_min_perf_time_core[0]/perf_time_total*100:0.3f}%)")
-                    print(f"time_send     :  max: {all_max_perf_time_send[0]} ({all_max_perf_time_send[0]/perf_time_total*100:0.3f}%) min: {all_min_perf_time_send[0]} ({all_min_perf_time_send[0]/perf_time_total*100:0.3f}%)")
-                    print(f"time_recv     :  max: {all_max_perf_time_recv[0]} ({all_max_perf_time_recv[0]/perf_time_total*100:0.3f}%) min: {all_min_perf_time_recv[0]} ({all_min_perf_time_recv[0]/perf_time_total*100:0.3f}%)")
-                    print(f"time_conv :  max: {all_max_perf_time_conv[0]} ({all_max_perf_time_conv[0]/perf_time_total*100:0.3f}%) min: {all_min_perf_time_conv[0]} ({all_min_perf_time_conv[0]/perf_time_total*100:0.3f}%)")
-                    print(f"time_add      :  max: {all_max_perf_time_add[0]} ({all_max_perf_time_add[0]/perf_time_total*100:0.3f}%) min: {all_min_perf_time_add[0]} ({all_min_perf_time_add[0]/perf_time_total*100:0.3f}%)")
+                    all_min_perf_time_core = np.array([np.infty],dtype=np.double)
+                    all_min_perf_time_send = np.array([np.infty],dtype=np.double)
+                    all_min_perf_time_recv = np.array([np.infty],dtype=np.double)
+                    all_min_perf_time_conv = np.array([np.infty],dtype=np.double)
+                    all_min_perf_time_add = np.array([np.infty],dtype=np.double)
 
+                    comm.Reduce(perf_time_core,
+                        all_max_perf_time_core, op = MPI.MAX, root = 0)
+                    comm.Reduce(perf_time_send,
+                        all_max_perf_time_send, op = MPI.MAX, root = 0)
+                    comm.Reduce(perf_time_recv,
+                        all_max_perf_time_recv, op = MPI.MAX, root = 0)
+                    comm.Reduce(perf_time_conv,
+                        all_max_perf_time_conv, op = MPI.MAX, root = 0)
+                    comm.Reduce(perf_time_add,
+                        all_max_perf_time_add, op = MPI.MAX, root = 0)
 
+                    comm.Reduce(perf_time_core,
+                        all_min_perf_time_core, op = MPI.MIN, root = 0)
+                    comm.Reduce(perf_time_send,
+                        all_min_perf_time_send, op = MPI.MIN, root = 0)
+                    comm.Reduce(perf_time_recv,
+                        all_min_perf_time_recv, op = MPI.MIN, root = 0)
+                    comm.Reduce(perf_time_conv,
+                        all_min_perf_time_conv, op = MPI.MIN, root = 0)
+                    comm.Reduce(perf_time_add,
+                        all_min_perf_time_add, op = MPI.MIN, root = 0)
+
+                    if rank == 0:
+                        print("\n")
+                        print("Performance statistics for all processes")
+                        print(f"time_core     :  max: {all_max_perf_time_core[0]} ({all_max_perf_time_core[0]/perf_time_total*100:0.3f}%) min: {all_min_perf_time_core[0]} ({all_min_perf_time_core[0]/perf_time_total*100:0.3f}%)")
+                        print(f"time_send     :  max: {all_max_perf_time_send[0]} ({all_max_perf_time_send[0]/perf_time_total*100:0.3f}%) min: {all_min_perf_time_send[0]} ({all_min_perf_time_send[0]/perf_time_total*100:0.3f}%)")
+                        print(f"time_recv     :  max: {all_max_perf_time_recv[0]} ({all_max_perf_time_recv[0]/perf_time_total*100:0.3f}%) min: {all_min_perf_time_recv[0]} ({all_min_perf_time_recv[0]/perf_time_total*100:0.3f}%)")
+                        print(f"time_conv :  max: {all_max_perf_time_conv[0]} ({all_max_perf_time_conv[0]/perf_time_total*100:0.3f}%) min: {all_min_perf_time_conv[0]} ({all_min_perf_time_conv[0]/perf_time_total*100:0.3f}%)")
+                        print(f"time_add      :  max: {all_max_perf_time_add[0]} ({all_max_perf_time_add[0]/perf_time_total*100:0.3f}%) min: {all_min_perf_time_add[0]} ({all_min_perf_time_add[0]/perf_time_total*100:0.3f}%)")
 
 
     def run_create_greens_function_database(self, 
@@ -2024,7 +2164,7 @@ class ShakerMaker:
             -------
             None
             """
-            title = f"🎉 ¡LARGA VIDA AL LADRUNO0100! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+            title = f"🎉 ¡LARGA VIDA AL LADRUNO1000_SURFACE! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
             if rank == 0:
                 print("\n\n")
                 print(title)

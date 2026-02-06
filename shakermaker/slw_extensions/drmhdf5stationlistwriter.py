@@ -28,8 +28,9 @@ class DRMHDF5StationListWriter(HDF5StationListWriter):
         self._t_final = None
 
     def initialize(self, station_list, num_samples, tmin=None, tmax=None, dt=None):
-        assert isinstance(station_list, DRMBox), \
-            "DRMHDF5StationListWriter.initialize - 'station_list' Should be a DRMBox"
+        from shakermaker.sl_extensions.SurfaceGrid import SurfaceGrid
+        assert isinstance(station_list, (DRMBox, SurfaceGrid)), \
+            "DRMHDF5StationListWriter.initialize - 'station_list' Should be a DRMBox or SurfaceGrid"
 
         # Form filename and create HDF5 dataset
         if self._filename is None or self._filename == "":

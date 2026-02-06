@@ -10,7 +10,7 @@ import subprocess
 on_rtd = os.environ.get('READTHEDOCS') == 'True'
 
 name = "shakermaker"
-version = "0.1"
+version = "1.0"
 release = "0.01"
 author = "Jose A. Abell, Jorge Crempien D., and Matias Recabarren"
 

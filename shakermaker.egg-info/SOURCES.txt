@@ -53,6 +53,7 @@ shakermaker/ffsp/s2m_comm.f90
 shakermaker/ffsp/slip_rate.f90
 shakermaker/ffsp/spfield_n.f90
 shakermaker/sl_extensions/DRMBox.py
+shakermaker/sl_extensions/SurfaceGrid.py
 shakermaker/sl_extensions/__init__.py
 shakermaker/slw_extensions/__init__.py
 shakermaker/slw_extensions/drmhdf5stationlistwriter.py
