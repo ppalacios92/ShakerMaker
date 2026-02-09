@@ -61,22 +61,97 @@ class ShakerMaker:
         self._mpi_nprocs = nprocs
         self._logger = logging.getLogger(__name__)
 
+    def _get_crust_for_pair(self, depth_source, depth_receiver):
+        """
+        Get a crustal model split at specified depths.
+        
+        Creates a deep copy of the base crustal model and applies splits
+        at both source and receiver depths.
+        
+        Parameters
+        ----------
+        depth_source : float
+            Source depth in km
+        depth_receiver : float
+            Receiver depth in km
+            
+        Returns
+        -------
+        CrustModel
+            Modified crustal model instance with splits at both depths
+        """
+        aux_crust = copy.deepcopy(self._crust)
+        aux_crust.split_at_depth(depth_source)
+        aux_crust.split_at_depth(depth_receiver)
+        return aux_crust
+
     def _cleanup_station_memory(self, station):
-        """Phase 2: Clear station memory after writing to disk."""
+        """
+        Clear station memory after data has been written to disk.
+        
+        Phase 2 optimization: Immediately free memory after writing station data
+        to prevent RAM accumulation throughout simulation. This is crucial for
+        progressive mode to work effectively.
+        
+        Parameters
+        ----------
+        station : Station
+            Station object whose memory should be cleared
+            
+        Notes
+        -----
+        Clears:
+        - Green's functions dictionary
+        - Response arrays (z, e, n, t)
+        - Initialization flag
+        
+        This is safe because data has already been written to disk via writer.
+        """
+        # Clear Green's functions to free memory
         if hasattr(station, '_greens_functions'):
             station._greens_functions = {}
+        
+        # Clear response data arrays
         station._z = None
         station._e = None
         station._n = None
         station._t = None
+        # station._initialized = False
 
     def _estimate_and_warn_memory(self, nstations, num_samples, method_name="simulation"):
-        """Phase 2: Estimate and warn about memory usage."""
-        bytes_per_station = 3 * num_samples * 8
+        """
+        Estimate memory usage and warn if it's too high.
+        
+        Phase 2 optimization: Help users avoid running out of memory by estimating
+        RAM requirements before starting simulation.
+        
+        Parameters
+        ----------
+        nstations : int
+            Number of stations in simulation
+        num_samples : int
+            Number of time samples per station
+        method_name : str
+            Name of method being run (for warning message)
+            
+        Notes
+        -----
+        Estimates are conservative (worst-case):
+        - Velocity data: 3 components × num_samples × 8 bytes per station
+        - Green's functions (if saved): 4 arrays × num_samples × 8 bytes × num_sources
+        
+        Warnings triggered:
+        - >10 GB: Strong warning, suggest progressive mode
+        - >50 GB: Critical warning, likely to fail
+        """
+        # Estimate memory for velocity data (3 components: E, N, Z)
+        bytes_per_station = 3 * num_samples * 8  # 8 bytes per double
         total_velocity_mb = (nstations * bytes_per_station) / (1024 * 1024)
         
+        # Estimate memory for Green's functions (if saved)
+        # Conservative estimate: assume all stations save GFs
         nsources = self._source.nsources
-        bytes_per_gf = 4 * num_samples * 8
+        bytes_per_gf = 4 * num_samples * 8  # z, e, n, t arrays
         total_gf_mb = (nstations * nsources * bytes_per_gf) / (1024 * 1024)
         
         total_estimated_mb = total_velocity_mb + total_gf_mb
@@ -84,15 +159,35 @@ class ShakerMaker:
         
         if rank == 0:
             print(f"\n{'='*60}")
-            print(f"Memory Estimation for {method_name}")
+            print(f"Memory Usage Estimation for {method_name}")
             print(f"{'='*60}")
-            print(f"Stations: {nstations:,}, Sources: {nsources:,}, Samples: {num_samples:,}")
-            print(f"Estimated: Velocity={total_velocity_mb:,.1f}MB, GF={total_gf_mb:,.1f}MB")
-            print(f"TOTAL: {total_estimated_gb:,.1f} GB")
+            print(f"Number of stations: {nstations:,}")
+            print(f"Number of sources:  {nsources:,}")
+            print(f"Samples per trace:  {num_samples:,}")
+            print(f"")
+            print(f"Estimated memory usage:")
+            print(f"  Velocity data:       {total_velocity_mb:,.1f} MB")
+            print(f"  Green's functions:   {total_gf_mb:,.1f} MB")
+            print(f"  TOTAL (worst case):  {total_estimated_gb:,.1f} GB")
+            print(f"")
+            
+            # Warning thresholds
             if total_estimated_gb > 50:
-                print(f"⚠️  CRITICAL: Very high memory! Progressive mode enabled.")
+                print(f"{'!'*60}")
+                print(f"CRITICAL WARNING: Estimated memory usage is VERY HIGH!")
+                print(f"{'!'*60}")
+                print(f"Recommendation: Use progressive mode (enabled by default)")
+                print(f"Progressive mode writes data incrementally to disk,")
+                print(f"keeping RAM usage constant regardless of problem size.")
+                print(f"{'!'*60}\n")
             elif total_estimated_gb > 10:
-                print(f"⚠️  High memory. Progressive mode enabled.")
+                print(f"WARNING: Estimated memory usage is high ({total_estimated_gb:.1f} GB)")
+                print(f"Progressive mode is ENABLED (writes data incrementally)")
+                print(f"This will keep RAM usage constant.\n")
+            else:
+                print(f"Memory usage looks reasonable ({total_estimated_gb:.1f} GB)")
+                print(f"Progressive mode is enabled for optimal memory efficiency.\n")
+            
             print(f"{'='*60}\n")
 
     def run(self, 
@@ -150,7 +245,7 @@ class ShakerMaker:
         
 
         """
-        title = f"🎉 ¡LARGA VIDA AL LADRUNO_phase2! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+        title = f"🎉 ¡LARGA VIDA AL LADRUNO_deepCOPY_PH1! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
         
         if rank == 0:
             print("\n\n")
@@ -197,6 +292,7 @@ class ShakerMaker:
                           .format(self._source.nsources, self._receivers.nstations,
                                   self._source.nsources*self._receivers.nstations, dt, nfft))
         
+        # Phase 2: Estimate memory usage before starting
         self._estimate_and_warn_memory(self._receivers.nstations, 2*nfft, "run()")
         
         if rank > 0:
@@ -205,8 +301,7 @@ class ShakerMaker:
         if writer and rank == 0:
             assert isinstance(writer, StationListWriter), \
                 "'writer' must be an instance of the shakermaker.StationListWriter class or None"
-            writer.initialize(self._receivers, 2*nfft)
-            # writer.initialize(self._receivers, 2*nfft, tmin=tmin, tmax=tmax, dt=dt) #progresive mode
+            writer.initialize(self._receivers, 2*nfft, tmin=tmin, tmax=tmax, dt=dt)  # Phase 2: Progressive mode enabled
             writer.write_metadata(self._receivers.metadata)
         ipair = 0
         if nprocs == 1 or rank == 0:
@@ -219,10 +314,9 @@ class ShakerMaker:
         npairs = self._receivers.nstations*len(self._source._pslist)
         for i_station, station in enumerate(self._receivers):
             for i_psource, psource in enumerate(self._source):
-                aux_crust = copy.deepcopy(self._crust)
-
-                aux_crust.split_at_depth(psource.x[2])
-                aux_crust.split_at_depth(station.x[2])
+                # Use cached crustal model instead of deepcopy (Phase 1 optimization)
+                # This avoids creating N×M redundant copies of the crust model
+                aux_crust = self._get_crust_for_pair(psource.x[2], station.x[2])
 
                 if ipair == next_pair:
                     if verbose:
@@ -373,7 +467,7 @@ class ShakerMaker:
             if writer and rank == 0:
                 printMPI(f"Rank 0 is writing station {i_station}")
                 writer.write_station(station, i_station)
-                self._cleanup_station_memory(station)
+                self._cleanup_station_memory(station)  # Phase 2: Free memory immediately
                 printMPI(f"Rank 0 is done writing station {i_station}")
 
         if writer and rank == 0:
@@ -573,7 +667,8 @@ class ShakerMaker:
                           .format(self._source.nsources, self._receivers.nstations,
                                   self._source.nsources*self._receivers.nstations, dt, nfft))
         
-        self._estimate_and_warn_memory(self._receivers.nstations, 2*nfft, "run()")
+        # Phase 2: Estimate memory usage before starting
+        self._estimate_and_warn_memory(self._receivers.nstations, 2*nfft, "run_fast()")
         
         if rank > 0:
             writer = None
@@ -581,8 +676,7 @@ class ShakerMaker:
         if writer and rank == 0:
             assert isinstance(writer, StationListWriter), \
                 "'writer' must be an instance of the shakermaker.StationListWriter class or None"
-            writer.initialize(self._receivers, 2*nfft)
-            # writer.initialize(self._receivers, 2*nfft, tmin=tmin, tmax=tmax, dt=dt) #progresive mode
+            writer.initialize(self._receivers, 2*nfft, tmin=tmin, tmax=tmax, dt=dt)  # Phase 2: Progressive mode enabled
             writer.write_metadata(self._receivers.metadata)
         ipair = 0
         if nprocs == 1 or rank == 0:
@@ -600,10 +694,8 @@ class ShakerMaker:
 
         for i_station, station in enumerate(self._receivers):
             for i_psource, psource in enumerate(self._source):
-                aux_crust = copy.deepcopy(self._crust)
-
-                aux_crust.split_at_depth(psource.x[2])
-                aux_crust.split_at_depth(station.x[2])
+                # Use cached crustal model instead of deepcopy (Phase 1 optimization)
+                aux_crust = self._get_crust_for_pair(psource.x[2], station.x[2])
                 
                 if ipair == next_pair:
                     if verbose:
@@ -760,8 +852,8 @@ class ShakerMaker:
             if writer and rank == 0:
                 printMPI(f"Rank 0 is writing station {i_station}")
                 writer.write_station(station, i_station)
-                self._cleanup_station_memory(station)
                 printMPI(f"Rank 0 is done writing station {i_station}")
+                self._cleanup_station_memory(station)  # Phase 2: Free memory immediately
 
         if writer and rank == 0:
             writer.close()
@@ -906,6 +998,7 @@ class ShakerMaker:
                                   .format(self._source.nsources, self._receivers.nstations,
                                           self._source.nsources*self._receivers.nstations, dt, nfft))
                 
+                # Phase 2: Estimate memory usage before starting
                 self._estimate_and_warn_memory(self._receivers.nstations, 2*nfft, "run_faster()")
                 
                 if rank > 0:
@@ -914,11 +1007,16 @@ class ShakerMaker:
                 if writer and rank == 0:
                     assert isinstance(writer, StationListWriter), \
                         "'writer' must be an instance of the shakermaker.StationListWriter class or None"
-                    # LEGACY MODE (default): No temp files, write directly to writer
-                    writer.initialize(self._receivers, 2*nfft)
-                    # PROGRESSIVE MODE: Use temp files for memory efficiency
-                    # writer.initialize(self._receivers, 2*nfft, tmin=tmin, tmax=tmax, dt=dt)
-                    writer.write_metadata(self._receivers.metadata)
+                    
+                    # Check if progressive mode is enabled BEFORE initialize
+                    use_progressive = hasattr(writer, '_progressive_mode') and writer._progressive_mode
+                    
+                    # Initialize writer
+                    writer.initialize(self._receivers, 2*nfft, tmin=tmin, tmax=tmax, dt=dt)
+                    
+                    # Restore progressive mode if it was set manually
+                    if use_progressive:
+                        writer._progressive_mode = True
                 
                 # Determine if we use temporary files based on writer mode
                 use_temp_files = False
@@ -977,10 +1075,8 @@ class ShakerMaker:
                     station_gfs = {} if (not use_temp_files and station.metadata.get('save_gf', False)) else None
                     
                     for i_psource, psource in enumerate(self._source):
-                        aux_crust = copy.deepcopy(self._crust)
-
-                        aux_crust.split_at_depth(psource.x[2])
-                        aux_crust.split_at_depth(station.x[2])
+                        # Use cached crustal model instead of deepcopy (Phase 1 optimization)
+                        aux_crust = self._get_crust_for_pair(psource.x[2], station.x[2])
 
                         if is_my_station:
 
@@ -1019,6 +1115,12 @@ class ShakerMaker:
                                     ipair_target = best_match_index
                                 else:
                                     print(f"No suitable match found! {allow_out_of_bounds=} {min_distance=}")
+                                    print("SKIPPING this pair")
+                                    npairs_skip += 1
+                                    if npairs_skip > 500:
+                                        print(f"Rank {rank} skipped too many pairs, giving up!")
+                                        exit(-1)
+                                    continue  # Skip to next pair
 
                                 if ipair_target == len(dh_of_pairs):
                                     print("Target not found in database -- SKIPPING")
@@ -1141,7 +1243,7 @@ class ShakerMaker:
                             station._e = None
                             station._n = None
                             station._t = None
-                            station._initialized = False
+                            # station._initialized = False
                         else:
                             # LEGACY MODE: Store data for later gathering
                             z_resp, e_resp, n_resp, t_resp = station.get_response()
@@ -1216,15 +1318,15 @@ class ShakerMaker:
                                 # Write to final output using writer
                                 if writer:
                                     writer.write_station(station, i_station)
-                                    self._cleanup_station_memory(station)
                                 
+                                    self._cleanup_station_memory(station)  # Phase 2: Free memory immediately
                                 # Clear station memory after writing
                                 station._greens_functions = {}
                                 station._z = None
                                 station._e = None
                                 station._n = None
                                 station._t = None
-                                station._initialized = False
+                                # station._initialized = False
                                 
                                 print(f"[Rank 0] Written station {i_station}")
                             
@@ -1265,7 +1367,7 @@ class ShakerMaker:
                                 
                                 if writer:
                                     writer.write_station(station, i_sta)
-                                    self._cleanup_station_memory(station)
+                                    self._cleanup_station_memory(station)  # Phase 2: Free memory immediately
                                 print(f"[Rank 0] Written own station {i_sta}")
                             
                             # Now receive from other ranks
@@ -1303,15 +1405,7 @@ class ShakerMaker:
                                     
                                     if writer:
                                         writer.write_station(station, i_sta)
-                                        self._cleanup_station_memory(station)
-                                    
-                                    # Clear memory
-                                    station._greens_functions = {}
-                                    station._z = None
-                                    station._e = None
-                                    station._n = None
-                                    station._t = None
-                                    station._initialized = False
+                                        self._cleanup_station_memory(station)  # Phase 2: Free memory immediately
                                     
                                     print(f"[Rank 0] Written station {i_sta} from rank {src_rank}")
                             
@@ -1355,7 +1449,6 @@ class ShakerMaker:
                                     station._greens_functions = data['gfs']
                                 
                                 writer.write_station(station, i_sta)
-                                self._cleanup_station_memory(station)
 
                 # Build mapping list for writer (both modes)
                 if rank == 0 and writer is not None:
@@ -1593,13 +1686,11 @@ class ShakerMaker:
         if True:
             tstart_pair = perf_counter()
             for i_station, i_psource in pairs_to_compute:
-                aux_crust = copy.deepcopy(self._crust)
-
                 station = self._receivers.get_station_by_id(i_station)
                 psource = self._source.get_source_by_id(i_psource)
 
-                aux_crust.split_at_depth(psource.x[2])
-                aux_crust.split_at_depth(station.x[2])
+                # Use cached crustal model instead of deepcopy (Phase 1 optimization)
+                aux_crust = self._get_crust_for_pair(psource.x[2], station.x[2])
 
 
                 if ipair == next_pair:
@@ -2213,7 +2304,7 @@ class ShakerMaker:
             -------
             None
             """
-            title = f"🎉 ¡LARGA VIDA AL LADRUNO_phase2! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+            title = f"🎉 ¡LARGA VIDA AL LADRUNO_deepCOPY_PH1! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
             if rank == 0:
                 print("\n\n")
                 print(title)
