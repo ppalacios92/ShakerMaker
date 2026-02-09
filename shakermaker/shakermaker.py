@@ -192,7 +192,7 @@ class ShakerMaker:
         station._e = None
         station._n = None
         station._t = None
-        station._initialized = False
+        # station._initialized = False
 
     def _estimate_and_warn_memory(self, nstations, num_samples, method_name="simulation"):
         """
@@ -1307,7 +1307,7 @@ class ShakerMaker:
                             station._e = None
                             station._n = None
                             station._t = None
-                            station._initialized = False
+                            # station._initialized = False
                         else:
                             # LEGACY MODE: Store data for later gathering
                             z_resp, e_resp, n_resp, t_resp = station.get_response()
@@ -1390,7 +1390,7 @@ class ShakerMaker:
                                 station._e = None
                                 station._n = None
                                 station._t = None
-                                station._initialized = False
+                                # station._initialized = False
                                 
                                 print(f"[Rank 0] Written station {i_station}")
                             
