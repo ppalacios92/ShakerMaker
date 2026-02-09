@@ -245,7 +245,7 @@ class ShakerMaker:
         
 
         """
-        title = f"🎉 ¡LARGA VIDA AL LADRUNO_prints! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+        title = f"🎉 ¡LARGA VIDA AL LADRUNO_deepCOPY_PH1! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
         
         if rank == 0:
             print("\n\n")
@@ -1459,8 +1459,12 @@ class ShakerMaker:
                     print("BUILDING SOURCE-RECEIVER PAIR MAPPING")
                     print("="*70)
                     print(f"Total stations: {nstations}")
-                    print(f"Sources per station: {len(self._source)}")
-                    print(f"Total pairs to map: {nstations * len(self._source):,}")
+                    
+                    # Get number of sources (works for both list and FaultSource)
+                    nsources = len(list(self._source))
+                    
+                    print(f"Sources per station: {nsources}")
+                    print(f"Total pairs to map: {nstations * nsources:,}")
                     print("This may take several minutes...")
                     print("="*70 + "\n")
                     
@@ -2339,7 +2343,7 @@ class ShakerMaker:
             -------
             None
             """
-            title = f"🎉 ¡LARGA VIDA AL LADRUNO_prints! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+            title = f"🎉 ¡LARGA VIDA AL LADRUNO_deepCOPY_PH1! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
             if rank == 0:
                 print("\n\n")
                 print(title)
