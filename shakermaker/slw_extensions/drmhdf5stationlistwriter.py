@@ -89,7 +89,19 @@ class DRMHDF5StationListWriter(HDF5StationListWriter):
         else:
             # Legacy mode: accumulate in memory
             self._progressive_mode = False
+            
+            # Phase 2: Warn about legacy mode usage
+            estimated_memory_mb = (self.nstations * num_samples * 3 * 8) / (1024 * 1024)
+            estimated_memory_gb = estimated_memory_mb / 1024
+            
             print(f"[WRITER] Legacy mode: accumulating in memory")
+            print(f"[WRITER] WARNING: Legacy mode will accumulate ~{estimated_memory_gb:.2f} GB in RAM")
+            
+            if estimated_memory_gb > 10:
+                print(f"[WRITER] CRITICAL: Memory usage will be very high!")
+                print(f"[WRITER] RECOMMENDATION: Enable progressive mode by passing tmin, tmax, dt")
+                print(f"[WRITER] Example: writer.initialize(receivers, num_samples, tmin=0, tmax=100, dt=0.05)")
+
 
     def write_metadata(self, metadata):
         assert self._h5file, "DRMHDF5StationListWriter.write_metadata uninitialized HDF5 file"
