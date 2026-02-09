@@ -245,7 +245,7 @@ class ShakerMaker:
         
 
         """
-        title = f"🎉 ¡LARGA VIDA AL LADRUNO_prints_mapping! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+        title = f"🎉 ¡LARGA VIDA AL LADRUNO_efficient_mapping! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
         
         if rank == 0:
             print("\n\n")
@@ -716,19 +716,19 @@ class ShakerMaker:
                         # dists[ipair,0] = dh
                         # dists[ipair,1] = dv
 
-                        # Get the target Green's Functions
-                        ipair_target = 0
-                        # condition = lor(np.abs(dh - dh_of_pairs[:n_computed_pairs])      > delta_h,     \
-                                        # np.abs(z_src - zsrc_of_pairs[:n_computed_pairs]) > delta_v_src, \
-                                        # np.abs(z_rec - zrec_of_pairs[:n_computed_pairs]) > delta_v_rec)
-                        for i in range(len(dh_of_pairs)):
-                            dh_p, dv_p, zrec_p, zsrc_p = dh_of_pairs[i], dv_of_pairs[i], zrec_of_pairs[i], zsrc_of_pairs[i]
-                            if abs(dh - dh_p) < delta_h and \
-                                abs(z_src - zsrc_p) < delta_v_src and \
-                                abs(z_rec - zrec_p) < delta_v_rec:
-                                break
-                            else:
-                                ipair_target += 1
+                        # Get the target Green's Functions using vectorized search
+                        dh_diffs = np.abs(dh - dh_of_pairs)
+                        zsrc_diffs = np.abs(z_src - zsrc_of_pairs)
+                        zrec_diffs = np.abs(z_rec - zrec_of_pairs)
+                        
+                        valid_mask = (dh_diffs < delta_h) & \
+                                   (zsrc_diffs < delta_v_src) & \
+                                   (zrec_diffs < delta_v_rec)
+                        
+                        if np.any(valid_mask):
+                            ipair_target = np.where(valid_mask)[0][0]  # First valid match
+                        else:
+                            ipair_target = len(dh_of_pairs)
 
                         if ipair_target == len(dh_of_pairs):
                             print("Target not found in database -- SKIPPING")
@@ -1092,24 +1092,27 @@ class ShakerMaker:
                                 d = x_rec - x_src
                                 dh = np.sqrt(np.dot(d[0:2],d[0:2]))
 
-                                min_distance = float('inf')
-                                best_match_index = -1
-
-                                for i in range(len(dh_of_pairs)):
-                                    dh_p, zrec_p, zsrc_p = dh_of_pairs[i], zrec_of_pairs[i], zsrc_of_pairs[i]
+                                # Vectorized search for best match
+                                dh_diffs = np.abs(dh - dh_of_pairs)
+                                zsrc_diffs = np.abs(z_src - zsrc_of_pairs)
+                                zrec_diffs = np.abs(z_rec - zrec_of_pairs)
+                                
+                                if allow_out_of_bounds:
+                                    # Find closest match regardless of tolerances
+                                    distances = dh_diffs + zsrc_diffs + zrec_diffs
+                                    best_match_index = np.argmin(distances)
+                                else:
+                                    # Find match within tolerances
+                                    valid_mask = (dh_diffs < delta_h) & \
+                                               (zsrc_diffs < delta_v_src) & \
+                                               (zrec_diffs < delta_v_rec)
                                     
-                                    if (abs(dh - dh_p) < delta_h and \
-                                       abs(z_src - zsrc_p) < delta_v_src and \
-                                       abs(z_rec - zrec_p) < delta_v_rec) or \
-                                       allow_out_of_bounds:
-
-                                        distance = (abs(dh - dh_p) + 
-                                                    abs(z_src - zsrc_p) + 
-                                                    abs(z_rec - zrec_p))
-                                    
-                                        if distance < min_distance:
-                                            min_distance = distance
-                                            best_match_index = i
+                                    if np.any(valid_mask):
+                                        distances = dh_diffs + zsrc_diffs + zrec_diffs
+                                        distances[~valid_mask] = np.inf
+                                        best_match_index = np.argmin(distances)
+                                    else:
+                                        best_match_index = -1
 
                                 if best_match_index != -1:
                                     ipair_target = best_match_index
@@ -1484,17 +1487,23 @@ class ShakerMaker:
                             d = x_rec - x_src
                             dh = np.sqrt(np.dot(d[0:2], d[0:2]))
                             
-                            min_distance = float('inf')
-                            best_idx = -1
+                            # Vectorized search using NumPy
+                            dh_diffs = np.abs(dh - dh_of_pairs)
+                            zsrc_diffs = np.abs(z_src - zsrc_of_pairs)
+                            zrec_diffs = np.abs(z_rec - zrec_of_pairs)
                             
-                            for i in range(len(dh_of_pairs)):
-                                if (abs(dh - dh_of_pairs[i]) < delta_h and
-                                    abs(z_src - zsrc_of_pairs[i]) < delta_v_src and
-                                    abs(z_rec - zrec_of_pairs[i]) < delta_v_rec):
-                                    dist = abs(dh - dh_of_pairs[i]) + abs(z_src - zsrc_of_pairs[i]) + abs(z_rec - zrec_of_pairs[i])
-                                    if dist < min_distance:
-                                        min_distance = dist
-                                        best_idx = i
+                            # Find valid pairs within tolerances
+                            valid_mask = (dh_diffs < delta_h) & \
+                                       (zsrc_diffs < delta_v_src) & \
+                                       (zrec_diffs < delta_v_rec)
+                            
+                            if np.any(valid_mask):
+                                # Calculate distances only for valid pairs
+                                distances = dh_diffs + zsrc_diffs + zrec_diffs
+                                distances[~valid_mask] = np.inf  # Mask out invalid pairs
+                                best_idx = np.argmin(distances)
+                            else:
+                                best_idx = -1
                             
                             full_mapping_list.append([i_sta, i_src, best_idx])
                     
@@ -2331,7 +2340,7 @@ class ShakerMaker:
             -------
             None
             """
-            title = f"🎉 ¡LARGA VIDA AL LADRUNO_prints_mapping! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+            title = f"🎉 ¡LARGA VIDA AL LADRUNO_efficient_mapping! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
             if rank == 0:
                 print("\n\n")
                 print(title)
