@@ -245,7 +245,7 @@ class ShakerMaker:
         
 
         """
-        title = f"🎉 ¡LARGA VIDA AL LADRUNO_deepCOPY_PH1! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+        title = f"🎉 ¡LARGA VIDA AL LADRUNO_prints_mapping! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
         
         if rank == 0:
             print("\n\n")
@@ -1452,9 +1452,29 @@ class ShakerMaker:
 
                 # Build mapping list for writer (both modes)
                 if rank == 0 and writer is not None:
+                    print("\n" + "="*70)
+                    print("BUILDING SOURCE-RECEIVER PAIR MAPPING")
+                    print("="*70)
+                    print(f"Total stations: {nstations}")
+                    print(f"Sources per station: {len(self._source)}")
+                    print(f"Total pairs to map: {nstations * len(self._source):,}")
+                    print("This may take several minutes...")
+                    print("="*70 + "\n")
+                    
+                    from time import perf_counter
+                    mapping_start = perf_counter()
                     full_mapping_list = []
                     
                     for i_sta in range(nstations):
+                        # Print progress every 10 stations
+                        if i_sta % 10 == 0 or i_sta == nstations - 1:
+                            elapsed = perf_counter() - mapping_start
+                            if i_sta > 0:
+                                rate = i_sta / elapsed
+                                eta = (nstations - i_sta) / rate
+                                print(f"[Mapping] Station {i_sta}/{nstations} ({i_sta/nstations*100:.1f}%) - "
+                                      f"Elapsed: {elapsed:.1f}s - ETA: {eta:.1f}s")
+                        
                         station = self._receivers.get_station_by_id(i_sta)
                         for i_src, psource in enumerate(self._source):
                             x_src = psource.x
@@ -1478,10 +1498,14 @@ class ShakerMaker:
                             
                             full_mapping_list.append([i_sta, i_src, best_idx])
                     
+                    mapping_elapsed = perf_counter() - mapping_start
+                    print(f"\n[Mapping] COMPLETE in {mapping_elapsed:.1f}s ({len(full_mapping_list):,} pairs)")
+                    print("="*70 + "\n")
                     writer.node_pair_mapping = np.array(full_mapping_list, dtype=np.int32)
                     writer.pairs_to_compute_for_mapping = pairs_to_compute
                     
                     # Write xyz for all stations (excluding QA)
+                    print("[Writer] Writing station positions to HDF5...")
                     for i_sta in range(nstations - 1):
                         sta = self._receivers.get_station_by_id(i_sta)
                         writer._h5file['DRM_Data/xyz'][i_sta, :] = sta.x
@@ -1490,8 +1514,11 @@ class ShakerMaker:
                     # Write QA position
                     qa_sta = self._receivers.get_station_by_id(nstations - 1)
                     writer._h5file['DRM_QA_Data/xyz'][0, :] = qa_sta.x
+                    print("[Writer] Station positions written.")
 
+                    print("[Writer] Closing HDF5 file...")
                     writer.close()
+                    print("[Writer] HDF5 file closed successfully.")
 
                 fid_debug_mpi.close()
                 hfile.close()
@@ -2304,7 +2331,7 @@ class ShakerMaker:
             -------
             None
             """
-            title = f"🎉 ¡LARGA VIDA AL LADRUNO_deepCOPY_PH1! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+            title = f"🎉 ¡LARGA VIDA AL LADRUNO_prints_mapping! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
             if rank == 0:
                 print("\n\n")
                 print(title)
