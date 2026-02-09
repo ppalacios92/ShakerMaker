@@ -127,8 +127,9 @@ class ShakerMaker:
         # Check if this depth combination exists in cache
         if cache_key in self._crust_cache:
             # Cache hit! Reuse existing modified model
+            # CRITICAL: Return a COPY, not the reference, because split_at_depth modifies in-place
             self._cache_hits += 1
-            return self._crust_cache[cache_key]
+            return copy.deepcopy(self._crust_cache[cache_key])
         
         # Cache miss - need to create new modified model
         self._cache_misses += 1
@@ -321,7 +322,7 @@ class ShakerMaker:
         
 
         """
-        title = f"🎉 ¡LARGA VIDA AL LADRUNO_deepcopy_PH2! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+        title = f"🎉 ¡LARGA VIDA AL LADRUNO_deepcopy_PH2_ROB! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
         
         if rank == 0:
             print("\n\n")
@@ -2237,8 +2238,37 @@ class ShakerMaker:
         #     # print(f"        station = {station}")
         #     print(f"        station.x = {station.x}")
 
-        src = crust.get_layer(psource.x[2]) + 1   # fortran starts in 1, not 0
-        rcv = crust.get_layer(station.x[2]) + 1   # fortran starts in 1, not 0
+        # CRITICAL FIX: get_layer can return None if depth is out of range
+        # This happens when the cached crust model doesn't have the required depth
+        # Fallback: recreate the crust model if cache is corrupted
+        src_layer = crust.get_layer(psource.x[2])
+        rcv_layer = crust.get_layer(station.x[2])
+        
+        if src_layer is None or rcv_layer is None:
+            # Cache corruption detected - recreate crust model
+            if verbose or True:  # Always print this critical error
+                print(f"WARNING: Crust cache corruption detected!")
+                print(f"  Source depth: {psource.x[2]}, layer: {src_layer}")
+                print(f"  Receiver depth: {station.x[2]}, layer: {rcv_layer}")
+                print(f"  Crust nlayers: {crust.nlayers}, depths: {crust.d[:crust.nlayers]}")
+                print(f"  Recreating crust model...")
+            
+            # Recreate the model without cache
+            crust = copy.deepcopy(self._crust)
+            crust.split_at_depth(psource.x[2])
+            crust.split_at_depth(station.x[2])
+            mb = crust.nlayers
+            src_layer = crust.get_layer(psource.x[2])
+            rcv_layer = crust.get_layer(station.x[2])
+            
+            if src_layer is None or rcv_layer is None:
+                raise ValueError(f"FATAL: Cannot find layers even after recreation!\n"
+                               f"  Source: {psource.x[2]} -> {src_layer}\n"
+                               f"  Receiver: {station.x[2]} -> {rcv_layer}\n"
+                               f"  This indicates invalid station/source coordinates")
+        
+        src = src_layer + 1   # fortran starts in 1, not 0
+        rcv = rcv_layer + 1   # fortran starts in 1, not 0
         
         stype = 2  # Source type double-couple, compute up and down going wave
         updn = 0
@@ -2369,7 +2399,7 @@ class ShakerMaker:
             -------
             None
             """
-            title = f"🎉 ¡LARGA VIDA AL LADRUNO_deepcopy_PH2! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+            title = f"🎉 ¡LARGA VIDA AL LADRUNO_deepcopy_PH2_ROB! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
             if rank == 0:
                 print("\n\n")
                 print(title)
