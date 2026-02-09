@@ -8,7 +8,7 @@ from scipy.interpolate import interp1d
 from scipy.integrate import cumulative_trapezoid
 import datetime
 import os
-
+# test1
 class DRMHDF5StationListWriter(HDF5StationListWriter):
 
     def __init__(self, filename):
@@ -26,6 +26,7 @@ class DRMHDF5StationListWriter(HDF5StationListWriter):
         # Variables for progressive mode
         self._progressive_mode = False
         self._t_final = None
+
 
     def initialize(self, station_list, num_samples, tmin=None, tmax=None, dt=None):
         from shakermaker.sl_extensions.SurfaceGrid import SurfaceGrid
@@ -114,9 +115,9 @@ class DRMHDF5StationListWriter(HDF5StationListWriter):
         metadata["created_on"] = datetime.datetime.now().strftime("%d-%b-%Y (%H:%M:%S.%f)")
 
         for key, value in metadata.items():
-            print(f"key = {key} {value}")
             if key not in grp_metadata:  # Avoid duplicates with dt, tstart, tend
                 grp_metadata.create_dataset(key, data=value)
+                print(f"key = {key} {value}")
 
     def write_station(self, station, index):
         assert self._h5file, "DRMHDF5StationListWriter.write_station uninitialized HDF5 file"
