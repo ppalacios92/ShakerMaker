@@ -1,6 +1,7 @@
 import copy
 import numpy as np
 import logging
+from scipy.spatial import cKDTree
 from shakermaker.crustmodel import CrustModel
 from shakermaker.faultsource import FaultSource
 from shakermaker.stationlist import StationList
@@ -245,7 +246,7 @@ class ShakerMaker:
         
 
         """
-        title = f"🎉 ¡LARGA VIDA AL LADRUNO_deepCOPY_PH1! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+        title = f"🎉 ¡LARGA VIDA AL LADRUNO_mapping_GF! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
         
         if rank == 0:
             print("\n\n")
@@ -1050,6 +1051,18 @@ class ShakerMaker:
                 nstations = self._receivers.nstations
                 npairs = nsources*nstations
 
+                # Detect if any station has save_gf enabled
+                any_save_gf = any(
+                    self._receivers.get_station_by_id(i).metadata.get('save_gf', False)
+                    for i in range(nstations)
+                )
+                
+                if rank == 0:
+                    if any_save_gf:
+                        print("[INFO] GF saving enabled → Node mapping will be generated")
+                    else:
+                        print("[INFO] GF saving disabled → Node mapping will be SKIPPED")
+
                 npairs_skip  = 0
                 ipair = 0
 
@@ -1453,10 +1466,10 @@ class ShakerMaker:
                                 
                                 writer.write_station(station, i_sta)
 
-                # Build mapping list for writer (both modes)
-                if rank == 0 and writer is not None:
+                # Build mapping list for writer (only if save_gf is enabled)
+                if rank == 0 and writer is not None and any_save_gf:
                     print("\n" + "="*70)
-                    print("BUILDING SOURCE-RECEIVER PAIR MAPPING")
+                    print("BUILDING NODE MAPPING (KDTree - save_gf enabled)")
                     print("="*70)
                     print(f"Total stations: {nstations}")
                     
@@ -1465,21 +1478,28 @@ class ShakerMaker:
                     
                     print(f"Sources per station: {nsources}")
                     print(f"Total pairs to map: {nstations * nsources:,}")
-                    print("This may take several minutes...")
                     print("="*70 + "\n")
                     
                     mapping_start = perf_counter()
+                    
+                    # Build KDTree for spatial search
+                    print("[KDTree] Building spatial index...")
+                    kdtree_start = perf_counter()
+                    coords = np.column_stack([dh_of_pairs, zsrc_of_pairs, zrec_of_pairs])
+                    tree = cKDTree(coords)
+                    kdtree_time = perf_counter() - kdtree_start
+                    print(f"[KDTree] Built in {kdtree_time:.2f}s ({len(dh_of_pairs):,} points)\n")
+                    
                     full_mapping_list = []
                     
                     for i_sta in range(nstations):
-                        # Print progress every 10 stations
-                        if i_sta % 10 == 0 or i_sta == nstations - 1:
+                        # Print progress every 50 stations
+                        if i_sta % 50 == 0 and i_sta > 0:
                             elapsed = perf_counter() - mapping_start
-                            if i_sta > 0:
-                                rate = i_sta / elapsed
-                                eta = (nstations - i_sta) / rate
-                                print(f"[Mapping] Station {i_sta}/{nstations} ({i_sta/nstations*100:.1f}%) - "
-                                      f"Elapsed: {elapsed:.1f}s - ETA: {eta:.1f}s")
+                            rate = i_sta / elapsed
+                            eta = (nstations - i_sta) / rate
+                            print(f"[Mapping] Station {i_sta}/{nstations} ({i_sta/nstations*100:.1f}%) - "
+                                  f"Elapsed: {elapsed:.1f}s - ETA: {eta:.1f}s")
                         
                         station = self._receivers.get_station_by_id(i_sta)
                         for i_src, psource in enumerate(self._source):
@@ -1490,21 +1510,32 @@ class ShakerMaker:
                             d = x_rec - x_src
                             dh = np.sqrt(np.dot(d[0:2], d[0:2]))
                             
-                            # Vectorized search using NumPy
-                            dh_diffs = np.abs(dh - dh_of_pairs)
-                            zsrc_diffs = np.abs(z_src - zsrc_of_pairs)
-                            zrec_diffs = np.abs(z_rec - zrec_of_pairs)
+                            # KDTree query for nearest neighbors
+                            query = [dh, z_src, z_rec]
+                            max_radius = max(delta_h, delta_v_src, delta_v_rec) * 2.0
+                            indices = tree.query_ball_point(query, r=max_radius)
                             
-                            # Find valid pairs within tolerances
-                            valid_mask = (dh_diffs < delta_h) & \
-                                       (zsrc_diffs < delta_v_src) & \
-                                       (zrec_diffs < delta_v_rec)
-                            
-                            if np.any(valid_mask):
-                                # Calculate distances only for valid pairs
-                                distances = dh_diffs + zsrc_diffs + zrec_diffs
-                                distances[~valid_mask] = np.inf  # Mask out invalid pairs
-                                best_idx = np.argmin(distances)
+                            if indices:
+                                # Get candidates
+                                dh_cands = dh_of_pairs[indices]
+                                zsrc_cands = zsrc_of_pairs[indices]
+                                zrec_cands = zrec_of_pairs[indices]
+                                
+                                # Validate against tolerances
+                                valid = ((np.abs(dh - dh_cands) < delta_h) & 
+                                        (np.abs(z_src - zsrc_cands) < delta_v_src) & 
+                                        (np.abs(z_rec - zrec_cands) < delta_v_rec))
+                                
+                                if np.any(valid):
+                                    # Find best match among valid candidates
+                                    dists = (np.abs(dh - dh_cands) + 
+                                            np.abs(z_src - zsrc_cands) + 
+                                            np.abs(z_rec - zrec_cands))
+                                    dists[~valid] = np.inf
+                                    best_local_idx = np.argmin(dists)
+                                    best_idx = indices[best_local_idx]
+                                else:
+                                    best_idx = -1
                             else:
                                 best_idx = -1
                             
@@ -1512,10 +1543,19 @@ class ShakerMaker:
                     
                     mapping_elapsed = perf_counter() - mapping_start
                     print(f"\n[Mapping] COMPLETE in {mapping_elapsed:.1f}s ({len(full_mapping_list):,} pairs)")
+                    print(f"  - KDTree build: {kdtree_time:.1f}s")
+                    print(f"  - Mapping time: {mapping_elapsed - kdtree_time:.1f}s")
                     print("="*70 + "\n")
+                    
                     writer.node_pair_mapping = np.array(full_mapping_list, dtype=np.int32)
                     writer.pairs_to_compute_for_mapping = pairs_to_compute
-                    
+                
+                elif rank == 0 and writer is not None:
+                    print("\n[INFO] Skipping node mapping (save_gf=False for all stations)\n")
+                    # Don't set node_pair_mapping - writer handles this with hasattr check
+                
+                # Write xyz for all stations (both cases)
+                if rank == 0 and writer is not None:
                     # Write xyz for all stations (excluding QA)
                     print("[Writer] Writing station positions to HDF5...")
                     for i_sta in range(nstations - 1):
@@ -2343,7 +2383,7 @@ class ShakerMaker:
             -------
             None
             """
-            title = f"🎉 ¡LARGA VIDA AL LADRUNO_deepCOPY_PH1! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+            title = f"🎉 ¡LARGA VIDA AL LADRUNO_mapping_GF! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
             if rank == 0:
                 print("\n\n")
                 print(title)
