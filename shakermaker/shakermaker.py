@@ -60,22 +60,13 @@ class ShakerMaker:
         self._mpi_rank = rank
         self._mpi_nprocs = nprocs
         self._logger = logging.getLogger(__name__)
-        
-        # Crust model cache to avoid redundant deepcopy operations
-        # Cache key: (rounded_source_depth, rounded_receiver_depth)
-        # Cache value: Modified CrustModel instance
-        self._crust_cache = {}
-        self._cache_hits = 0      # Counter for cache hits (found in cache)
-        self._cache_misses = 0    # Counter for cache misses (had to create new)
-        self._cache_enabled = True  # Flag to enable/disable cache (default: enabled)
 
-    def _get_modified_crust(self, depth_source, depth_receiver, use_cache=True):
+    def _get_crust_for_pair(self, depth_source, depth_receiver):
         """
         Get a crustal model split at specified depths.
         
-        Uses caching to avoid redundant deepcopy operations. Most source-receiver
-        pairs share the same depth combinations, so caching provides 95-99% cache
-        hit rates in typical scenarios.
+        Creates a deep copy of the base crustal model and applies splits
+        at both source and receiver depths.
         
         Parameters
         ----------
@@ -83,84 +74,16 @@ class ShakerMaker:
             Source depth in km
         depth_receiver : float
             Receiver depth in km
-        use_cache : bool, optional
-            If True, use cached models when available (default: True)
-            Set to False for testing/debugging
             
         Returns
         -------
         CrustModel
             Modified crustal model instance with splits at both depths
-            
-        Notes
-        -----
-        Cache key uses 3 decimal places (1 meter precision) to handle floating
-        point variations. This prevents cache misses from numerical noise while
-        maintaining adequate precision for seismic modeling.
-        
-        Examples
-        --------
-        >>> # First call with new depths - creates and caches
-        >>> crust1 = self._get_modified_crust(5.0, 0.0)  # cache miss
-        >>> # Second call with same depths - retrieves from cache
-        >>> crust2 = self._get_modified_crust(5.0, 0.0)  # cache hit (fast!)
         """
-        # Override with instance setting
-        use_cache = use_cache and self._cache_enabled
-        
-        if not use_cache:
-            # Cache disabled - always create new model (for testing/debugging)
-            aux_crust = copy.deepcopy(self._crust)
-            aux_crust.split_at_depth(depth_source)
-            aux_crust.split_at_depth(depth_receiver)
-            return aux_crust
-        
-        # Round depths to 3 decimal places (1 meter precision)
-        # This handles floating point variations and prevents cache misses
-        # from numerical noise (e.g., 5.0000001 vs 5.0)
-        depth_src_rounded = round(depth_source, 3)
-        depth_rec_rounded = round(depth_receiver, 3)
-        
-        # Create cache key as tuple (order matters: source first, receiver second)
-        cache_key = (depth_src_rounded, depth_rec_rounded)
-        
-        # Check if this depth combination exists in cache
-        if cache_key in self._crust_cache:
-            # Cache hit! Reuse existing modified model
-            # CRITICAL: Return a COPY, not the reference, because split_at_depth modifies in-place
-            self._cache_hits += 1
-            return copy.deepcopy(self._crust_cache[cache_key])
-        
-        # Cache miss - need to create new modified model
-        self._cache_misses += 1
-        
-        # Create deep copy and apply splits
         aux_crust = copy.deepcopy(self._crust)
         aux_crust.split_at_depth(depth_source)
         aux_crust.split_at_depth(depth_receiver)
-        
-        # Store in cache for future use
-        self._crust_cache[cache_key] = aux_crust
-        
         return aux_crust
-
-    def _report_cache_statistics(self):
-        """
-        Report crust model cache statistics.
-        
-        Shows cache hit rate, number of unique models, and deepcopy calls avoided.
-        Called at the end of simulation runs to provide performance insights.
-        """
-        total_cache_requests = self._cache_hits + self._cache_misses
-        if total_cache_requests > 0:
-            cache_hit_rate = (self._cache_hits / total_cache_requests) * 100
-            print(f"Crust model cache statistics:")
-            print(f"  Cache hits:    {self._cache_hits:,}")
-            print(f"  Cache misses:  {self._cache_misses:,}")
-            print(f"  Hit rate:      {cache_hit_rate:.2f}%")
-            print(f"  Unique models: {len(self._crust_cache)}")
-            print(f"  Deepcopy calls avoided: {self._cache_hits:,}")
-            print("------------------------------------------------")
 
     def _cleanup_station_memory(self, station):
         """
@@ -322,7 +245,7 @@ class ShakerMaker:
         
 
         """
-        title = f"🎉 ¡LARGA VIDA AL LADRUNO_deepcopy_PH2_ROB! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+        title = f"🎉 ¡LARGA VIDA AL LADRUNO_deepCOPY_PH1! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
         
         if rank == 0:
             print("\n\n")
@@ -393,7 +316,7 @@ class ShakerMaker:
             for i_psource, psource in enumerate(self._source):
                 # Use cached crustal model instead of deepcopy (Phase 1 optimization)
                 # This avoids creating N×M redundant copies of the crust model
-                aux_crust = self._get_modified_crust(psource.x[2], station.x[2])
+                aux_crust = self._get_crust_for_pair(psource.x[2], station.x[2])
 
                 if ipair == next_pair:
                     if verbose:
@@ -560,7 +483,6 @@ class ShakerMaker:
             print("\n\n")
             print(f"ShakerMaker Run done. Total time: {perf_time_total} s")
             print("------------------------------------------------")
-            self._report_cache_statistics()  # Phase 1: Cache performance report
 
         if use_mpi and nprocs > 1:
             all_max_perf_time_core = np.array([-np.infty],dtype=np.double)
@@ -773,7 +695,7 @@ class ShakerMaker:
         for i_station, station in enumerate(self._receivers):
             for i_psource, psource in enumerate(self._source):
                 # Use cached crustal model instead of deepcopy (Phase 1 optimization)
-                aux_crust = self._get_modified_crust(psource.x[2], station.x[2])
+                aux_crust = self._get_crust_for_pair(psource.x[2], station.x[2])
                 
                 if ipair == next_pair:
                     if verbose:
@@ -946,7 +868,6 @@ class ShakerMaker:
             print("\n\n")
             print(f"ShakerMaker Run done. Total time: {perf_time_total} s")
             print("------------------------------------------------")
-            self._report_cache_statistics()  # Phase 1: Cache performance report
 
         if use_mpi and nprocs > 1:
             all_max_perf_time_core = np.array([-np.infty],dtype=np.double)
@@ -1147,7 +1068,7 @@ class ShakerMaker:
                     
                     for i_psource, psource in enumerate(self._source):
                         # Use cached crustal model instead of deepcopy (Phase 1 optimization)
-                        aux_crust = self._get_modified_crust(psource.x[2], station.x[2])
+                        aux_crust = self._get_crust_for_pair(psource.x[2], station.x[2])
 
                         if is_my_station:
 
@@ -1570,7 +1491,6 @@ class ShakerMaker:
                     print(f"ShakerMaker Run done. Total time: {perf_time_total} s")
                     print("------------------------------------------------")
 
-                    self._report_cache_statistics()  # Phase 1: Cache performance report
                 if use_mpi and nprocs > 1:
 
                     print(f"rank {rank} @ gather all performances stats")
@@ -1756,7 +1676,7 @@ class ShakerMaker:
                 psource = self._source.get_source_by_id(i_psource)
 
                 # Use cached crustal model instead of deepcopy (Phase 1 optimization)
-                aux_crust = self._get_modified_crust(psource.x[2], station.x[2])
+                aux_crust = self._get_crust_for_pair(psource.x[2], station.x[2])
 
 
                 if ipair == next_pair:
@@ -2238,37 +2158,8 @@ class ShakerMaker:
         #     # print(f"        station = {station}")
         #     print(f"        station.x = {station.x}")
 
-        # CRITICAL FIX: get_layer can return None if depth is out of range
-        # This happens when the cached crust model doesn't have the required depth
-        # Fallback: recreate the crust model if cache is corrupted
-        src_layer = crust.get_layer(psource.x[2])
-        rcv_layer = crust.get_layer(station.x[2])
-        
-        if src_layer is None or rcv_layer is None:
-            # Cache corruption detected - recreate crust model
-            if verbose or True:  # Always print this critical error
-                print(f"WARNING: Crust cache corruption detected!")
-                print(f"  Source depth: {psource.x[2]}, layer: {src_layer}")
-                print(f"  Receiver depth: {station.x[2]}, layer: {rcv_layer}")
-                print(f"  Crust nlayers: {crust.nlayers}, depths: {crust.d[:crust.nlayers]}")
-                print(f"  Recreating crust model...")
-            
-            # Recreate the model without cache
-            crust = copy.deepcopy(self._crust)
-            crust.split_at_depth(psource.x[2])
-            crust.split_at_depth(station.x[2])
-            mb = crust.nlayers
-            src_layer = crust.get_layer(psource.x[2])
-            rcv_layer = crust.get_layer(station.x[2])
-            
-            if src_layer is None or rcv_layer is None:
-                raise ValueError(f"FATAL: Cannot find layers even after recreation!\n"
-                               f"  Source: {psource.x[2]} -> {src_layer}\n"
-                               f"  Receiver: {station.x[2]} -> {rcv_layer}\n"
-                               f"  This indicates invalid station/source coordinates")
-        
-        src = src_layer + 1   # fortran starts in 1, not 0
-        rcv = rcv_layer + 1   # fortran starts in 1, not 0
+        src = crust.get_layer(psource.x[2]) + 1   # fortran starts in 1, not 0
+        rcv = crust.get_layer(station.x[2]) + 1   # fortran starts in 1, not 0
         
         stype = 2  # Source type double-couple, compute up and down going wave
         updn = 0
@@ -2399,7 +2290,7 @@ class ShakerMaker:
             -------
             None
             """
-            title = f"🎉 ¡LARGA VIDA AL LADRUNO_deepcopy_PH2_ROB! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+            title = f"🎉 ¡LARGA VIDA AL LADRUNO_deepCOPY_PH1! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
             if rank == 0:
                 print("\n\n")
                 print(title)
