@@ -8,7 +8,7 @@ from scipy.interpolate import interp1d
 from scipy.integrate import cumulative_trapezoid
 import datetime
 import os
-# test1
+
 class DRMHDF5StationListWriter(HDF5StationListWriter):
 
     def __init__(self, filename):
