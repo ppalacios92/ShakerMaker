@@ -627,7 +627,7 @@ class FFSPSource:
             if rank == 0:
                 print(f"HDF5 loaded")
                 print(f"Best realization activated\n")
-    
+
         
         print(f"✓ HDF5 loaded\n")
     
@@ -1013,7 +1013,16 @@ class FFSPSource:
         # =========================================================================
         # Read velocity.vel (FORMAT: vp vs rho thickness qa qb)
         # =========================================================================
-        vel_file = os.path.join(input_dir, "velocity.vel")
+        vel_file = None
+        for filename in os.listdir(input_dir):
+            if filename.endswith('.vel'):
+                vel_file = os.path.join(input_dir, filename)
+                if verbose:
+                    print(f"  Found velocity file: {filename}")
+                break
+
+        if vel_file is None:
+            raise FileNotFoundError(...)
         from .crustmodel import CrustModel
         with open(vel_file, 'r') as f:
             line = f.readline().strip().split()
@@ -1202,26 +1211,76 @@ class FFSPSource:
 
 
     @classmethod
-    def from_ffsp_format(cls, input_dir: str, output_name: str = "FFSP_OUTPUT"):
-        params_file = os.path.join(input_dir, "source_model.params")
-        params = {}
-        with open(params_file, 'r') as f:
+    def from_ffsp_format(cls, input_dir: str, output_name: str = "FFSP_OUTPUT", verbose: bool = True):
+         """
+         Load FFSP results from directory.
+         Works with both Python-generated and original Fortran FFSP output.
+         
+         For Fortran output, requires ffsp.inp to be present in the directory.
+         """
+         
+         params_file = os.path.join(input_dir, "source_model.params")
+         
+         if os.path.exists(params_file):
+             # Python-generated format (has .params file)
+             if verbose:
+                 print(f"Loading Python-generated FFSP output")
+             return cls._load_from_params_file(input_dir, output_name, verbose)
+         else:
+             # Original Fortran format (needs ffsp.inp)
+             inp_file = os.path.join(input_dir, "ffsp.inp")
+             if not os.path.exists(inp_file):
+                 raise FileNotFoundError(
+                     f"Cannot load FFSP data from {input_dir}\n\n"
+                     f"Missing required files:\n"
+                     f"  - source_model.params (Python format), OR\n"
+                     f"  - ffsp.inp (Fortran format)\n\n"
+                     f"At least one of these files must be present to reconstruct the source model."
+                 )
+             
+             if verbose:
+                 print(f"Loading original Fortran FFSP output")
+             return cls._load_from_fortran_files(input_dir, output_name, verbose)
+
+    @classmethod
+    def _load_from_params_file(cls, input_dir: str, output_name: str, verbose: bool):
+         """Load from Python-generated format with source_model.params"""
+         
+         # Read params
+         params_file = os.path.join(input_dir, "source_model.params")
+         params = {}
+         
+         with open(params_file, 'r') as f:
             for line in f:
                 parts = line.strip().split()
-                key = parts[0]
-                if key in ['nb_taper_trbl', 'seeds']:
-                    params[key] = [int(x) for x in parts[1:]]
-                elif key in ['id_sf_type', 'nsubx', 'nsuby', 'id_ran1', 'id_ran2', 'is_moment']:
-                    params[key] = int(parts[1])
-                elif key == 'output_name':
-                    params[key] = parts[1]
-                else:
-                    params[key] = float(parts[1])
-        vel_file = os.path.join(input_dir, "velocity.vel")
-        from .crustmodel import CrustModel
-        with open(vel_file, 'r') as f:
+                if len(parts) >= 2:
+                    key = parts[0]
+                    if key in ['id_sf_type', 'nsubx', 'nsuby', 'id_ran1', 'id_ran2', 'is_moment']:
+                        params[key] = int(parts[1])
+                    elif key == 'nb_taper_trbl':
+                        params[key] = [int(x) for x in parts[1:5]]
+                    elif key == 'seeds':
+                        params[key] = [int(x) for x in parts[1:4]]
+                    elif key == 'output_name':  # ← AÑADE ESTO
+                        params[key] = parts[1]
+                    else:
+                        params[key] = float(parts[1])
+         
+         # Load velocity model
+         vel_file = None
+         for filename in os.listdir(input_dir):
+            if filename.endswith('.vel'):
+                vel_file = os.path.join(input_dir, filename)
+                if verbose:
+                    print(f"  Found velocity file: {filename}")
+                break
+
+         if vel_file is None:
+            raise FileNotFoundError(...)
+
+         with open(vel_file, 'r') as f:
             line = f.readline().strip().split()
-            nlayers = int(line[0])  # First number only
+            nlayers = int(line[0])
             crust_model = CrustModel(nlayers)
             for i in range(nlayers):
                 values = f.readline().split()
@@ -1234,46 +1293,264 @@ class FFSPSource:
                     float(values[4]),  # qa
                     float(values[5])   # qb
                 )
-        
-        obj = cls(
-            id_sf_type=params['id_sf_type'], freq_min=params['freq_min'], freq_max=params['freq_max'],
-            fault_length=params['fault_length'], fault_width=params['fault_width'],
-            x_hypc=params['x_hypc'], y_hypc=params['y_hypc'], depth_hypc=params['depth_hypc'],
-            xref_hypc=params['xref_hypc'], yref_hypc=params['yref_hypc'],
-            magnitude=params['magnitude'], fc_main_1=params['fc_main_1'], fc_main_2=params['fc_main_2'],
-            rv_avg=params['rv_avg'], ratio_rise=params['ratio_rise'],
-            strike=params['strike'], dip=params['dip'], rake=params['rake'],
-            pdip_max=params['pdip_max'], prake_max=params['prake_max'],
-            nsubx=params['nsubx'], nsuby=params['nsuby'],
-            nb_taper_trbl=params['nb_taper_trbl'], seeds=params['seeds'],
-            id_ran1=params['id_ran1'], id_ran2=params['id_ran2'],
-            angle_north_to_x=params['angle_north_to_x'], is_moment=params['is_moment'],
-            crust_model=crust_model, output_name=params.get('output_name', 'FFSP_OUTPUT'),
-            verbose=False
-        )
-        
-        obj.load_ffsp_format(input_dir, output_name)
-        return obj
+         
+         # Create FFSPSource object
+         source = cls(
+             id_sf_type=params['id_sf_type'],
+             freq_min=params['freq_min'],
+             freq_max=params['freq_max'],
+             fault_length=params['fault_length'],
+             fault_width=params['fault_width'],
+             x_hypc=params['x_hypc'],
+             y_hypc=params['y_hypc'],
+             depth_hypc=params['depth_hypc'],
+             xref_hypc=params['xref_hypc'],
+             yref_hypc=params['yref_hypc'],
+             magnitude=params['magnitude'],
+             fc_main_1=params['fc_main_1'],
+             fc_main_2=params['fc_main_2'],
+             rv_avg=params['rv_avg'],
+             ratio_rise=params['ratio_rise'],
+             strike=params['strike'],
+             dip=params['dip'],
+             rake=params['rake'],
+             pdip_max=params['pdip_max'],
+             prake_max=params['prake_max'],
+             nsubx=params['nsubx'],
+             nsuby=params['nsuby'],
+             nb_taper_trbl=params['nb_taper_trbl'],
+             seeds=params['seeds'],
+             id_ran1=params['id_ran1'],
+             id_ran2=params['id_ran2'],
+             angle_north_to_x=params['angle_north_to_x'],
+             is_moment=params['is_moment'],
+             crust_model=crust_model,
+             output_name=params.get('output_name', output_name),
+             verbose=verbose
+         )
+         
+         # Load data files using existing method
+         source._load_ffsp_data_legacy(input_dir, output_name)
+         
+         return source
 
+    @classmethod
+    def _load_from_fortran_files(cls, input_dir: str, output_name: str, verbose: bool):
+         """Reconstruct FFSPSource from original Fortran FFSP output files"""
+         
+         # 1. Parse ffsp.inp
+         inp_file = os.path.join(input_dir, "ffsp.inp")
+         params = cls._parse_ffsp_inp(inp_file)
+         
+         # 2. Read source_model.list for geometric info
+         list_file = os.path.join(input_dir, "source_model.list")
+         with open(list_file, 'r') as f:
+             lines = f.readlines()
+             parts = lines[0].strip().split()
+             nsubx = int(parts[1])
+             nsuby = int(parts[2])
+         
+         # 3. Count realizations
+         id_ran1 = 1
+         id_ran2 = 1
+         while os.path.exists(os.path.join(input_dir, f"{output_name}.{id_ran2:03d}")):
+             id_ran2 += 1
+         id_ran2 -= 1
+         
+         if verbose:
+             print(f"  Found {id_ran2} realizations")
+             print(f"  Grid: {nsubx} × {nsuby} subfaults")
+         
+         # 4. Load velocity model
+         vel_file = None
+         for filename in os.listdir(input_dir):
+            if filename.endswith('.vel'):
+                vel_file = os.path.join(input_dir, filename)
+                if verbose:
+                    print(f"  Found velocity file: {filename}")
+                break
+
+         if vel_file is None:
+            raise FileNotFoundError(...)
+         with open(vel_file, 'r') as f:
+            line = f.readline().strip().split()
+            nlayers = int(line[0])
+            crust_model = CrustModel(nlayers)
+            for i in range(nlayers):
+                values = f.readline().split()
+                # Format: vp vs rho thickness qa qb
+                crust_model.add_layer(
+                    float(values[3]),  # thickness
+                    float(values[0]),  # vp
+                    float(values[1]),  # vs
+                    float(values[2]),  # rho
+                    float(values[4]),  # qa
+                    float(values[5])   # qb
+                )
+         
+         # 5. Create FFSPSource
+         source = cls(
+             id_sf_type=params['id_sf_type'],
+             freq_min=0.0,
+             freq_max=params['freq_max'],
+             fault_length=params['fault_length'],
+             fault_width=params['fault_width'],
+             x_hypc=params['x_hypc'],
+             y_hypc=params['y_hypc'],
+             depth_hypc=params['depth_hypc'],
+             xref_hypc=params['xref_hypc'],
+             yref_hypc=params['yref_hypc'],
+             magnitude=params['magnitude'],
+             fc_main_1=params['fc_main_1'],
+             fc_main_2=params['fc_main_2'],
+             rv_avg=params['rv_avg'],
+             ratio_rise=params['ratio_rise'],
+             strike=params['strike'],
+             dip=params['dip'],
+             rake=params['rake'],
+             pdip_max=params['pdip_max'],
+             prake_max=params['prake_max'],
+             nsubx=nsubx,
+             nsuby=nsuby,
+             nb_taper_trbl=params['nb_taper_trbl'],
+             seeds=params['seeds'],
+             id_ran1=id_ran1,
+             id_ran2=id_ran2,
+             angle_north_to_x=params['angle_north_to_x'],
+             is_moment=params['is_moment'],
+             crust_model=crust_model,
+             output_name=output_name,
+             verbose=verbose
+         )
+         
+         # 6. Load data files using existing method
+         source._load_ffsp_data_legacy(input_dir, output_name)
+         
+         return source
+
+    @staticmethod
+    def _parse_ffsp_inp(inp_file: str) -> dict:
+         """Parse ffsp.inp - extracts ALL parameters from original Fortran input"""
+         
+         with open(inp_file, 'r') as f:
+             lines = f.readlines()
+         
+         params = {}
+         
+         # Line 1: id_sf_type freq_max
+         parts = lines[0].strip().split()
+         params['id_sf_type'] = int(parts[0])
+         params['freq_max'] = float(parts[1])
+         
+         # Line 2: fault_length fault_width
+         parts = lines[1].strip().split()
+         params['fault_length'] = float(parts[0])
+         params['fault_width'] = float(parts[1])
+         
+         # Line 3: x_hypc y_hypc depth_hypc
+         parts = lines[2].strip().split()
+         params['x_hypc'] = float(parts[0])
+         params['y_hypc'] = float(parts[1])
+         params['depth_hypc'] = float(parts[2])
+         
+         # Line 4: xref_hypc yref_hypc
+         parts = lines[3].strip().split()
+         params['xref_hypc'] = float(parts[0])
+         params['yref_hypc'] = float(parts[1])
+         
+         # Line 5: moment fc_main_1 fc_main_2 rv_avg
+         parts = lines[4].strip().split()
+         params['magnitude'] = float(parts[0])
+         params['fc_main_1'] = float(parts[1])
+         params['fc_main_2'] = float(parts[2])
+         params['rv_avg'] = float(parts[3])
+         
+         # Line 6: ratio_rise
+         params['ratio_rise'] = float(lines[5].strip())
+         
+         # Line 7: strike dip rake
+         parts = lines[6].strip().split()
+         params['strike'] = float(parts[0])
+         params['dip'] = float(parts[1])
+         params['rake'] = float(parts[2])
+         
+         # Line 8: pdip_max prake_max
+         parts = lines[7].strip().split()
+         params['pdip_max'] = float(parts[0])
+         params['prake_max'] = float(parts[1])
+         
+         # Line 9: nsubx nsuby (también en .list, pero leemos de ambos)
+         parts = lines[8].strip().split()
+         params['nsubx'] = int(parts[0])
+         params['nsuby'] = int(parts[1])
+         
+         # Line 10: nb_taper_TRBL
+         parts = lines[9].strip().split()
+         params['nb_taper_trbl'] = [int(x) for x in parts]
+         
+         # Line 11: seeds
+         parts = lines[10].strip().split()
+         params['seeds'] = [int(x) for x in parts]
+         
+         # Line 12: id_ran1 id_ran2 (lo contaremos de archivos)
+         parts = lines[11].strip().split()
+         params['id_ran1'] = int(parts[0])
+         params['id_ran2'] = int(parts[1])
+         
+         # Line 14: angle_north_to_x
+         params['angle_north_to_x'] = float(lines[13].strip())
+         
+         # Line 15: is_moment
+         params['is_moment'] = int(lines[14].strip())
+         
+         return params
 
     def _load_ffsp_data_legacy(self, input_dir: str, output_name: str):
         """Helper to load FFSP data files for legacy format"""
         
-        # Read source_model.score
+        # =========================================================================
+        # Read source_model.score (OPTIONAL - may not exist for single realization)
+        # =========================================================================
         score_file = os.path.join(input_dir, "source_model.score")
-        with open(score_file, 'r') as f:
-            n_realizations = int(f.readline().strip())
-            f.readline()
-            ave_tr, ave_tp, ave_vr, err_spectra, pdf = [], [], [], [], []
-            for i in range(n_realizations):
-                f.readline()
-                values = f.readline().split()
-                ave_tr.append(float(values[0]))
-                ave_tp.append(float(values[1]))
-                ave_vr.append(float(values[2]))
-                err_spectra.append(float(values[3]))
-                pdf.append(float(values[4]))
         
+        if os.path.exists(score_file):
+            # Multiple realizations case
+            with open(score_file, 'r') as f:
+                n_realizations = int(f.readline().strip())
+                f.readline()  # Skip header
+                ave_tr, ave_tp, ave_vr, err_spectra, pdf = [], [], [], [], []
+                for i in range(n_realizations):
+                    f.readline()  # Skip filename
+                    values = f.readline().split()
+                    ave_tr.append(float(values[0]))
+                    ave_tp.append(float(values[1]))
+                    ave_vr.append(float(values[2]))
+                    err_spectra.append(float(values[3]))
+                    pdf.append(float(values[4]))
+        else:
+            # Single realization case - count files manually
+            n_realizations = 0
+            i = 1
+            while os.path.exists(os.path.join(input_dir, f"{output_name}.{i:03d}")):
+                n_realizations += 1
+                i += 1
+            
+            if n_realizations == 0:
+                raise FileNotFoundError(
+                    f"No realization files found in {input_dir}\n"
+                    f"Expected files: {output_name}.001, {output_name}.002, etc."
+                )
+            
+            # Create dummy statistics (not meaningful for single realization)
+            ave_tr = [0.0] * n_realizations
+            ave_tp = [0.0] * n_realizations
+            ave_vr = [0.0] * n_realizations
+            err_spectra = [0.0] * n_realizations
+            pdf = [0.0] * n_realizations
+        
+        # =========================================================================
+        # Read realization files (.001, .002, ...)
+        # =========================================================================
         npts = self.params['nsubx'] * self.params['nsuby']
         x = np.zeros((npts, n_realizations))
         y = np.zeros((npts, n_realizations))
@@ -1305,75 +1582,166 @@ class FFSPSource:
                     rake[j, i] = float(values[9])
         
         self.all_realizations = {
-            'n_realizations': n_realizations, 'nseg': nseg, 'npts': npts,
-            'x': x, 'y': y, 'z': z, 'slip': slip, 'rupture_time': rupture_time,
-            'rise_time': rise_time, 'peak_time': peak_time, 'strike': strike,
-            'dip': dip, 'rake': rake,
+            'n_realizations': n_realizations,
+            'nseg': nseg,
+            'npts': npts,
+            'x': x,
+            'y': y,
+            'z': z,
+            'slip': slip,
+            'rupture_time': rupture_time,
+            'rise_time': rise_time,
+            'peak_time': peak_time,
+            'strike': strike,
+            'dip': dip,
+            'rake': rake,
         }
         
-        # Read best realization
+        # =========================================================================
+        # Read best realization (.bst) - OPTIONAL for single realization
+        # =========================================================================
         best_file = os.path.join(input_dir, f"{output_name}.bst")
-        best_x, best_y, best_z = np.zeros(npts), np.zeros(npts), np.zeros(npts)
-        best_slip, best_rupture_time, best_rise_time = np.zeros(npts), np.zeros(npts), np.zeros(npts)
-        best_peak_time, best_strike, best_dip, best_rake = np.zeros(npts), np.zeros(npts), np.zeros(npts), np.zeros(npts)
         
-        with open(best_file, 'r') as f:
-            f.readline()
-            for j in range(npts):
-                values = f.readline().split()
-                best_x[j], best_y[j], best_z[j] = float(values[0]), float(values[1]), float(values[2])
-                best_slip[j], best_rupture_time[j], best_rise_time[j] = float(values[3]), float(values[4]), float(values[5])
-                best_peak_time[j], best_strike[j], best_dip[j], best_rake[j] = float(values[6]), float(values[7]), float(values[8]), float(values[9])
+        if os.path.exists(best_file):
+            # .bst file exists (multiple realizations)
+            best_x = np.zeros(npts)
+            best_y = np.zeros(npts)
+            best_z = np.zeros(npts)
+            best_slip = np.zeros(npts)
+            best_rupture_time = np.zeros(npts)
+            best_rise_time = np.zeros(npts)
+            best_peak_time = np.zeros(npts)
+            best_strike = np.zeros(npts)
+            best_dip = np.zeros(npts)
+            best_rake = np.zeros(npts)
+            
+            with open(best_file, 'r') as f:
+                f.readline()  # Skip header
+                for j in range(npts):
+                    values = f.readline().split()
+                    best_x[j] = float(values[0])
+                    best_y[j] = float(values[1])
+                    best_z[j] = float(values[2])
+                    best_slip[j] = float(values[3])
+                    best_rupture_time[j] = float(values[4])
+                    best_rise_time[j] = float(values[5])
+                    best_peak_time[j] = float(values[6])
+                    best_strike[j] = float(values[7])
+                    best_dip[j] = float(values[8])
+                    best_rake[j] = float(values[9])
+            
+            self.best_realization = {
+                'nseg': nseg,
+                'npts': npts,
+                'x': best_x,
+                'y': best_y,
+                'z': best_z,
+                'slip': best_slip,
+                'rupture_time': best_rupture_time,
+                'rise_time': best_rise_time,
+                'peak_time': best_peak_time,
+                'strike': best_strike,
+                'dip': best_dip,
+                'rake': best_rake,
+            }
+        else:
+            # No .bst file - use first (and only) realization as "best"
+            self.best_realization = {
+                'nseg': nseg,
+                'npts': npts,
+                'x': x[:, 0],
+                'y': y[:, 0],
+                'z': z[:, 0],
+                'slip': slip[:, 0],
+                'rupture_time': rupture_time[:, 0],
+                'rise_time': rise_time[:, 0],
+                'peak_time': peak_time[:, 0],
+                'strike': strike[:, 0],
+                'dip': dip[:, 0],
+                'rake': rake[:, 0],
+            }
         
-        self.best_realization = {
-            'nseg': nseg, 'npts': npts, 'x': best_x, 'y': best_y, 'z': best_z,
-            'slip': best_slip, 'rupture_time': best_rupture_time, 'rise_time': best_rise_time,
-            'peak_time': best_peak_time, 'strike': best_strike, 'dip': best_dip, 'rake': best_rake,
-        }
-        
+        # =========================================================================
+        # Store statistics
+        # =========================================================================
         self.source_stats = {
             'source_score': {
                 'n_realizations': n_realizations,
-                'ave_tr': np.array(ave_tr), 'ave_tp': np.array(ave_tp), 'ave_vr': np.array(ave_vr),
-                'err_spectra': np.array(err_spectra), 'pdf': np.array(pdf),
+                'ave_tr': np.array(ave_tr),
+                'ave_tp': np.array(ave_tp),
+                'ave_vr': np.array(ave_vr),
+                'err_spectra': np.array(err_spectra),
+                'pdf': np.array(pdf),
             }
         }
         
+        # =========================================================================
         # Load spectral data if available
+        # =========================================================================
         calsvf_file = os.path.join(input_dir, "calsvf.dat")
         if os.path.exists(calsvf_file):
             with open(calsvf_file, 'r') as f:
                 nphf_spec = int(f.readline().strip())
-                freq_spec, moment_rate, dcf = np.zeros(nphf_spec), np.zeros(nphf_spec), np.zeros(nphf_spec)
+                freq_spec = np.zeros(nphf_spec)
+                moment_rate = np.zeros(nphf_spec)
+                dcf = np.zeros(nphf_spec)
                 for i in range(nphf_spec):
                     values = f.readline().split()
-                    freq_spec[i], moment_rate[i], dcf[i] = float(values[0]), float(values[1]), float(values[2])
-            self.source_stats['spectrum'] = {'freq': freq_spec, 'moment_rate_synth': moment_rate, 'moment_rate_dcf': dcf}
+                    freq_spec[i] = float(values[0])
+                    moment_rate[i] = float(values[1])
+                    dcf[i] = float(values[2])
             
+            self.source_stats['spectrum'] = {
+                'freq': freq_spec,
+                'moment_rate_synth': moment_rate,
+                'moment_rate_dcf': dcf
+            }
+            
+            # calsvf_tim.dat
             calsvf_tim = os.path.join(input_dir, "calsvf_tim.dat")
             if os.path.exists(calsvf_tim):
                 with open(calsvf_tim, 'r') as f:
                     ntime_spec = int(f.readline().strip())
-                    time, stf = np.zeros(ntime_spec), np.zeros(ntime_spec)
+                    time = np.zeros(ntime_spec)
+                    stf = np.zeros(ntime_spec)
                     for i in range(ntime_spec):
                         values = f.readline().split()
-                        time[i], stf[i] = float(values[0]), float(values[1])
-                self.source_stats['stf_time'] = {'time': time, 'stf': stf}
+                        time[i] = float(values[0])
+                        stf[i] = float(values[1])
+                
+                self.source_stats['stf_time'] = {
+                    'time': time,
+                    'stf': stf
+                }
             
+            # logsvf.dat
             logsvf = os.path.join(input_dir, "logsvf.dat")
             if os.path.exists(logsvf):
                 with open(logsvf, 'r') as f:
                     lnpt_spec = int(f.readline().strip())
-                    freq_center, logmean_synth, logmean_dcf = np.zeros(lnpt_spec), np.zeros(lnpt_spec), np.zeros(lnpt_spec)
+                    freq_center = np.zeros(lnpt_spec)
+                    logmean_synth = np.zeros(lnpt_spec)
+                    logmean_dcf = np.zeros(lnpt_spec)
                     for i in range(lnpt_spec):
                         values = f.readline().split()
-                        freq_center[i], logmean_synth[i], logmean_dcf[i] = float(values[0]), float(values[1]), float(values[2])
-                self.source_stats['spectrum_octave'] = {'freq_center': freq_center, 'logmean_synth': logmean_synth, 'logmean_dcf': logmean_dcf}
+                        freq_center[i] = float(values[0])
+                        logmean_synth[i] = float(values[1])
+                        logmean_dcf[i] = float(values[2])
+                
+                self.source_stats['spectrum_octave'] = {
+                    'freq_center': freq_center,
+                    'logmean_synth': logmean_synth,
+                    'logmean_dcf': logmean_dcf
+                }
         
+        # =========================================================================
+        # Set active realization
+        # =========================================================================
         self.subfaults = self.best_realization
         self.active_realization = 'best'
         
         print(f"✓ Legacy FFSP loaded\n")
+    
 
     # ============ PLOTTING METHODS ============
     

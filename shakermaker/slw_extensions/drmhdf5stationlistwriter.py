@@ -218,7 +218,14 @@ class DRMHDF5StationListWriter(HDF5StationListWriter):
     def _write_station_gfs_progressive(self, sta_idx, gf_dict):
         """Write Green's functions of a station directly to HDF5."""
         grp_gf = self._h5file['GF']
-        grp_sta = grp_gf.create_group(f'sta_{sta_idx}')
+        
+        # FIX: Check if group already exists (happens during consolidation)
+        sta_group_name = f'sta_{sta_idx}'
+        if sta_group_name in grp_gf:
+            print(f"[DEBUG] Group {sta_group_name} already exists, skipping")
+            return  # Skip duplicate write
+        
+        grp_sta = grp_gf.create_group(sta_group_name)
         
         for sub_idx, (z, e, n, t, tdata, t0) in gf_dict.items():
             grp_sub = grp_sta.create_group(f'sub_{sub_idx}')
