@@ -415,6 +415,15 @@ class FFSPSource:
         """Set active realization for plotting."""
         self.subfaults = self.get_realization(index)
         self.active_realization = index
+        # Detect MPI rank
+        try:
+            from mpi4py import MPI
+            rank = MPI.COMM_WORLD.Get_rank()
+        except (ImportError, AttributeError):
+            rank = 0
+
+        if self.verbose and rank == 0:
+            print(f"Realization #{index+1} activated")
 
     def get_subfaults(self) -> Dict:
         """Get currently active subfault data."""
@@ -608,6 +617,17 @@ class FFSPSource:
             # Set active realization
             self.subfaults = self.best_realization
             self.active_realization = 'best'
+            # Detect MPI rank
+            try:
+                from mpi4py import MPI
+                rank = MPI.COMM_WORLD.Get_rank()
+            except (ImportError, AttributeError):
+                rank = 0
+
+            if rank == 0:
+                print(f"HDF5 loaded")
+                print(f"Best realization activated\n")
+    
         
         print(f"✓ HDF5 loaded\n")
     
@@ -944,7 +964,7 @@ class FFSPSource:
 
 
 
-     def load_ffsp_format(self, input_dir: str, output_name: str = "FFSP_OUTPUT"):
+    def load_ffsp_format(self, input_dir: str, output_name: str = "FFSP_OUTPUT"):
         """
         Load FFSP results from modern format files (with source_model.params).
         
@@ -1168,7 +1188,16 @@ class FFSPSource:
         # Set active realization
         self.subfaults = self.best_realization
         self.active_realization = 'best'
-        
+        # Detect MPI rank
+        try:
+            from mpi4py import MPI
+            rank = MPI.COMM_WORLD.Get_rank()
+        except (ImportError, AttributeError):
+            rank = 0
+
+        if self.verbose and rank == 0:
+            print(f"✓ FFSP loaded")
+            print(f"Best realization activated\n")
         print(f"✓ FFSP loaded\n")
 
 
@@ -1225,7 +1254,7 @@ class FFSPSource:
         
         obj.load_ffsp_format(input_dir, output_name)
         return obj
-                
+
 
     def _load_ffsp_data_legacy(self, input_dir: str, output_name: str):
         """Helper to load FFSP data files for legacy format"""
