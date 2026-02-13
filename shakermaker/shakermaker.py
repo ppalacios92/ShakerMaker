@@ -190,7 +190,7 @@ class ShakerMaker:
         tmin=0.,
         tmax=100,
         showProgress=True,
-        writer_mode='legacy'
+        writer_mode='progressive'
         ):
         """Run the simulation. 
         
@@ -559,7 +559,7 @@ class ShakerMaker:
         tmin=0.,
         tmax=100,
         showProgress=True,
-        writer_mode='legacy'
+        writer_mode='progressive'
         ):
         """Run the simulation. 
         
@@ -924,7 +924,7 @@ class ShakerMaker:
                 tmax=100,
                 showProgress=True,
                 allow_out_of_bounds=False,
-                writer_mode='legacy'
+                writer_mode='progressive'
                 ):
                 """Run the simulation using pre-computed Green's functions database.
                 
@@ -2514,3 +2514,136 @@ class ShakerMaker:
                     print(f"  Time: {perf_time_total_all_stages/3600:.2f} hrs")
                 
                 print("="*70 + "\n")
+
+    def export_drm_geometry(self, filename="drm_geometry.h5drm"):
+        """
+        Export DRM geometry for visualization in STKO.
+        
+        Creates HDF5 file with station coordinates and metadata but minimal
+        time data (2 samples with linear ramp 0→10 for visualization).
+        
+        Works with DRMBox and SurfaceGrid receivers only.
+        
+        Parameters
+        ----------
+        filename : str
+            Output HDF5 filename (default: 'drm_geometry.h5drm')
+            
+        Returns
+        -------
+        str
+            Path to created file
+            
+        """
+        from shakermaker.sl_extensions import DRMBox
+        from shakermaker.sl_extensions.SurfaceGrid import SurfaceGrid
+        import h5py
+        import numpy as np
+        
+        # Verify receivers type
+        if not isinstance(self._receivers, (DRMBox, SurfaceGrid)):
+            raise TypeError(
+                "export_drm_geometry() requires DRMBox or SurfaceGrid receivers.\n"
+                f"Got: {type(self._receivers).__name__}"
+            )
+        
+        if rank == 0:
+            print(f"\n{'='*70}")
+            print("EXPORTING DRM GEOMETRY")
+            print(f"{'='*70}")
+            print(f"Receiver type: {type(self._receivers).__name__}")
+            print(f"Output file:   {filename}")
+        
+        # Get metadata
+        metadata = self._receivers.metadata
+        nstations = self._receivers.nstations - 1  # Exclude QA
+        
+        # Time configuration (2 samples: 0 and 10)
+        dt = 0.0005
+        tstart = 0.0
+        tend = 10.0
+        nt = 2
+        
+        if rank == 0:
+            print(f"Stations:      {nstations + 1} (including QA)")
+            print(f"Time samples:  {nt} (linear ramp 0→10)")
+        
+        # Create HDF5 file
+        if rank == 0:
+            with h5py.File(filename, 'w') as hf:
+                
+                # Create groups
+                grp_data = hf.create_group('DRM_Data')
+                grp_qa = hf.create_group('DRM_QA_Data')
+                grp_meta = hf.create_group('DRM_Metadata')
+                
+                # ================================================================
+                # Write station coordinates
+                # ================================================================
+                xyz = np.zeros((nstations, 3))
+                internal = np.zeros(nstations, dtype=bool)
+                
+                for i in range(nstations):
+                    station = self._receivers.get_station_by_id(i)
+                    xyz[i, :] = station.x
+                    internal[i] = station.is_internal
+                
+                grp_data.create_dataset('xyz', data=xyz, dtype=np.float64)
+                grp_data.create_dataset('internal', data=internal, dtype=bool)
+                grp_data.create_dataset('data_location', 
+                                        data=np.arange(0, nstations, dtype=np.int32) * 3)
+                
+                # QA station
+                qa_station = self._receivers.get_station_by_id(nstations)
+                grp_qa.create_dataset('xyz', data=qa_station.x.reshape(1, 3), dtype=np.float64)
+                
+                print(f"  ✓ Wrote {nstations} station coordinates")
+                print(f"  ✓ Wrote QA station coordinate")
+                
+                # ================================================================
+                # Write minimal time data (linear ramp: 0→10)
+                # ================================================================
+                # Time vector: [0.0, 10.0]
+                # Data: [[0.0, 10.0], [0.0, 10.0], ...] for each component
+                
+                data_stations = np.zeros((3 * nstations, nt))
+                data_qa = np.zeros((3, nt))
+                
+                # Create linear ramp: 0→10
+                for i in range(3 * nstations):
+                    data_stations[i, :] = [0.0, 10.0]
+                
+                for i in range(3):
+                    data_qa[i, :] = [0.0, 10.0]
+                
+                grp_data.create_dataset('velocity', data=data_stations, dtype=np.float64)
+                grp_data.create_dataset('displacement', data=data_stations, dtype=np.float64)
+                grp_data.create_dataset('acceleration', data=data_stations, dtype=np.float64)
+                
+                grp_qa.create_dataset('velocity', data=data_qa, dtype=np.float64)
+                grp_qa.create_dataset('displacement', data=data_qa, dtype=np.float64)
+                grp_qa.create_dataset('acceleration', data=data_qa, dtype=np.float64)
+                
+                print(f"  ✓ Wrote time data (2 samples, linear ramp)")
+                
+                # ================================================================
+                # Write metadata (ALL fields from reference file)
+                # ================================================================
+                grp_meta.create_dataset('dt', data=dt)
+                grp_meta.create_dataset('tstart', data=tstart)
+                grp_meta.create_dataset('tend', data=tend)
+                
+                # Write all receiver metadata
+                for key in ['h', 'drmbox_x0', 'drmbox_xmax', 'drmbox_xmin',
+                            'drmbox_ymax', 'drmbox_ymin', 'drmbox_zmax', 'drmbox_zmin']:
+                    if key in metadata:
+                        grp_meta.create_dataset(key, data=metadata[key])
+                
+                print(f"  ✓ Wrote metadata")
+            
+            print(f"{'='*70}")
+            print(f"✓ GEOMETRY FILE CREATED: {filename}")
+            print(f"{'='*70}\n")
+            print("\nUse in STKO to visualize grid before running simulation.\n")
+        
+        return filename
