@@ -163,32 +163,12 @@ class ShakerMaker:
             print(f"{'='*60}")
             print(f"Number of stations: {nstations:,}")
             print(f"Number of sources:  {nsources:,}")
-            print(f"Samples per trace:  {num_samples:,}")
             print(f"")
             print(f"Estimated memory usage:")
             print(f"  Velocity data:       {total_velocity_mb:,.1f} MB")
             print(f"  Green's functions:   {total_gf_mb:,.1f} MB")
             print(f"  TOTAL (worst case):  {total_estimated_gb:,.1f} GB")
             print(f"")
-            
-            # Warning thresholds
-            if total_estimated_gb > 50:
-                print(f"{'!'*60}")
-                print(f"CRITICAL WARNING: Estimated memory usage is VERY HIGH!")
-                print(f"{'!'*60}")
-                print(f"Recommendation: Use progressive mode (enabled by default)")
-                print(f"Progressive mode writes data incrementally to disk,")
-                print(f"keeping RAM usage constant regardless of problem size.")
-                print(f"{'!'*60}\n")
-            elif total_estimated_gb > 10:
-                print(f"WARNING: Estimated memory usage is high ({total_estimated_gb:.1f} GB)")
-                print(f"Progressive mode is ENABLED (writes data incrementally)")
-                print(f"This will keep RAM usage constant.\n")
-            else:
-                print(f"Memory usage looks reasonable ({total_estimated_gb:.1f} GB)")
-                print(f"Progressive mode is enabled for optimal memory efficiency.\n")
-            
-            print(f"{'='*60}\n")
 
     def run(self, 
         dt=0.05, 
@@ -209,7 +189,8 @@ class ShakerMaker:
         debugMPI=False,
         tmin=0.,
         tmax=100,
-        showProgress=True
+        showProgress=True,
+        writer_mode='legacy'
         ):
         """Run the simulation. 
         
@@ -245,7 +226,7 @@ class ShakerMaker:
         
 
         """
-        title = f"🎉 ¡LARGA VIDA AL LADRUNO_QA! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+        title = f"🎉 ¡LARGA VIDA AL LADRUNO_writter_mode! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
         
         if rank == 0:
             print("\n\n")
@@ -300,8 +281,8 @@ class ShakerMaker:
 
         if writer and rank == 0:
             assert isinstance(writer, StationListWriter), \
-                "'writer' must be an instance of the shakermaker.StationListWriter class or None"
-            writer.initialize(self._receivers, 2*nfft, tmin=tmin, tmax=tmax, dt=dt)  # Phase 2: Progressive mode enabled
+            "'writer' must be an instance of the shakermaker.StationListWriter class or None"
+            writer.initialize(self._receivers, 2*nfft, tmin=tmin, tmax=tmax, dt=dt,writer_mode=writer_mode)  # Phase 2: Progressive mode enabled
             writer.write_metadata(self._receivers.metadata)
         ipair = 0
         if nprocs == 1 or rank == 0:
@@ -577,7 +558,8 @@ class ShakerMaker:
         debugMPI=False,
         tmin=0.,
         tmax=100,
-        showProgress=True
+        showProgress=True,
+        writer_mode='legacy'
         ):
         """Run the simulation. 
         
@@ -676,7 +658,7 @@ class ShakerMaker:
         if writer and rank == 0:
             assert isinstance(writer, StationListWriter), \
                 "'writer' must be an instance of the shakermaker.StationListWriter class or None"
-            writer.initialize(self._receivers, 2*nfft, tmin=tmin, tmax=tmax, dt=dt)  # Phase 2: Progressive mode enabled
+            writer.initialize(self._receivers, 2*nfft, tmin=tmin, tmax=tmax, dt=dt,writer_mode=writer_mode)  # Phase 2: Progressive mode enabled
             writer.write_metadata(self._receivers.metadata)
         ipair = 0
         if nprocs == 1 or rank == 0:
@@ -942,6 +924,7 @@ class ShakerMaker:
                 tmax=100,
                 showProgress=True,
                 allow_out_of_bounds=False,
+                writer_mode='legacy'
                 ):
                 """Run the simulation using pre-computed Green's functions database.
                 
@@ -1012,7 +995,7 @@ class ShakerMaker:
                     use_progressive = hasattr(writer, '_progressive_mode') and writer._progressive_mode
                     
                     # Initialize writer
-                    writer.initialize(self._receivers, 2*nfft, tmin=tmin, tmax=tmax, dt=dt)
+                    writer.initialize(self._receivers, 2*nfft, tmin=tmin, tmax=tmax, dt=dt,writer_mode=writer_mode)
                     
                     # Restore progressive mode if it was set manually
                     if use_progressive:
@@ -2254,10 +2237,11 @@ class ShakerMaker:
             tmax=100,
             writer=None,
             allow_out_of_bounds=False,
+            writer_mode='progressive',
             # General
             verbose=False,
             debugMPI=False,
-            showProgress=True
+            showProgress=True,
             ):
             """
             Run complete GF database workflow with stages 0, 1, and/or 2.
@@ -2307,7 +2291,9 @@ class ShakerMaker:
             -------
             None
             """
-            title = f"🎉 ¡LARGA VIDA AL LADRUNO_QA! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+            title = f"🎉 ¡LARGA VIDA AL LADRUNO_writter_mode! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+            # Initialize total timer
+            perf_time_begin = perf_counter()
             if rank == 0:
                 print("\n\n")
                 print(title)
@@ -2496,7 +2482,8 @@ class ShakerMaker:
                     tmin=tmin,
                     tmax=tmax,
                     showProgress=showProgress,
-                    allow_out_of_bounds=allow_out_of_bounds
+                    allow_out_of_bounds=allow_out_of_bounds,
+                    writer_mode=writer_mode
                 )
                 
                 if rank == 0:
@@ -2509,3 +2496,21 @@ class ShakerMaker:
                 print("\n" + "="*70)
                 print("✓ ALL STAGES COMPLETE")
                 print("="*70)
+
+                perf_time_end_total = perf_counter()
+                perf_time_total_all_stages = perf_time_end_total - perf_time_begin
+ 
+                if stage == 'all':
+                    print(f"All 3 stages completed in:")
+                else:
+                    print(f"Stage {stage} completed in:")
+                
+                print(f"  Time: {perf_time_total_all_stages:.2f} s")
+                
+                if perf_time_total_all_stages > 60:
+                    print(f"  Time: {perf_time_total_all_stages/60:.2f} min")
+                
+                if perf_time_total_all_stages > 3600:
+                    print(f"  Time: {perf_time_total_all_stages/3600:.2f} hrs")
+                
+                print("="*70 + "\n")
