@@ -28,28 +28,6 @@ class HDF5StationListWriter(StationListWriter):
         self._tend = None
 
     def initialize(self, station_list, num_samples, tmin=None, tmax=None, dt=None, writer_mode=None):
-        """
-        Initialize HDF5 writer for station list output.
-        
-        Parameters
-        ----------
-        station_list : StationList
-            List of stations to write
-        num_samples : int
-            Number of time samples (used in legacy mode)
-        tmin, tmax, dt : float, optional
-            Time window parameters for progressive mode
-        writer_mode : {'progressive', 'legacy'}, optional
-            Writing mode:
-            - 'progressive': Write data incrementally to disk (requires tmin/tmax/dt)
-            - 'legacy': Standard mode, writes all data at once
-            
-        Notes
-        -----
-        Progressive mode is recommended for large simulations.
-        It interpolates all stations to a common time grid and enables
-        progressive writing of Green's functions to disk.
-        """
         assert isinstance(station_list, StationList), \
             "HDF5StationListWriter.initialize - 'station_list' Should be subclass of StationList"
 
@@ -88,24 +66,14 @@ class HDF5StationListWriter(StationListWriter):
                                 dtype=np.double, chunks=(3, num_samples_actual))
         grp_data.create_dataset("xyz", (station_list.nstations, 3), dtype=np.double)
         
-        # Note: 'internal' not used for simple stations, but kept for compatibility
-        # Note: 'data_location' not needed for simple stations, but kept for compatibility
         data_location = np.arange(0, station_list.nstations, dtype=np.int32) * 3
         grp_data.create_dataset("data_location", data=data_location)
         
-        # Create GF group for progressive mode (will store Green's functions)
+        # Create GF group for progressive mode
         if self._progressive_mode:
             self._h5file.create_group('GF')
 
     def write_metadata(self, metadata):
-        """
-        Write metadata to HDF5 file.
-        
-        Parameters
-        ----------
-        metadata : dict
-            Metadata dictionary to write
-        """
         assert self._h5file, "HDF5StationListWriter.write_metadata uninitialized HDF5 file"
 
         grp_metadata = self._h5file['Metadata']
@@ -121,30 +89,10 @@ class HDF5StationListWriter(StationListWriter):
         
         # Write other metadata
         for key, value in metadata.items():
-            if key not in grp_metadata:  # Avoid duplicates
+            if key not in grp_metadata:
                 grp_metadata.create_dataset(key, data=value)
 
     def write_station(self, station, index):
-        """
-        Write a station's data to HDF5 file.
-        
-        Parameters
-        ----------
-        station : Station
-            Station object to write
-        index : int
-            Station index in the list
-            
-        Notes
-        -----
-        In progressive mode:
-        - Interpolates velocity to common time grid
-        - Writes Green's functions if save_gf=True
-        
-        In legacy mode:
-        - Writes velocity directly without interpolation
-        - Warns if save_gf=True (not supported in legacy mode)
-        """
         assert self._h5file, "HDF5StationListWriter.write_station uninitialized HDF5 file"
         assert isinstance(station, Station), \
             "HDF5StationListWriter.write_station 'station Should be subclass of Station"
@@ -174,27 +122,7 @@ class HDF5StationListWriter(StationListWriter):
         xyz[index, :] = station.x
 
     def _write_station_progressive(self, station, index, zz, ee, nn, t):
-        """
-        Write station data with interpolation to common time grid (progressive mode).
-        
-        Parameters
-        ----------
-        station : Station
-            Station object
-        index : int
-            Station index
-        zz, ee, nn : ndarray
-            Velocity components (vertical, east, north)
-        t : ndarray
-            Time vector from station
-            
-        Notes
-        -----
-        Interpolates station response to common time grid (self._t_final)
-        and writes Green's functions if save_gf=True.
-        """
         def interpolatorfun(told, yold, tnew):
-            """Helper function for interpolation with proper boundary handling"""
             return interp1d(told, yold,
                 fill_value=(yold[0], yold[-1]),
                 bounds_error=False)(tnew)
@@ -219,24 +147,6 @@ class HDF5StationListWriter(StationListWriter):
         self._h5file.flush()
 
     def _write_station_gfs_progressive(self, sta_idx, gf_dict):
-        """
-        Write Green's functions of a station directly to HDF5.
-        
-        Parameters
-        ----------
-        sta_idx : int
-            Station index
-        gf_dict : dict
-            Dictionary mapping subfault_id -> (z, e, n, t, tdata, t0)
-            
-        Notes
-        -----
-        Creates hierarchical structure:
-        /GF/sta_{idx}/sub_{subfault_id}/[z, e, n, t, tdata, t0]
-        
-        This mirrors the structure used in DRMHDF5StationListWriter
-        for consistency across different writer types.
-        """
         grp_gf = self._h5file['GF']
         
         # Check if group already exists
@@ -263,7 +173,7 @@ class HDF5StationListWriter(StationListWriter):
         """Close the HDF5 file"""
         assert self._h5file, "HDF5StationListWriter.close uninitialized HDF5 file"
 
-        self._h5file.close()
+        self._h5file.close()  # ← CORREGIDO: era writer.close()
 
 
 StationListWriter.register(HDF5StationListWriter)
