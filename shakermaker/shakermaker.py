@@ -226,7 +226,7 @@ class ShakerMaker:
         
 
         """
-        title = f"🎉 ¡LARGA VIDA AL LADRUNO_writer_mode_station_close! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+        title = f"🎉 ¡LARGA VIDA AL LADRUNO_StationWriter X6X! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
         
         if rank == 0:
             print("\n\n")
@@ -1024,6 +1024,11 @@ class ShakerMaker:
                     temp_gf_file.create_group('responses')
                     print(f"[Rank {rank}] Created temporary GF file: {temp_gf_filename}")
 
+                # Detect if writer is DRM type (has QA station concept)
+                is_drm_writer = False
+                if writer and rank == 0:
+                    is_drm_writer = 'DRMHDF5' in type(writer).__name__
+                    
                 next_station = rank
                 skip_stations = nprocs
 
@@ -1467,17 +1472,15 @@ class ShakerMaker:
                     writer.node_pair_mapping = np.array(full_mapping_list, dtype=np.int32)
                     writer.pairs_to_compute_for_mapping = pairs_to_compute
                     
-                    # Write xyz for all stations (excluding QA)
-                    for i_sta in range(nstations - 1):
-                        sta = self._receivers.get_station_by_id(i_sta)
-                        writer._h5file['DRM_Data/xyz'][i_sta, :] = sta.x
-                        writer._h5file['DRM_Data/internal'][i_sta] = sta.is_internal
-
-                    # Write QA position
-                    qa_sta = self._receivers.get_station_by_id(nstations - 1)
-                    writer._h5file['DRM_QA_Data/xyz'][0, :] = qa_sta.x
-
-                    writer.close()
+                    # Write xyz - only for DRM writer (has QA station)
+                    if is_drm_writer:
+                        for i_sta in range(nstations - 1):
+                            sta = self._receivers.get_station_by_id(i_sta)
+                            writer._h5file['DRM_Data/xyz'][i_sta, :] = sta.x
+                            writer._h5file['DRM_Data/internal'][i_sta] = sta.is_internal
+                        # Write QA position
+                        qa_sta = self._receivers.get_station_by_id(nstations - 1)
+                        writer._h5file['DRM_QA_Data/xyz'][0, :] = qa_sta.x
 
                 fid_debug_mpi.close()
                 hfile.close()
@@ -2291,7 +2294,7 @@ class ShakerMaker:
             -------
             None
             """
-            title = f"🎉 ¡LARGA VIDA AL LADRUNO_writer_mode_station_close! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+            title = f"🎉 ¡LARGA VIDA AL LADRUNO_StationWriter X6X! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
             # Initialize total timer
             perf_time_begin = perf_counter()
             if rank == 0:
