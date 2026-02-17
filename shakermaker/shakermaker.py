@@ -226,7 +226,7 @@ class ShakerMaker:
         
 
         """
-        title = f"🎉 ¡LARGA VIDA AL LADRUNO_StationWriter_X6X_branch! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+        title = f"🎉 ¡LARGA VIDA AL LADRUNO_StationWriter_KDTree! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
         
         if rank == 0:
             print("\n\n")
@@ -1028,7 +1028,7 @@ class ShakerMaker:
                 is_drm_writer = False
                 if writer and rank == 0:
                     is_drm_writer = 'DRMHDF5' in type(writer).__name__
-                    
+
                 next_station = rank
                 skip_stations = nprocs
 
@@ -1443,34 +1443,68 @@ class ShakerMaker:
                     # CRITICAL: Write metadata (including drmbox_x0)
                     writer.write_metadata(self._receivers.metadata)
                     
-                    full_mapping_list = []
+                    # Only build mapping if any station saves GFs
+                    any_station_saves_gf = any(
+                        self._receivers.get_station_by_id(i).metadata.get('save_gf', False) 
+                        for i in range(nstations)
+                    )
                     
-                    for i_sta in range(nstations):
-                        station = self._receivers.get_station_by_id(i_sta)
-                        for i_src, psource in enumerate(self._source):
-                            x_src = psource.x
+                    if any_station_saves_gf:
+                        from scipy.spatial import cKDTree
+                        
+                        print(f"[Rank 0] Building GF mapping with KDTree ({nstations} stations x {self._source.nsources} sources)...")
+                        t_map_start = perf_counter()
+                        
+                        # Normalize coordinates for KDTree (account for different tolerances)
+                        pairs_normalized = np.column_stack([
+                            dh_of_pairs / delta_h,
+                            zsrc_of_pairs / delta_v_src,
+                            zrec_of_pairs / delta_v_rec
+                        ])
+                        tree = cKDTree(pairs_normalized)
+                        
+                        # Pre-compute source coordinates
+                        src_coords = np.array([ps.x for ps in self._source])
+                        
+                        full_mapping_list = []
+                        
+                        for i_sta in range(nstations):
+                            station = self._receivers.get_station_by_id(i_sta)
                             x_rec = station.x
-                            z_src = x_src[2]
                             z_rec = x_rec[2]
-                            d = x_rec - x_src
-                            dh = np.sqrt(np.dot(d[0:2], d[0:2]))
                             
-                            min_distance = float('inf')
-                            best_idx = -1
+                            # Vectorized: compute dh for all sources at once
+                            d = x_rec[:2] - src_coords[:, :2]
+                            dh_all = np.sqrt(np.sum(d**2, axis=1))
+                            z_src_all = src_coords[:, 2]
                             
-                            for i in range(len(dh_of_pairs)):
-                                if (abs(dh - dh_of_pairs[i]) < delta_h and
-                                    abs(z_src - zsrc_of_pairs[i]) < delta_v_src and
-                                    abs(z_rec - zrec_of_pairs[i]) < delta_v_rec):
-                                    dist = abs(dh - dh_of_pairs[i]) + abs(z_src - zsrc_of_pairs[i]) + abs(z_rec - zrec_of_pairs[i])
-                                    if dist < min_distance:
-                                        min_distance = dist
-                                        best_idx = i
+                            for i_src in range(len(src_coords)):
+                                dh = dh_all[i_src]
+                                z_src = z_src_all[i_src]
+                                
+                                # Normalized query point
+                                query_normalized = [dh / delta_h, z_src / delta_v_src, z_rec / delta_v_rec]
+                                
+                                # Find nearest neighbor
+                                dist, best_idx = tree.query(query_normalized)
+                                
+                                # Verify within tolerances (distance <= sqrt(3) in normalized space)
+                                if dist > np.sqrt(3):
+                                    best_idx = -1
+                                
+                                full_mapping_list.append([i_sta, i_src, best_idx])
                             
-                            full_mapping_list.append([i_sta, i_src, best_idx])
-                    
-                    writer.node_pair_mapping = np.array(full_mapping_list, dtype=np.int32)
-                    writer.pairs_to_compute_for_mapping = pairs_to_compute
+                            # Progress every 100 stations
+                            if i_sta % 100 == 0:
+                                print(f"[Rank 0] Mapping progress: {i_sta}/{nstations} stations")
+                        
+                        writer.node_pair_mapping = np.array(full_mapping_list, dtype=np.int32)
+                        writer.pairs_to_compute_for_mapping = pairs_to_compute
+                        
+                        t_map_end = perf_counter()
+                        print(f"[Rank 0] GF mapping complete in {t_map_end - t_map_start:.2f} s")
+                    else:
+                        print(f"[Rank 0] Skipping GF mapping (save_gf=False for all stations)")
                     
                     # Write xyz - only for DRM writer (has QA station)
                     if is_drm_writer:
@@ -1482,6 +1516,9 @@ class ShakerMaker:
                         qa_sta = self._receivers.get_station_by_id(nstations - 1)
                         writer._h5file['DRM_QA_Data/xyz'][0, :] = qa_sta.x
 
+                    # Close writer
+                    writer.close()
+                    
                 fid_debug_mpi.close()
                 hfile.close()
 
@@ -1497,7 +1534,7 @@ class ShakerMaker:
                 if use_mpi and nprocs > 1:
 
                     print(f"rank {rank} @ gather all performances stats")
-
+                    comm.Barrier() 
                     all_max_perf_time_core = np.array([-np.infty],dtype=np.double)
                     all_max_perf_time_send = np.array([-np.infty],dtype=np.double)
                     all_max_perf_time_recv = np.array([-np.infty],dtype=np.double)
@@ -2294,7 +2331,7 @@ class ShakerMaker:
             -------
             None
             """
-            title = f"🎉 ¡LARGA VIDA AL LADRUNO_StationWriter_X6X_branch! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+            title = f"🎉 ¡LARGA VIDA AL LADRUNO_StationWriter_KDTree! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
             # Initialize total timer
             perf_time_begin = perf_counter()
             if rank == 0:
