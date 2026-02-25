@@ -1,15 +1,21 @@
 """
-shakermaker_op.py - Optimized ShakerMaker pipeline with precomputed pair-to-slot mapping.
+shakermaker.py - ShakerMaker nueva arquitectura OP.
 
-Based on JAA clean implementation. New methods are suffixed with _op to distinguish
-from original JAA/PXP methods.
+Pipeline en 3 etapas con O(1) lookup via pair_to_slot:
 
-Key improvement over JAA/PXP:
-  Stage 0 (gen_pairs_op): builds full pair_to_slot[i_station * nsrc + i_psource] = k
-  Stage 1 (compute_gf_op): computes Green's functions for each unique slot k (unchanged logic)
-  Stage 2 (run_op):        O(1) lookup via pair_to_slot instead of O(N) linear search
+  Stage 0 - gen_pairs_op:       identifica slots únicos (dh, z_src, z_rec)
+                                 construye pair_to_slot[i_sta*nsrc + i_src] = k
+  Stage 1 - compute_gf_op:      calcula GF (tdata) para cada slot k
+  Stage 2 - run_op:             convuelve GF con STF usando lookup O(1)
 
-Backward compatible: if pair_to_slot absent in HDF5, falls back to legacy linear search.
+Orquestador:
+  run_fast_faster_op(stage=0|1|2|'all')
+
+Debug/validación:
+  run()                         método JAA original, sin base de datos
+
+Visualización STKO:
+  export_drm_geometry()
 """
 
 import copy
@@ -32,28 +38,89 @@ try:
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     nprocs = comm.Get_size()
-except Exception:
+except ImportError:
     rank = 0
     nprocs = 1
     use_mpi = False
 
 
+# ---------------------------------------------------------------------------
+# Helpers de performance (compartidos por todos los métodos)
+# ---------------------------------------------------------------------------
+
+def _perf_counters():
+    """Retorna dict de contadores de tiempo inicializados en cero."""
+    keys = ['core', 'send', 'recv', 'conv', 'add']
+    return {k: np.zeros(1, dtype=np.double) for k in keys}
+
+
+def _print_perf_stats(counters, perf_time_total):
+    """Imprime estadísticas MPI de performance (solo rank 0)."""
+    if not (use_mpi and nprocs > 1):
+        return
+    labels = {'core': 'time_core', 'send': 'time_send',
+              'recv': 'time_recv', 'conv': 'time_conv', 'add': 'time_add'}
+    stats = {}
+    for k, arr in counters.items():
+        mx = np.array([-np.inf])
+        mn = np.array([ np.inf])
+        comm.Reduce(arr, mx, op=MPI.MAX, root=0)
+        comm.Reduce(arr, mn, op=MPI.MIN, root=0)
+        stats[k] = (mx[0], mn[0])
+
+    if rank == 0:
+        print("\nPerformance statistics (all MPI processes):")
+        for k, (mx, mn) in stats.items():
+            pct_mx = mx / perf_time_total * 100 if perf_time_total > 0 else 0
+            pct_mn = mn / perf_time_total * 100 if perf_time_total > 0 else 0
+            print(f"  {labels[k]:12s}: max={mx:.3f}s ({pct_mx:.2f}%)  "
+                  f"min={mn:.3f}s ({pct_mn:.2f}%)")
+
+
+def _eta_str(elapsed, done, total):
+    """Retorna string 'H:MM:SS' con el ETA estimado."""
+    if done == 0:
+        return "??:??:??"
+    remaining = elapsed / done * (total - done)
+    hh = int(remaining) // 3600
+    mm = (int(remaining) % 3600) // 60
+    ss = remaining % 60
+    return f"{hh}:{mm:02d}:{ss:04.1f}"
+
+
+# ---------------------------------------------------------------------------
+# Clase principal
+# ---------------------------------------------------------------------------
+
 class ShakerMaker:
     """
-    Optimized ShakerMaker pipeline.
+    ShakerMaker - nueva arquitectura OP.
 
-    Drop-in replacement for ShakerMaker with three-stage workflow:
-      - gen_pairs_op:   Stage 0 - build geometry mapping and unique GF slots
-      - compute_gf_op:  Stage 1 - compute Green's functions for unique slots
-      - run_op:         Stage 2 - convolve GFs with STF and write output
+    Uso típico::
 
-    Or use run_fast_faster_op(stage='all') to run all stages sequentially.
+        model = ShakerMaker(crust, source, receivers)
 
-    :param crust: Crustal model
+        # Pipeline completo (recomendado)
+        model.run_fast_faster_op(
+            stage='all',
+            h5_database_name='mi_db',
+            writer=mi_writer,
+            dt=0.05, nfft=4096, ...
+        )
+
+        # O por etapas
+        model.run_fast_faster_op(stage=0, h5_database_name='mi_db')
+        model.run_fast_faster_op(stage=1, h5_database_name='mi_db', dt=0.05)
+        model.run_fast_faster_op(stage=2, h5_database_name='mi_db', writer=mi_writer)
+
+        # Debug/validación (sin base de datos)
+        model.run(dt=0.05, writer=mi_writer)
+
+    :param crust: Modelo cortical.
     :type crust: CrustModel
-    :param source: Fault source (FaultSource with PointSources, including FFSP-derived)
+    :param source: Fuente sísmica.
     :type source: FaultSource
-    :param receivers: Station list (DRMBox, SurfaceGrid, StationList)
+    :param receivers: Lista de estaciones receptoras.
     :type receivers: StationList
     """
 
@@ -65,15 +132,171 @@ class ShakerMaker:
         assert isinstance(receivers, StationList), \
             "receivers must be an instance of shakermaker.StationList"
 
-        self._crust = crust
-        self._source = source
+        self._crust     = crust
+        self._source    = source
         self._receivers = receivers
-        self._mpi_rank = rank
+        self._mpi_rank  = rank
         self._mpi_nprocs = nprocs
-        self._logger = logging.getLogger(__name__)
+        self._logger    = logging.getLogger(__name__)
 
     # =========================================================================
-    # Stage 0: Build geometry mapping
+    # MÉTODO DE DEBUG: run() — JAA puro, sin base de datos
+    # =========================================================================
+
+    def run(self,
+            dt=0.05, nfft=4096, tb=1000,
+            smth=1, sigma=2, taper=0.9,
+            wc1=1, wc2=2, pmin=0, pmax=1,
+            dk=0.3, nx=1, kc=15.0,
+            writer=None, writer_mode='progressive',
+            verbose=False, debugMPI=False,
+            tmin=0., tmax=100, showProgress=True):
+        """
+        Simulación directa, par a par. Sin base de datos.
+
+        Útil para debug y validación de resultados contra el pipeline OP.
+        Calcula cada par (fuente, receptor) independientemente → no reutiliza GFs.
+
+        :param dt: Paso de tiempo (s)
+        :param nfft: Número de puntos FFT
+        :param tb: Muestras antes de la primera llegada
+        :param smth: Factor de densificación de salida
+        :param sigma: Factor de amortiguamiento (exp(-sigma*t))
+        :param taper: Filtro pasa-bajo (0-1)
+        :param wc1, wc2: Frecuencias de corte del filtro
+        :param pmin, pmax: Límites de velocidad de fase (1/vs)
+        :param dk: Intervalo en número de onda (Pi/x)
+        :param nx: Número de rangos de distancia
+        :param kc: Número de onda máximo (1/hs)
+        :param writer: StationListWriter para guardar resultados
+        :param verbose: Salida detallada del core Fortran
+        :param debugMPI: Escribe archivos de debug por rank
+        :param tmin, tmax: Ventana de tiempo de salida (s)
+        :param showProgress: Imprime progreso en rank 0
+        """
+        title = f"[run] ShakerMaker. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+
+        if rank == 0:
+            print(f"\n{'='*len(title)}")
+            print(title)
+            print(f"{'='*len(title)}")
+            print(f"  MPI processes : {nprocs}")
+            print(f"  OMP threads   : {os.environ.get('OMP_NUM_THREADS', 'not set')}")
+            print(f"  Sources       : {self._source.nsources}")
+            print(f"  Stations      : {self._receivers.nstations}")
+            print(f"{'='*len(title)}")
+
+        perf_time_begin = perf_counter()
+        c = _perf_counters()
+
+        if debugMPI:
+            fid = open(f"rank_{rank}_run.debuginfo", "w")
+            def printMPI(*args): fid.write(" ".join(str(a) for a in args) + "\n")
+        else:
+            fid = open(os.devnull, "w")
+            printMPI = lambda *args: None
+
+        self._logger.info(
+            f'ShakerMaker.run: {self._source.nsources} sources, '
+            f'{self._receivers.nstations} stations, dt={dt}, nfft={nfft}')
+
+        if rank > 0:
+            writer = None
+        if writer and rank == 0:
+            assert isinstance(writer, StationListWriter)
+            writer.initialize(self._receivers, 2 * nfft,
+                              tmin=tmin, tmax=tmax, dt=dt,
+                              writer_mode=writer_mode)
+            writer.write_metadata(self._receivers.metadata)
+
+        ipair = 0
+        if nprocs == 1 or rank == 0:
+            next_pair, skip_pairs = rank, 1
+        else:
+            next_pair, skip_pairs = rank - 1, nprocs - 1
+
+        npairs = self._receivers.nstations * self._source.nsources
+        tstart = perf_counter()
+
+        for i_station, station in enumerate(self._receivers):
+            for i_psource, psource in enumerate(self._source):
+
+                aux_crust = copy.deepcopy(self._crust)
+                aux_crust.split_at_depth(psource.x[2])
+                aux_crust.split_at_depth(station.x[2])
+
+                if ipair == next_pair:
+                    if nprocs == 1 or (rank > 0 and nprocs > 1):
+                        t1 = perf_counter()
+                        tdata, z, e, n, t0 = self._call_core(
+                            dt, nfft, tb, nx, sigma, smth,
+                            wc1, wc2, pmin, pmax, dk, kc,
+                            taper, aux_crust, psource, station, verbose)
+                        c['core'] += perf_counter() - t1
+
+                        nt = len(z)
+                        t1 = perf_counter()
+                        t = np.arange(0, nt * dt, dt) + psource.tt + t0
+                        psource.stf.dt = dt
+                        z_stf = psource.stf.convolve(z, t)
+                        e_stf = psource.stf.convolve(e, t)
+                        n_stf = psource.stf.convolve(n, t)
+                        c['conv'] += perf_counter() - t1
+
+                        if rank > 0:
+                            t1 = perf_counter()
+                            comm.Send(np.array([nt], dtype=np.int32), dest=0, tag=2 * ipair)
+                            data = np.column_stack([z_stf, e_stf, n_stf, t])
+                            comm.Send(data, dest=0, tag=2 * ipair + 1)
+                            c['send'] += perf_counter() - t1
+                            next_pair += skip_pairs
+
+                    if rank == 0:
+                        if nprocs > 1:
+                            remote = ipair % (nprocs - 1) + 1
+                            t1 = perf_counter()
+                            ant = np.empty(1, dtype=np.int32)
+                            comm.Recv(ant, source=remote, tag=2 * ipair)
+                            nt = ant[0]
+                            data = np.empty((nt, 4), dtype=np.float64)
+                            comm.Recv(data, source=remote, tag=2 * ipair + 1)
+                            z_stf, e_stf, n_stf, t = data[:, 0], data[:, 1], data[:, 2], data[:, 3]
+                            c['recv'] += perf_counter() - t1
+
+                        next_pair += 1
+                        try:
+                            t1 = perf_counter()
+                            station.add_to_response(z_stf, e_stf, n_stf, t, tmin, tmax)
+                            c['add'] += perf_counter() - t1
+                        except Exception:
+                            traceback.print_exc()
+                            if use_mpi and nprocs > 1:
+                                comm.Abort()
+
+                        if showProgress:
+                            elapsed = perf_counter() - tstart
+                            print(f"  [run] {ipair+1}/{npairs}  ETA={_eta_str(elapsed, ipair+1, npairs)}"
+                                  f"  t=[{t[0]:.3f}, {t[-1]:.3f}]")
+
+                ipair += 1
+
+            if writer and rank == 0:
+                writer.write_station(station, i_station)
+
+        if writer and rank == 0:
+            writer.close()
+
+        fid.close()
+        perf_time_total = perf_counter() - perf_time_begin
+
+        if rank == 0:
+            print(f"\n[run] Done. Total time: {perf_time_total:.2f} s")
+            print("-" * 50)
+
+        _print_perf_stats(c, perf_time_total)
+
+    # =========================================================================
+    # STAGE 0: Construir slots únicos + mapping pair_to_slot
     # =========================================================================
 
     def gen_pairs_op(self,
@@ -84,30 +307,29 @@ class ShakerMaker:
                      npairs_max=200000,
                      showProgress=True):
         """
-        Stage 0: Identify unique (dh, z_src, z_rec) geometry slots and build
-        the full pair_to_slot mapping.
+        Stage 0: Identifica geometrías únicas (dh, z_src, z_rec) y construye
+        el mapping pair_to_slot[i_station * nsources + i_psource] = k.
 
-        Saves to h5_database_name.h5:
-          - pairs_to_compute[k, 2]  : representative (i_station, i_psource) for slot k
-          - dh_of_pairs[k]          : horizontal distance for slot k
-          - dv_of_pairs[k]          : vertical distance for slot k
-          - zrec_of_pairs[k]        : receiver depth for slot k
-          - zsrc_of_pairs[k]        : source depth for slot k
-          - pair_to_slot[nsta*nsrc] : mapping (i_station*nsrc + i_psource) -> k  [NEW]
-          - delta_h, delta_v_rec, delta_v_src (scalars)
-          - nstations, nsources (scalars for validation)
+        Solo corre en rank 0 (serial). Los demás ranks esperan en Barrier.
 
-        Only rank 0 runs this stage (geometry computation is fast, serial numpy).
+        Guarda en ``h5_database_name.h5``:
 
-        :param h5_database_name: Output HDF5 path (without .h5 extension)
-        :param delta_h: Horizontal distance tolerance (km)
-        :param delta_v_rec: Receiver depth tolerance (km)
-        :param delta_v_src: Source depth tolerance (km)
-        :param npairs_max: Max unique slots (pre-allocated, raise if exceeded)
-        :param showProgress: Print progress every 50k pairs
+        - ``pairs_to_compute[k, 2]``  : par representativo del slot k
+        - ``dh_of_pairs[k]``          : distancia horizontal del slot k
+        - ``dv_of_pairs[k]``          : distancia vertical del slot k
+        - ``zrec_of_pairs[k]``        : profundidad receptor del slot k
+        - ``zsrc_of_pairs[k]``        : profundidad fuente del slot k
+        - ``pair_to_slot[nsta*nsrc]`` : mapping plano → slot
+        - ``delta_h, delta_v_rec, delta_v_src, nstations, nsources``
+
+        :param h5_database_name: Ruta HDF5 (sin extensión .h5)
+        :param delta_h: Tolerancia distancia horizontal (km)
+        :param delta_v_rec: Tolerancia profundidad receptor (km)
+        :param delta_v_src: Tolerancia profundidad fuente (km)
+        :param npairs_max: Máximo de slots únicos pre-asignados
+        :param showProgress: Imprime progreso cada 50k pares
         """
         if rank != 0:
-            # Only rank 0 builds the mapping; other ranks wait
             if use_mpi and nprocs > 1:
                 comm.Barrier()
             return
@@ -116,10 +338,19 @@ class ShakerMaker:
         nstations  = self._receivers.nstations
         npairs_total = nstations * nsources
 
-        if rank == 0:
-            print(f"\n[Stage 0] Building pair mapping: {nstations} stations x {nsources} sources = {npairs_total} pairs")
-            print(f"[Stage 0] Tolerances: delta_h={delta_h}, delta_v_rec={delta_v_rec}, delta_v_src={delta_v_src}")
-            print(f"[Stage 0] Max unique slots: {npairs_max}")
+        print(f"\n{'='*70}")
+        print(f"STAGE 0: gen_pairs_op")
+        print(f"{'='*70}")
+        print(f"  Stations     : {nstations}")
+        print(f"  Sources      : {nsources}")
+        print(f"  Total pairs  : {npairs_total}")
+        print(f"  delta_h      : {delta_h} km")
+        print(f"  delta_v_rec  : {delta_v_rec} km")
+        print(f"  delta_v_src  : {delta_v_src} km")
+        print(f"  Max slots    : {npairs_max}")
+        if nprocs > 1:
+            print(f"  ⚠  Stage 0 es SERIAL — {nprocs-1} proceso(s) MPI inactivo(s)")
+        print(f"{'='*70}")
 
         t0_start = perf_counter()
 
@@ -130,16 +361,15 @@ class ShakerMaker:
         zrec_of_pairs    = np.empty(npairs_max, dtype=np.float64)
         zsrc_of_pairs    = np.empty(npairs_max, dtype=np.float64)
 
-        # Full mapping: for every (i_station, i_psource) -> slot index k
+        # Mapping plano: (i_station * nsources + i_psource) → slot k
         pair_to_slot = np.full(npairs_total, -1, dtype=np.int32)
 
-        n_slots = 0  # number of unique slots found so far
+        n_slots = 0
 
         for i_station, station in enumerate(self._receivers):
             z_rec = station.x[2]
             for i_psource, psource in enumerate(self._source):
                 z_src = psource.x[2]
-
                 d  = station.x - psource.x
                 dh = np.sqrt(d[0]**2 + d[1]**2)
                 dv = abs(d[2])
@@ -147,7 +377,6 @@ class ShakerMaker:
                 flat_idx = i_station * nsources + i_psource
 
                 if n_slots == 0:
-                    # First pair always becomes slot 0
                     k = 0
                     pairs_to_compute[0] = [i_station, i_psource]
                     dh_of_pairs[0]   = dh
@@ -156,19 +385,19 @@ class ShakerMaker:
                     zsrc_of_pairs[0] = z_src
                     n_slots = 1
                 else:
-                    # Vectorized tolerance check against all existing slots
+                    # Chequeo vectorizado contra todos los slots existentes
                     not_covered = (
-                        (np.abs(dh   - dh_of_pairs[:n_slots])   > delta_h)   |
+                        (np.abs(dh    - dh_of_pairs[:n_slots])   > delta_h)   |
                         (np.abs(z_src - zsrc_of_pairs[:n_slots]) > delta_v_src) |
                         (np.abs(z_rec - zrec_of_pairs[:n_slots]) > delta_v_rec)
                     )
 
                     if np.all(not_covered):
-                        # New unique geometry -> new slot
+                        # Geometría nueva → slot nuevo
                         if n_slots >= npairs_max:
                             raise RuntimeError(
-                                f"[Stage 0] Exceeded npairs_max={npairs_max}. "
-                                f"Increase npairs_max or coarsen tolerances."
+                                f"[Stage 0] Superado npairs_max={npairs_max}. "
+                                f"Aumenta npairs_max o amplía las tolerancias."
                             )
                         k = n_slots
                         pairs_to_compute[k] = [i_station, i_psource]
@@ -178,25 +407,21 @@ class ShakerMaker:
                         zsrc_of_pairs[k] = z_src
                         n_slots += 1
                     else:
-                        # Covered: find the closest matching slot
-                        # covered slots have not_covered == False
-                        covered_mask = ~not_covered
-                        covered_indices = np.where(covered_mask)[0]
-                        # Among covered slots, pick the one with smallest L1 distance
-                        dist = (np.abs(dh    - dh_of_pairs[covered_indices]) +
-                                np.abs(z_src - zsrc_of_pairs[covered_indices]) +
-                                np.abs(z_rec - zrec_of_pairs[covered_indices]))
-                        k = covered_indices[np.argmin(dist)]
+                        # Cubierto: slot más cercano en distancia L1
+                        covered_idx = np.where(~not_covered)[0]
+                        dist = (np.abs(dh    - dh_of_pairs[covered_idx]) +
+                                np.abs(z_src - zsrc_of_pairs[covered_idx]) +
+                                np.abs(z_rec - zrec_of_pairs[covered_idx]))
+                        k = covered_idx[np.argmin(dist)]
 
                 pair_to_slot[flat_idx] = k
 
                 if showProgress and flat_idx % 50000 == 0 and flat_idx > 0:
                     elapsed = perf_counter() - t0_start
-                    eta = elapsed / flat_idx * (npairs_total - flat_idx)
-                    print(f"[Stage 0] {flat_idx}/{npairs_total} pairs | {n_slots} slots | "
-                          f"elapsed={elapsed:.1f}s ETA={eta:.1f}s")
+                    print(f"  {flat_idx}/{npairs_total} pares | {n_slots} slots | "
+                          f"elapsed={elapsed:.1f}s ETA={_eta_str(elapsed, flat_idx, npairs_total)}")
 
-        # Trim to actual number of slots
+        # Trim arrays
         pairs_to_compute = pairs_to_compute[:n_slots]
         dh_of_pairs      = dh_of_pairs[:n_slots]
         dv_of_pairs      = dv_of_pairs[:n_slots]
@@ -204,17 +429,16 @@ class ShakerMaker:
         zsrc_of_pairs    = zsrc_of_pairs[:n_slots]
 
         elapsed = perf_counter() - t0_start
-        reduction_pct = (1 - n_slots / npairs_total) * 100
-        print(f"\n[Stage 0] Done in {elapsed:.1f}s")
-        print(f"[Stage 0] Unique slots: {n_slots} / {npairs_total} ({reduction_pct:.1f}% reduction)")
+        reduction = (1 - n_slots / npairs_total) * 100
 
-        # Validate: every pair must have a valid slot
         assert np.all(pair_to_slot >= 0), \
-            "[Stage 0] BUG: some pairs have no assigned slot (pair_to_slot contains -1)"
+            "[Stage 0] BUG: pair_to_slot contiene -1 (pares sin slot asignado)"
         assert np.all(pair_to_slot < n_slots), \
-            "[Stage 0] BUG: pair_to_slot contains out-of-range slot index"
+            "[Stage 0] BUG: pair_to_slot contiene índice fuera de rango"
 
-        # Save to HDF5
+        print(f"\n  ✓ Slots únicos : {n_slots} de {npairs_total} ({reduction:.1f}% reducción)")
+        print(f"  ✓ Tiempo       : {elapsed:.1f}s")
+
         with h5py.File(h5_database_name + '.h5', 'w') as hf:
             hf.create_dataset("pairs_to_compute", data=pairs_to_compute)
             hf.create_dataset("dh_of_pairs",      data=dh_of_pairs)
@@ -228,61 +452,55 @@ class ShakerMaker:
             hf.create_dataset("nstations",        data=nstations)
             hf.create_dataset("nsources",         data=nsources)
 
-        print(f"[Stage 0] Saved to {h5_database_name}.h5")
+        print(f"  ✓ Guardado en  : {h5_database_name}.h5")
+        print(f"{'='*70}\n")
 
         if use_mpi and nprocs > 1:
             comm.Barrier()
 
     # =========================================================================
-    # Stage 1: Compute Green's functions for unique slots
+    # STAGE 1: Calcular GF (tdata) para cada slot único
     # =========================================================================
 
     def compute_gf_op(self,
                       h5_database_name,
-                      dt=0.05,
-                      nfft=4096,
-                      tb=1000,
-                      smth=1,
-                      sigma=2,
-                      taper=0.9,
-                      wc1=1,
-                      wc2=2,
-                      pmin=0,
-                      pmax=1,
-                      dk=0.3,
-                      nx=1,
-                      kc=15.0,
-                      verbose=False,
-                      debugMPI=False,
+                      dt=0.05, nfft=4096, tb=1000,
+                      smth=1, sigma=2, taper=0.9,
+                      wc1=1, wc2=2, pmin=0, pmax=1,
+                      dk=0.3, nx=1, kc=15.0,
+                      verbose=False, debugMPI=False,
                       showProgress=True):
         """
-        Stage 1: Compute FK Green's function kernel (tdata) for each unique slot k.
+        Stage 1: Calcula el kernel FK (tdata) para cada slot único k.
 
-        Reads h5_database_name.h5 (produced by gen_pairs_op).
-        Writes tdata_dict group into the same HDF5 file.
+        Lee ``h5_database_name.h5`` (producido por gen_pairs_op).
+        Escribe el grupo ``tdata_dict`` en el mismo archivo.
 
-        MPI: rank 0 coordinates; worker ranks compute and send tdata to rank 0.
+        MPI: rank 0 coordina y escribe; workers calculan y envían.
 
-        :param h5_database_name: HDF5 path (without .h5 extension)
-        :param dt: Time step (s)
-        :param nfft: Number of FFT points
-        :param tb: Samples before first arrival
-        :param smth: Output densification factor
-        :param sigma: Damping factor
-        :param taper: Low-pass taper (0-1)
-        :param wc1, wc2: Filter corner frequencies
-        :param pmin, pmax: Phase velocity bounds
-        :param dk: Wavenumber sampling interval
-        :param nx: Number of distance ranges
-        :param kc: Max wavenumber
-        :param verbose: Verbose output
-        :param debugMPI: Write MPI debug files
-        :param showProgress: Print ETA on rank 0
+        :param h5_database_name: Ruta HDF5 (sin .h5)
+        :param dt: Paso de tiempo (s)
+        :param nfft: Puntos FFT
+        :param tb: Muestras antes de primera llegada
+        :param smth: Factor de densificación
+        :param sigma: Amortiguamiento
+        :param taper: Filtro pasa-bajo (0-1)
+        :param wc1, wc2: Frecuencias de corte
+        :param pmin, pmax: Límites velocidad de fase
+        :param dk: Intervalo en número de onda
+        :param nx: Número de rangos de distancia
+        :param kc: Número de onda máximo
+        :param verbose: Salida detallada core Fortran
+        :param debugMPI: Archivos debug por rank
+        :param showProgress: Imprime ETA en rank 0
         """
         title = f"[Stage 1] compute_gf_op: {dt=} {nfft=} {dk=} {tb=}"
 
         if rank == 0:
-            print(f"\n{title}")
+            print(f"\n{'='*70}")
+            print(title)
+            print(f"  MPI processes : {nprocs}")
+            print(f"  OMP threads   : {os.environ.get('OMP_NUM_THREADS', 'not set')}")
             hfile = h5py.File(h5_database_name + '.h5', 'r+')
         else:
             hfile = h5py.File(h5_database_name + '.h5', 'r')
@@ -291,55 +509,50 @@ class ShakerMaker:
         npairs = len(pairs_to_compute)
 
         if rank == 0:
-            print(f"[Stage 1] Computing GF for {npairs} unique slots")
-            # Clear and recreate tdata_dict group
+            print(f"  Slots a computar: {npairs}")
+            print(f"{'='*70}")
             if "tdata_dict" in hfile:
-                print("[Stage 1] Found existing tdata_dict, overwriting.")
+                print("  ⚠  tdata_dict existente encontrado. Sobreescribiendo.")
                 del hfile["tdata_dict"]
             tdata_group = hfile.create_group("tdata_dict")
 
         if debugMPI:
-            fid_debug = open(f"rank_{rank}_stage1.debuginfo", "w")
-            def printMPI(*args):
-                fid_debug.write(" ".join(str(a) for a in args) + "\n")
+            fid = open(f"rank_{rank}_stage1.debuginfo", "w")
+            def printMPI(*args): fid.write(" ".join(str(a) for a in args) + "\n")
         else:
-            fid_debug = open(os.devnull, "w")
+            fid = open(os.devnull, "w")
             printMPI = lambda *args: None
 
-        # MPI distribution: rank 0 coordinates, workers compute
         if nprocs == 1 or rank == 0:
-            next_pair = rank
-            skip_pairs = 1
+            next_pair, skip_pairs = rank, 1
         else:
-            next_pair = rank - 1
-            skip_pairs = nprocs - 1
+            next_pair, skip_pairs = rank - 1, nprocs - 1
 
         perf_time_begin = perf_counter()
-        perf_time_core  = np.zeros(1, dtype=np.float64)
-        perf_time_send  = np.zeros(1, dtype=np.float64)
-        perf_time_recv  = np.zeros(1, dtype=np.float64)
+        c = _perf_counters()
+        tstart = perf_counter()
+        ipair = 0
 
-        tstart_pair = perf_counter()
-
-        for ipair, (i_station, i_psource) in enumerate(pairs_to_compute):
+        for i_station, i_psource in pairs_to_compute:
             station = self._receivers.get_station_by_id(int(i_station))
             psource = self._source.get_source_by_id(int(i_psource))
 
+            aux_crust = copy.deepcopy(self._crust)
+            aux_crust.split_at_depth(psource.x[2])
+            aux_crust.split_at_depth(station.x[2])
+
             if ipair == next_pair:
                 if nprocs == 1 or (rank > 0 and nprocs > 1):
-                    # Compute crust model for this pair (only when needed)
-                    aux_crust = copy.deepcopy(self._crust)
-                    aux_crust.split_at_depth(psource.x[2])
-                    aux_crust.split_at_depth(station.x[2])
-
                     t1 = perf_counter()
-                    tdata, z, e, n, t0 = self._call_core_op(
-                        dt, nfft, tb, nx, sigma, smth, wc1, wc2,
-                        pmin, pmax, dk, kc, taper, aux_crust, psource, station, verbose)
-                    perf_time_core += perf_counter() - t1
+                    tdata, z, e, n, t0 = self._call_core(
+                        dt, nfft, tb, nx, sigma, smth,
+                        wc1, wc2, pmin, pmax, dk, kc,
+                        taper, aux_crust, psource, station, verbose)
+                    c['core'] += perf_counter() - t1
 
                     nt = len(z)
-                    t0_arr = np.array([t0], dtype=np.float64)
+                    t0_arr = np.array([t0], dtype=np.double)
+                    # Convertir tdata a C-order (nt, 9)
                     tdata_c = np.empty((nt, 9), dtype=np.float64)
                     for comp in range(9):
                         tdata_c[:, comp] = tdata[0, comp, :]
@@ -349,406 +562,355 @@ class ShakerMaker:
                         comm.Send(np.array([nt], dtype=np.int32), dest=0, tag=3 * ipair)
                         comm.Send(t0_arr,  dest=0, tag=3 * ipair + 1)
                         comm.Send(tdata_c, dest=0, tag=3 * ipair + 2)
-                        perf_time_send += perf_counter() - t1
+                        c['send'] += perf_counter() - t1
                         next_pair += skip_pairs
 
                 if rank == 0:
                     if nprocs > 1:
                         remote = ipair % (nprocs - 1) + 1
                         t1 = perf_counter()
-                        ant = np.empty(1, dtype=np.int32)
-                        t0_arr = np.empty(1, dtype=np.float64)
+                        ant   = np.empty(1, dtype=np.int32)
+                        t0_arr = np.empty(1, dtype=np.double)
                         comm.Recv(ant,    source=remote, tag=3 * ipair)
                         comm.Recv(t0_arr, source=remote, tag=3 * ipair + 1)
                         nt = ant[0]
                         tdata_c = np.empty((nt, 9), dtype=np.float64)
                         comm.Recv(tdata_c, source=remote, tag=3 * ipair + 2)
-                        perf_time_recv += perf_counter() - t1
+                        c['recv'] += perf_counter() - t1
 
                     tdata_group[f"{ipair}_t0"]    = t0_arr[0]
-                    tdata_group[f"{ipair}_tdata"]  = tdata_c
-
-                    if showProgress:
-                        elapsed = perf_counter() - tstart_pair
-                        eta = elapsed / (ipair + 1) * (npairs - ipair - 1)
-                        hh, rem = divmod(int(eta), 3600)
-                        mm, ss = divmod(rem, 60)
-                        print(f"[Stage 1] {ipair+1}/{npairs} ETA {hh:02d}:{mm:02d}:{ss:02d}")
+                    tdata_group[f"{ipair}_tdata"] = tdata_c
 
                     next_pair += 1
 
-        fid_debug.close()
+                    if showProgress:
+                        elapsed = perf_counter() - tstart
+                        print(f"  {ipair+1}/{npairs}  ETA={_eta_str(elapsed, ipair+1, npairs)}")
+
+            ipair += 1
+
+        fid.close()
         hfile.close()
 
         perf_time_total = perf_counter() - perf_time_begin
         if rank == 0:
-            print(f"\n[Stage 1] Done. Total time: {perf_time_total:.1f}s")
+            print(f"\n  ✓ Stage 1 done. Total time: {perf_time_total:.2f}s")
+            print(f"{'='*70}\n")
+
+        _print_perf_stats(c, perf_time_total)
 
         if use_mpi and nprocs > 1:
-            # Gather and report perf stats
-            all_max_core = np.array([-np.inf])
-            all_min_core = np.array([ np.inf])
-            comm.Reduce(perf_time_core, all_max_core, op=MPI.MAX, root=0)
-            comm.Reduce(perf_time_core, all_min_core, op=MPI.MIN, root=0)
-            if rank == 0:
-                print(f"[Stage 1] core time: max={all_max_core[0]:.2f}s min={all_min_core[0]:.2f}s")
+            comm.Barrier()
 
     # =========================================================================
-    # Stage 2: Convolve GFs with STF and write output
+    # STAGE 2: Convolucionar GF con STF usando O(1) pair_to_slot
     # =========================================================================
 
     def run_op(self,
                h5_database_name,
-               dt=0.05,
-               nfft=4096,
-               tb=1000,
-               smth=1,
-               sigma=2,
-               taper=0.9,
-               wc1=1,
-               wc2=2,
-               pmin=0,
-               pmax=1,
-               dk=0.3,
-               nx=1,
-               kc=15.0,
-               writer=None,
-               writer_mode='progressive',
-               verbose=False,
-               debugMPI=False,
-               tmin=0.,
-               tmax=100,
-               showProgress=True,
-               allow_out_of_bounds=False):
+               dt=0.05, nfft=4096, tb=1000,
+               smth=1, sigma=2, taper=0.9,
+               wc1=1, wc2=2, pmin=0, pmax=1,
+               dk=0.3, nx=1, kc=15.0,
+               writer=None, writer_mode='progressive',
+               verbose=False, debugMPI=False,
+               tmin=0., tmax=100, showProgress=True):
         """
-        Stage 2: For each (station, source) pair, look up tdata from DB,
-        call _call_core_fast_op, convolve with STF, accumulate station response.
+        Stage 2: Para cada par (estación, fuente), busca tdata via O(1)
+        pair_to_slot, llama a _call_core_fast, convuelve con STF, acumula.
 
-        Uses pair_to_slot for O(1) lookup if present in HDF5.
-        Falls back to legacy linear search for backward compatibility.
+        MPI: cada rank procesa sus estaciones asignadas. Luego rank 0
+        recolecta y escribe via writer.
 
-        :param h5_database_name: HDF5 path (without .h5)
-        :param writer: StationListWriter instance (DRM, HDF5, etc.)
-        :param writer_mode: 'progressive' or 'legacy'
-        :param allow_out_of_bounds: If True, use closest slot even outside tolerance
+        :param h5_database_name: Ruta HDF5 (sin .h5)
+        :param writer: StationListWriter para guardar resultados
+        :param writer_mode: 'progressive' o 'legacy'
+        :param tmin, tmax: Ventana de tiempo de salida (s)
+        :param verbose: Salida detallada core Fortran
+        :param debugMPI: Archivos debug por rank
+        :param showProgress: Imprime ETA en rank 0
+        (resto de parámetros: igual que run())
         """
         title = f"[Stage 2] run_op: {dt=} {nfft=} {tmin=} {tmax=}"
 
         if rank == 0:
-            print(f"\n{title}")
-
-        if rank > 0:
-            hfile = h5py.File(h5_database_name + '.h5', 'r')
-        else:
+            print(f"\n{'='*70}")
+            print(title)
+            print(f"  MPI processes : {nprocs}")
+            print(f"  OMP threads   : {os.environ.get('OMP_NUM_THREADS', 'not set')}")
             hfile = h5py.File(h5_database_name + '.h5', 'r+')
-
-        # Load mapping arrays
-        dh_of_pairs   = hfile["/dh_of_pairs"][:]
-        zrec_of_pairs = hfile["/zrec_of_pairs"][:]
-        zsrc_of_pairs = hfile["/zsrc_of_pairs"][:]
-
-        # Detect if optimized mapping is available
-        use_mapping = "pair_to_slot" in hfile
-        if use_mapping:
-            pair_to_slot = hfile["/pair_to_slot"][:]
-            nsources_db  = int(hfile["/nsources"][()])
-            nstations_db = int(hfile["/nstations"][()])
-            if rank == 0:
-                print(f"[Stage 2] pair_to_slot found -> O(1) lookup enabled")
-            # Validate dimensions match current source/receiver setup
-            assert nsources_db == self._source.nsources, \
-                f"[Stage 2] HDF5 nsources={nsources_db} != current {self._source.nsources}"
-            assert nstations_db == self._receivers.nstations, \
-                f"[Stage 2] HDF5 nstations={nstations_db} != current {self._receivers.nstations}"
         else:
-            if rank == 0:
-                print(f"[Stage 2] pair_to_slot not found -> legacy linear search (backward compat)")
-            # Also load tolerances for legacy search
-            delta_h     = float(hfile["/delta_h"][()])
-            delta_v_rec = float(hfile["/delta_v_rec"][()])
-            delta_v_src = float(hfile["/delta_v_src"][()])
+            hfile = h5py.File(h5_database_name + '.h5', 'r')
+
+        # Cargar mapping O(1)
+        pair_to_slot = hfile["/pair_to_slot"][:]
+        nsources_db  = int(hfile["/nsources"][()])
+        nstations_db = int(hfile["/nstations"][()])
+
+        if rank == 0:
+            print(f"  pair_to_slot  : ✓ O(1) lookup activo")
+            print(f"  DB            : {nstations_db} estaciones × {nsources_db} fuentes")
+            print(f"{'='*70}")
+
+        # Validar coherencia entre HDF5 y modelo actual
+        assert nsources_db == self._source.nsources, \
+            f"[Stage 2] nsources HDF5={nsources_db} ≠ modelo={self._source.nsources}"
+        assert nstations_db == self._receivers.nstations, \
+            f"[Stage 2] nstations HDF5={nstations_db} ≠ modelo={self._receivers.nstations}"
 
         if rank > 0:
             writer = None
-
         if writer and rank == 0:
-            assert isinstance(writer, StationListWriter), \
-                "writer must be a StationListWriter instance"
+            assert isinstance(writer, StationListWriter)
             writer.initialize(self._receivers, 2 * nfft,
                               tmin=tmin, tmax=tmax, dt=dt,
                               writer_mode=writer_mode)
             writer.write_metadata(self._receivers.metadata)
 
         if debugMPI:
-            fid_debug = open(f"rank_{rank}_stage2.debuginfo", "w")
-            def printMPI(*args):
-                fid_debug.write(" ".join(str(a) for a in args) + "\n")
+            fid = open(f"rank_{rank}_stage2.debuginfo", "w")
+            def printMPI(*args): fid.write(" ".join(str(a) for a in args) + "\n")
         else:
-            fid_debug = open(os.devnull, "w")
+            fid = open(os.devnull, "w")
             printMPI = lambda *args: None
+
+        self._logger.info(
+            f'ShakerMaker.run_op: {self._source.nsources} sources, '
+            f'{self._receivers.nstations} stations, dt={dt}, nfft={nfft}')
 
         nsources  = self._source.nsources
         nstations = self._receivers.nstations
-
         next_station  = rank
         skip_stations = nprocs
 
         perf_time_begin = perf_counter()
-        perf_time_core  = np.zeros(1, dtype=np.float64)
-        perf_time_conv  = np.zeros(1, dtype=np.float64)
-        perf_time_add   = np.zeros(1, dtype=np.float64)
-        perf_time_send  = np.zeros(1, dtype=np.float64)
-        perf_time_recv  = np.zeros(1, dtype=np.float64)
-
-        npairs_skip = 0
+        c = _perf_counters()
         n_my_stations = 0
 
-        # ------------------------------------------------------------------ #
-        # Stage 2a: Each rank processes its assigned stations                  #
-        # ------------------------------------------------------------------ #
+        # ------------------------------------------------------------------
+        # 2a: Cada rank procesa sus estaciones asignadas
+        # ------------------------------------------------------------------
         for i_station, station in enumerate(self._receivers):
+
             if i_station != next_station:
                 continue
 
-            tstart_station = perf_counter()
+            tstart_sta = perf_counter()
 
             for i_psource, psource in enumerate(self._source):
 
-                # --- Find slot k ---
-                if use_mapping:
-                    k = int(pair_to_slot[i_station * nsources + i_psource])
-                else:
-                    # Legacy linear search (JAA/PXP backward compat)
-                    d = station.x - psource.x
-                    dh    = np.sqrt(d[0]**2 + d[1]**2)
-                    z_src = psource.x[2]
-                    z_rec = station.x[2]
+                # Lookup O(1)
+                k = int(pair_to_slot[i_station * nsources + i_psource])
 
-                    min_dist = np.inf
-                    k = -1
-                    for i in range(len(dh_of_pairs)):
-                        in_tol = (abs(dh    - dh_of_pairs[i])   < delta_h and
-                                  abs(z_src - zsrc_of_pairs[i]) < delta_v_src and
-                                  abs(z_rec - zrec_of_pairs[i]) < delta_v_rec)
-                        if in_tol or allow_out_of_bounds:
-                            dist = (abs(dh    - dh_of_pairs[i]) +
-                                    abs(z_src - zsrc_of_pairs[i]) +
-                                    abs(z_rec - zrec_of_pairs[i]))
-                            if dist < min_dist:
-                                min_dist = dist
-                                k = i
-
-                    if k == -1:
-                        print(f"[Stage 2] No match: {i_station=} {i_psource=} - SKIPPING")
-                        npairs_skip += 1
-                        if npairs_skip > 500:
-                            print(f"[Stage 2] Rank {rank}: too many skipped pairs, aborting!")
-                            if use_mpi and nprocs > 1:
-                                comm.Abort()
-                        continue
-
-                # --- Load tdata from HDF5 ---
                 tdata = hfile[f"/tdata_dict/{k}_tdata"][:]
-                t0    = float(hfile[f"/tdata_dict/{k}_t0"][()])
 
-                # --- Compute rotated GF (fast: reuses precomputed tdata) ---
                 aux_crust = copy.deepcopy(self._crust)
                 aux_crust.split_at_depth(psource.x[2])
                 aux_crust.split_at_depth(station.x[2])
 
                 t1 = perf_counter()
-                z, e, n, t0_out = self._call_core_fast_op(
-                    tdata, dt, nfft, tb, nx, sigma, smth, wc1, wc2,
-                    pmin, pmax, dk, kc, taper, aux_crust, psource, station, verbose)
-                perf_time_core += perf_counter() - t1
+                z, e, n, t0 = self._call_core_fast(
+                    tdata, dt, nfft, tb, nx, sigma, smth,
+                    wc1, wc2, pmin, pmax, dk, kc,
+                    taper, aux_crust, psource, station, verbose)
+                c['core'] += perf_counter() - t1
 
-                # --- Convolve with source time function ---
                 t1 = perf_counter()
-                t_arr = np.arange(0, len(z) * dt, dt) + psource.tt + t0_out
+                t_arr = np.arange(0, len(z) * dt, dt) + psource.tt + t0
                 psource.stf.dt = dt
                 z_stf = psource.stf.convolve(z, t_arr)
                 e_stf = psource.stf.convolve(e, t_arr)
                 n_stf = psource.stf.convolve(n, t_arr)
-                perf_time_conv += perf_counter() - t1
+                c['conv'] += perf_counter() - t1
 
-                # --- Accumulate station response ---
-                t1 = perf_counter()
                 try:
+                    t1 = perf_counter()
                     station.add_to_response(z_stf, e_stf, n_stf, t_arr, tmin, tmax)
+                    c['add'] += perf_counter() - t1
                 except Exception:
                     traceback.print_exc()
                     if use_mpi and nprocs > 1:
                         comm.Abort()
 
-                # --- Optionally store Green's function in station ---
-                station.add_greens_function(z, e, n, t_arr, tdata, t0_out, i_psource)
+                station.add_greens_function(z, e, n, t_arr, tdata, t0, i_psource)
 
-                perf_time_add += perf_counter() - t1
-
-                if showProgress and rank == 0 and i_psource % 500 == 0:
+                if showProgress and rank == 0 and i_psource % 1000 == 0:
+                    elapsed = perf_counter() - tstart_sta
                     pct = i_psource / nsources * 100
-                    elapsed = perf_counter() - tstart_station
-                    eta = elapsed / (i_psource + 1) * (nsources - i_psource - 1)
-                    print(f"[Stage 2] sta {i_station} src {i_psource}/{nsources} "
-                          f"({pct:.1f}%) ETA={eta:.1f}s")
+                    print(f"  Sta {i_station} src {i_psource}/{nsources} "
+                          f"({pct:.1f}%)  ETA={_eta_str(elapsed, i_psource+1, nsources)}")
 
-            # Station complete
             n_my_stations += 1
 
-            if showProgress:
-                elapsed = perf_counter() - tstart_station
-                pct = i_station / nstations * 100
-                print(f"[Stage 2] Rank {rank} station {i_station}/{nstations} "
-                      f"({pct:.1f}%) done in {elapsed:.1f}s")
+            elapsed_sta = perf_counter() - tstart_sta
+            pct = i_station / nstations * 100
+            nsta_left = (nstations - i_station - 1) // skip_stations
+            eta_s = nsta_left * elapsed_sta
+            print(f"  {rank=} sta {i_station}/{nstations} ({pct:.1f}%)  "
+                  f"sta_time={elapsed_sta:.1f}s  ETA={_eta_str(eta_s, 1, 2)}")
 
             next_station += skip_stations
 
         hfile.close()
 
-        # ------------------------------------------------------------------ #
-        # Stage 2b: Gather results to rank 0 and write output                 #
-        # ------------------------------------------------------------------ #
+        # ------------------------------------------------------------------
+        # 2b: Workers envían a rank 0; rank 0 recolecta y escribe
+        # ------------------------------------------------------------------
         if use_mpi and nprocs > 1:
-            # Worker ranks send their station data to rank 0
             if rank > 0:
-                my_station = rank
-                while my_station < nstations:
-                    station = self._receivers.get_station_by_id(my_station)
+                my_sta = rank
+                print(f"Rank {rank} enviando datos...")
+                while my_sta < nstations:
+                    station = self._receivers.get_station_by_id(my_sta)
                     z, e, n, t = station.get_response()
-
                     t1 = perf_counter()
-                    comm.Send(np.array([len(z)], dtype=np.int32), dest=0, tag=2 * my_station)
-                    data = np.column_stack([z, e, n, t])
-                    comm.Send(data, dest=0, tag=2 * my_station + 1)
-                    perf_time_send += perf_counter() - t1
+                    comm.Send(np.array([len(z)], dtype=np.int32), dest=0, tag=2 * my_sta)
+                    comm.Send(np.column_stack([z, e, n, t]), dest=0, tag=2 * my_sta + 1)
+                    c['send'] += perf_counter() - t1
+                    my_sta += nprocs
+                print(f"Rank {rank} DONE enviando.")
 
-                    my_station += nprocs
-
-            # Rank 0 receives from all workers then writes
             if rank == 0:
-                print("[Stage 2] Rank 0 gathering results...")
-
-                for remote_rank in range(1, nprocs):
-                    remote_station = remote_rank
-                    while remote_station < nstations:
-                        station = self._receivers.get_station_by_id(remote_station)
-
+                print("Rank 0 recolectando resultados...")
+                count = 0
+                for remote in range(1, nprocs):
+                    rsta = remote
+                    while rsta < nstations:
+                        station = self._receivers.get_station_by_id(rsta)
                         t1 = perf_counter()
                         ant = np.empty(1, dtype=np.int32)
-                        comm.Recv(ant, source=remote_rank, tag=2 * remote_station)
+                        comm.Recv(ant, source=remote, tag=2 * rsta)
                         nt = ant[0]
                         data = np.empty((nt, 4), dtype=np.float64)
-                        comm.Recv(data, source=remote_rank, tag=2 * remote_station + 1)
-                        perf_time_recv += perf_counter() - t1
-
-                        z, e, n, t = data[:, 0], data[:, 1], data[:, 2], data[:, 3]
-                        station.add_to_response(z, e, n, t, tmin, tmax)
-
+                        comm.Recv(data, source=remote, tag=2 * rsta + 1)
+                        c['recv'] += perf_counter() - t1
+                        station.add_to_response(
+                            data[:, 0], data[:, 1], data[:, 2], data[:, 3], tmin, tmax)
                         if writer:
-                            writer.write_station(station, remote_station)
+                            writer.write_station(station, rsta)
+                        count += 1
+                        rsta += nprocs
 
-                        remote_station += nprocs
-
-                # Write rank 0's own stations
-                my_station = 0
-                while my_station < nstations:
-                    station = self._receivers.get_station_by_id(my_station)
+                # Escribe las estaciones propias de rank 0
+                my_sta = 0
+                while my_sta < nstations:
+                    station = self._receivers.get_station_by_id(my_sta)
                     if writer:
-                        writer.write_station(station, my_station)
-                    my_station += nprocs
+                        writer.write_station(station, my_sta)
+                    my_sta += nprocs
+
+                count += n_my_stations
+                print(f"Rank 0: {count}/{nstations} estaciones recolectadas.")
 
                 if writer:
                     writer.close()
 
-                perf_time_total = perf_counter() - perf_time_begin
-                print(f"\n[Stage 2] Done. Total time: {perf_time_total:.1f}s")
-
         else:
-            # Single process: write directly
+            # Single process
             if writer:
                 for i_station, station in enumerate(self._receivers):
                     writer.write_station(station, i_station)
                 writer.close()
 
-            perf_time_total = perf_counter() - perf_time_begin
-            print(f"\n[Stage 2] Done. Total time: {perf_time_total:.1f}s")
+        fid.close()
+        perf_time_total = perf_counter() - perf_time_begin
 
-        fid_debug.close()
+        if rank == 0:
+            print(f"\n  ✓ Stage 2 done. Total time: {perf_time_total:.2f}s")
+            print(f"{'='*70}\n")
+
+        _print_perf_stats(c, perf_time_total)
 
     # =========================================================================
-    # Unified entry point: run all stages
+    # ORQUESTADOR: run_fast_faster_op
     # =========================================================================
 
     def run_fast_faster_op(self,
                            stage='all',
                            h5_database_name=None,
-                           # Stage 0 params
+                           # Stage 0
                            delta_h=0.04,
                            delta_v_rec=0.002,
                            delta_v_src=0.2,
                            npairs_max=200000,
-                           # Core params (stages 1 & 2)
-                           dt=0.05,
-                           nfft=4096,
-                           tb=1000,
-                           smth=1,
-                           sigma=2,
-                           taper=0.9,
-                           wc1=1,
-                           wc2=2,
-                           pmin=0,
-                           pmax=1,
-                           dk=0.3,
-                           nx=1,
-                           kc=15.0,
-                           # Stage 2 params
+                           # Core (stages 1 y 2)
+                           dt=0.05, nfft=4096, tb=1000,
+                           smth=1, sigma=2, taper=0.9,
+                           wc1=1, wc2=2, pmin=0, pmax=1,
+                           dk=0.3, nx=1, kc=15.0,
+                           # Stage 2
                            writer=None,
                            writer_mode='progressive',
-                           tmin=0.,
-                           tmax=100,
-                           allow_out_of_bounds=False,
+                           tmin=0., tmax=100,
                            # General
-                           verbose=False,
-                           debugMPI=False,
+                           verbose=False, debugMPI=False,
                            showProgress=True):
         """
-        Unified pipeline entry point. Runs Stage 0, 1, and/or 2.
+        Orquestador del pipeline OP completo.
 
-        :param stage: Which stage(s) to run: 0, 1, 2, or 'all'
-        :param h5_database_name: HDF5 database path (without .h5 extension)
-        :param delta_h: Horizontal distance tolerance for geometry grouping (km)
-        :param delta_v_rec: Receiver depth tolerance (km)
-        :param delta_v_src: Source depth tolerance (km)
-        :param npairs_max: Max unique geometry slots in Stage 0
-        :param dt: Time step (s)
-        :param nfft: FFT size
-        :param tb: Samples before first arrival
-        :param smth: Output densification
-        :param sigma: Damping
-        :param taper: Low-pass taper
-        :param wc1, wc2: Filter corner frequencies
-        :param pmin, pmax: Phase velocity bounds
-        :param dk: Wavenumber interval
-        :param nx: Number of distance ranges
-        :param kc: Max wavenumber
-        :param writer: StationListWriter for output (Stage 2)
-        :param writer_mode: 'progressive' or 'legacy' (Stage 2)
-        :param tmin, tmax: Time window (s) for Stage 2
-        :param allow_out_of_bounds: Use closest slot even outside tolerance
-        :param verbose: Verbose Fortran core output
-        :param debugMPI: Write MPI debug files
-        :param showProgress: Print ETA progress
+        Corre Stage 0, 1 y/o 2 según el parámetro ``stage``.
+        Cada stage puede correrse por separado para workflows HPC
+        donde Stage 0 es serial y Stages 1-2 son MPI paralelos.
+
+        :param stage: Etapa(s) a correr: ``0``, ``1``, ``2`` o ``'all'``
+        :param h5_database_name: Ruta HDF5 sin extensión. Requerido.
+
+        **Stage 0 params:**
+
+        :param delta_h: Tolerancia horizontal (km)
+        :param delta_v_rec: Tolerancia profundidad receptor (km)
+        :param delta_v_src: Tolerancia profundidad fuente (km)
+        :param npairs_max: Máximo slots únicos
+
+        **Core params (stages 1 y 2):**
+
+        :param dt: Paso de tiempo (s)
+        :param nfft: Puntos FFT
+        :param tb: Muestras antes de primera llegada
+        :param smth: Factor de densificación
+        :param sigma: Amortiguamiento
+        :param taper: Filtro pasa-bajo (0-1)
+        :param wc1, wc2: Frecuencias de corte
+        :param pmin, pmax: Límites velocidad de fase (1/vs)
+        :param dk: Intervalo número de onda (Pi/x)
+        :param nx: Número de rangos de distancia
+        :param kc: Número de onda máximo (1/hs)
+
+        **Stage 2 params:**
+
+        :param writer: StationListWriter para salida. Requerido en stage 2.
+        :param writer_mode: ``'progressive'`` o ``'legacy'``
+        :param tmin, tmax: Ventana de tiempo de salida (s)
+
+        **General:**
+
+        :param verbose: Salida detallada core Fortran
+        :param debugMPI: Archivos debug por rank
+        :param showProgress: Imprime ETA
         """
         assert h5_database_name is not None, \
-            "run_fast_faster_op: h5_database_name is required"
+            "run_fast_faster_op: h5_database_name es requerido"
         assert stage in (0, 1, 2, 'all'), \
-            "run_fast_faster_op: stage must be 0, 1, 2, or 'all'"
+            "run_fast_faster_op: stage debe ser 0, 1, 2 o 'all'"
 
-        run_s0 = stage in (0, 'all')
-        run_s1 = stage in (1, 'all')
-        run_s2 = stage in (2, 'all')
+        perf_time_begin = perf_counter()
 
-        if run_s0:
+        if rank == 0:
+            title = (f"🚀 run_fast_faster_op | stage={stage} | "
+                     f"{dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}")
+            print(f"\n\n{'='*len(title)}")
+            print(title)
+            print(f"{'='*len(title)}")
+            omp = os.environ.get('OMP_NUM_THREADS', 'not set')
+            print(f"  MPI processes : {nprocs}")
+            print(f"  OMP threads   : {omp}")
+            if omp != 'not set':
+                print(f"  Total threads : {nprocs} × {omp} = {nprocs * int(omp)}")
+            print(f"  DB file       : {h5_database_name}.h5")
+            print(f"{'='*len(title)}\n")
+
+        # ── Stage 0 ──────────────────────────────────────────────────────────
+        if stage in (0, 'all'):
             self.gen_pairs_op(
                 h5_database_name=h5_database_name,
                 delta_h=delta_h,
@@ -757,7 +919,13 @@ class ShakerMaker:
                 npairs_max=npairs_max,
                 showProgress=showProgress)
 
-        if run_s1:
+            if stage == 0:
+                if rank == 0:
+                    print(f"✓ Stage 0 completo → {h5_database_name}.h5")
+                return
+
+        # ── Stage 1 ──────────────────────────────────────────────────────────
+        if stage in (1, 'all'):
             self.compute_gf_op(
                 h5_database_name=h5_database_name,
                 dt=dt, nfft=nfft, tb=tb, smth=smth,
@@ -766,7 +934,17 @@ class ShakerMaker:
                 verbose=verbose, debugMPI=debugMPI,
                 showProgress=showProgress)
 
-        if run_s2:
+            if stage == 1:
+                if rank == 0:
+                    print(f"✓ Stage 1 completo → {h5_database_name}.h5")
+                return
+
+        # ── Stage 2 ──────────────────────────────────────────────────────────
+        if stage in (2, 'all'):
+            if writer is None and rank == 0:
+                print("⚠  Stage 2 requiere un writer. Abortando.")
+                return
+
             self.run_op(
                 h5_database_name=h5_database_name,
                 dt=dt, nfft=nfft, tb=tb, smth=smth,
@@ -774,22 +952,122 @@ class ShakerMaker:
                 pmin=pmin, pmax=pmax, dk=dk, nx=nx, kc=kc,
                 writer=writer, writer_mode=writer_mode,
                 tmin=tmin, tmax=tmax,
-                allow_out_of_bounds=allow_out_of_bounds,
                 verbose=verbose, debugMPI=debugMPI,
                 showProgress=showProgress)
 
+        # ── Resumen final ────────────────────────────────────────────────────
+        if rank == 0 and stage == 'all':
+            total = perf_counter() - perf_time_begin
+            print(f"\n{'='*70}")
+            print(f"✓ PIPELINE COMPLETO")
+            print(f"  Tiempo total : {total:.2f}s", end="")
+            if total > 60:
+                print(f"  ({total/60:.1f} min)", end="")
+            if total > 3600:
+                print(f"  ({total/3600:.2f} hrs)", end="")
+            print(f"\n{'='*70}\n")
+
     # =========================================================================
-    # Internal: Fortran core wrappers (identical to JAA)
+    # STKO: Exportar geometría DRM
     # =========================================================================
 
-    def _call_core_op(self, dt, nfft, tb, nx, sigma, smth, wc1, wc2,
-                      pmin, pmax, dk, kc, taper, crust, psource, station, verbose=False):
-        """Call core.subgreen to compute full FK kernel tdata."""
+    def export_drm_geometry(self, filename="drm_geometry.h5drm"):
+        """
+        Exporta geometría DRM para visualización en STKO.
+
+        Crea un archivo HDF5 con coordenadas de estaciones y datos mínimos
+        (2 muestras, rampa lineal 0→10) solo para visualización.
+
+        Funciona con receptores DRMBox y SurfaceGrid.
+
+        :param filename: Nombre del archivo HDF5 de salida
+        :returns: Ruta al archivo creado
+        """
+        from shakermaker.sl_extensions import DRMBox
+        from shakermaker.sl_extensions.SurfaceGrid import SurfaceGrid
+
+        if not isinstance(self._receivers, (DRMBox, SurfaceGrid)):
+            raise TypeError(
+                f"export_drm_geometry() requiere receptores DRMBox o SurfaceGrid. "
+                f"Tipo actual: {type(self._receivers).__name__}"
+            )
+
+        if rank != 0:
+            return filename
+
+        metadata  = self._receivers.metadata
+        nstations = self._receivers.nstations - 1  # excluye estación QA
+
+        dt     = 0.0005
+        tstart = 0.0
+        tend   = 10.0
+
+        print(f"\n{'='*70}")
+        print(f"export_drm_geometry")
+        print(f"  Archivo   : {filename}")
+        print(f"  Estaciones: {nstations + 1} (incluyendo QA)")
+        print(f"{'='*70}")
+
+        with h5py.File(filename, 'w') as hf:
+            grp_data = hf.create_group('DRM_Data')
+            grp_qa   = hf.create_group('DRM_QA_Data')
+            grp_meta = hf.create_group('DRM_Metadata')
+
+            # Coordenadas y flags de estaciones
+            xyz      = np.zeros((nstations, 3))
+            internal = np.zeros(nstations, dtype=bool)
+            for i in range(nstations):
+                sta = self._receivers.get_station_by_id(i)
+                xyz[i, :]    = sta.x
+                internal[i]  = sta.is_internal
+
+            grp_data.create_dataset('xyz',          data=xyz,      dtype=np.float64)
+            grp_data.create_dataset('internal',     data=internal, dtype=bool)
+            grp_data.create_dataset('data_location',
+                                    data=np.arange(0, nstations, dtype=np.int32) * 3)
+
+            # Estación QA
+            qa_sta = self._receivers.get_station_by_id(nstations)
+            grp_qa.create_dataset('xyz', data=qa_sta.x.reshape(1, 3), dtype=np.float64)
+
+            # Datos mínimos: rampa 0→10 (2 muestras, 3 componentes por estación)
+            ramp    = np.tile([0.0, 10.0], (3 * nstations, 1))
+            ramp_qa = np.tile([0.0, 10.0], (3, 1))
+
+            for grp, r in [(grp_data, ramp), (grp_qa, ramp_qa)]:
+                grp.create_dataset('velocity',     data=r, dtype=np.float64)
+                grp.create_dataset('displacement', data=r, dtype=np.float64)
+                grp.create_dataset('acceleration', data=r, dtype=np.float64)
+
+            # Metadata
+            grp_meta.create_dataset('dt',     data=dt)
+            grp_meta.create_dataset('tstart', data=tstart)
+            grp_meta.create_dataset('tend',   data=tend)
+
+            for key in ['h', 'drmbox_x0', 'drmbox_xmax', 'drmbox_xmin',
+                        'drmbox_ymax', 'drmbox_ymin', 'drmbox_zmax', 'drmbox_zmin']:
+                if key in metadata:
+                    grp_meta.create_dataset(key, data=metadata[key])
+
+        print(f"  ✓ Archivo creado: {filename}")
+        print(f"{'='*70}\n")
+        return filename
+
+    # =========================================================================
+    # Internos: wrappers al core Fortran
+    # =========================================================================
+
+    def _call_core(self, dt, nfft, tb, nx, sigma, smth, wc1, wc2,
+                   pmin, pmax, dk, kc, taper, crust, psource, station, verbose=False):
+        """
+        Llama a core.subgreen para calcular el kernel FK completo (tdata).
+        Usado por: run() y compute_gf_op().
+        """
         mb  = crust.nlayers
-        src = crust.get_layer(psource.x[2]) + 1
+        src = crust.get_layer(psource.x[2]) + 1  # Fortran indexing
         rcv = crust.get_layer(station.x[2]) + 1
 
-        stype = 2
+        stype = 2   # double-couple, up y down going
         updn  = 0
 
         pf = psource.angles[0]
@@ -798,6 +1076,14 @@ class ShakerMaker:
         sx = psource.x[0]; sy = psource.x[1]
         rx = station.x[0]; ry = station.x[1]
         x  = np.sqrt((sx - rx)**2 + (sy - ry)**2)
+
+        self._logger.debug(
+            f'_call_core: mb={mb} src={src} rcv={rcv} x={x:.4f} '
+            f'pf={pf} df={df} lf={lf}')
+
+        if verbose:
+            print(f'  _call_core: mb={mb} src={src} rcv={rcv} '
+                  f'x={x:.4f} pf={pf} df={df} lf={lf}')
 
         tdata, z, e, n, t0 = core.subgreen(
             mb, src, rcv, stype, updn,
@@ -807,9 +1093,12 @@ class ShakerMaker:
 
         return tdata, z, e, n, t0
 
-    def _call_core_fast_op(self, tdata, dt, nfft, tb, nx, sigma, smth, wc1, wc2,
-                           pmin, pmax, dk, kc, taper, crust, psource, station, verbose=False):
-        """Call core.subgreen2 using precomputed tdata kernel."""
+    def _call_core_fast(self, tdata, dt, nfft, tb, nx, sigma, smth, wc1, wc2,
+                        pmin, pmax, dk, kc, taper, crust, psource, station, verbose=False):
+        """
+        Llama a core.subgreen2 reutilizando tdata precomputado.
+        Usado por: run_op().
+        """
         mb  = crust.nlayers
         src = crust.get_layer(psource.x[2]) + 1
         rcv = crust.get_layer(station.x[2]) + 1
@@ -824,7 +1113,10 @@ class ShakerMaker:
         rx = station.x[0]; ry = station.x[1]
         x  = np.sqrt((sx - rx)**2 + (sy - ry)**2)
 
-        # Reshape tdata to format expected by subgreen2
+        self._logger.debug(
+            f'_call_core_fast: mb={mb} src={src} rcv={rcv} x={x:.4f}')
+
+        # Reshape tdata de (nt, 9) → (1, 9, nt) que espera subgreen2
         tdata_ = tdata.T
         tdata_ = tdata_.reshape((1, tdata_.shape[0], tdata_.shape[1]))
 
@@ -837,8 +1129,20 @@ class ShakerMaker:
         return z, e, n, t0
 
     # =========================================================================
-    # Properties (mirror original ShakerMaker)
+    # Utilidades
     # =========================================================================
+
+    def write(self, writer):
+        """Escribe todos los receptores usando el writer dado."""
+        writer.write(self._receivers)
+
+    def enable_mpi(self, rank, nprocs):
+        """Sobreescribe los valores MPI (raro, solo si necesitas override manual)."""
+        self._mpi_rank   = rank
+        self._mpi_nprocs = nprocs
+
+    def mpi_is_master_process(self):
+        return self._mpi_rank == 0
 
     @property
     def mpi_rank(self):
