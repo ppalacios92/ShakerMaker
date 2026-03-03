@@ -223,7 +223,7 @@ class ShakerMaker:
         :param writer_mode: 'progressive' or 'legacy'
         :type writer_mode: str
         """
-        title = f"🎉 ¡LARGA VIDA AL LADRUNO_OP_kdTREE! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+        title = f"🎉 ¡LARGA VIDA AL LADRUNO_OP_kdTREE_pointCloud! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
         
         if rank == 0:
             print(f"\n\n{title}")
@@ -563,7 +563,7 @@ class ShakerMaker:
         nstations = self._receivers.nstations
         N         = nstations * nsources          # total pairs
 
-        title = (f"🎉 ¡LARGA VIDA AL LADRUNO_OP_kdTREE! 🎉 ShakerMaker Gen GF database pairs begin. "
+        title = (f"🎉 ¡LARGA VIDA AL LADRUNO_OP_kdTREE_pointCloud! 🎉 ShakerMaker Gen GF database pairs begin. "
                  f"{delta_h=} {delta_v_rec=} {delta_v_src=}")
         if rank == 0:
             print(f"\n\n{title}")
@@ -806,7 +806,7 @@ class ShakerMaker:
         :param showProgress: Print ETA on rank 0.
         :type showProgress: bool
         """
-        title = (f"🎉 ¡LARGA VIDA AL LADRUNO_OP_kdTREE! 🎉 ShakerMaker Gen Green's functions database begin. "
+        title = (f"🎉 ¡LARGA VIDA AL LADRUNO_OP_kdTREE_pointCloud! 🎉 ShakerMaker Gen Green's functions database begin. "
                  f"{dt=} {nfft=} {dk=} {tb=}")
 
         if rank == 0:
@@ -981,7 +981,7 @@ class ShakerMaker:
         :type tmax: double
         (remaining parameters identical to :meth:`run`)
         """
-        title = (f"🎉 ¡LARGA VIDA AL LADRUNO_OP_kdTREE! 🎉 ShakerMaker Run (Stage 2 - OP) begin. "
+        title = (f"🎉 ¡LARGA VIDA AL LADRUNO_OP_kdTREE_pointCloud! 🎉 ShakerMaker Run (Stage 2 - OP) begin. "
                  f"{dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}")
 
         if rank == 0:
@@ -1282,7 +1282,7 @@ class ShakerMaker:
         perf_time_begin = perf_counter()
 
         if rank == 0:
-            title = (f"🎉 ¡LARGA VIDA AL LADRUNO_OP_kdTREE! 🎉 ShakerMaker run_fast_faster_op | stage={stage} | "
+            title = (f"🎉 ¡LARGA VIDA AL LADRUNO_OP_kdTREE_pointCloud! 🎉 ShakerMaker run_fast_faster_op | stage={stage} | "
                      f"{dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}")
             print(f"\n\n{title}")
             print("-" * len(title))
@@ -1438,7 +1438,7 @@ class ShakerMaker:
         npairs_total = nstations * nsources
 
         if rank == 0:
-            title = (f"🎉 ¡LARGA VIDA AL LADRUNO_OP_kdTREE! 🎉 ShakerMaker build_pair_to_slot_from_legacy_h5 -- "
+            title = (f"🎉 ¡LARGA VIDA AL LADRUNO_OP_kdTREE_pointCloud! 🎉 ShakerMaker build_pair_to_slot_from_legacy_h5 -- "
                      f"{h5_database_name}")
             print(f"\n\n{title}")
             print("-" * len(title))
@@ -1596,8 +1596,9 @@ class ShakerMaker:
         """
         from shakermaker.sl_extensions import DRMBox
         from shakermaker.sl_extensions.SurfaceGrid import SurfaceGrid
+        from shakermaker.sl_extensions.PointCloudDRMReceiver import PointCloudDRMReceiver
 
-        if not isinstance(self._receivers, (DRMBox, SurfaceGrid)):
+        if not isinstance(self._receivers, (DRMBox, SurfaceGrid, PointCloudDRMReceiver)):
             raise TypeError(
                 f"export_drm_geometry() requires DRMBox or SurfaceGrid. "
                 f"Got: {type(self._receivers).__name__}")
