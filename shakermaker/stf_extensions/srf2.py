@@ -13,12 +13,13 @@ class SRF2(SourceTimeFunction):
         dt : float
             Time step for the source time function.
     """
-    def __init__(self, Tr, Tp, Te, dt, a, b):
+    def __init__(self, Tr, Tp, Te, dt, slip , a, b):
         SourceTimeFunction.__init__(self)
         self._Tp = Tp
         self._Tr = Tr
         self._Te = Te
         self._dt = dt
+        self._slip = slip
         self._a = a
         self._b = b
 
@@ -26,7 +27,8 @@ class SRF2(SourceTimeFunction):
     def _generate_data(self):
         t, svf = self._srf2_function()
         self._t = t
-        self._data = svf
+        self._svf = svf
+        self._data = svf * self._slip
 
     def _srf2_function(self):
         a = self._a
