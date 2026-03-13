@@ -3,10 +3,12 @@ Name: shakermaker
 Version: 1.0
 Summary: README.md
 Home-page: http://www.joseabell.com
-Download-URL: tbd
 Author: Jose A. Abell, Jorge Crempien D., and Matias Recabarren
 Author-email: info@joseabell.com
+License: UNKNOWN
+Download-URL: tbd
 Keywords: earthquake,engineering,drm,simulation
+Platform: UNKNOWN
 Classifier: Programming Language :: Python
 Classifier: Programming Language :: Python :: 3
 Classifier: Programming Language :: Fortran
@@ -24,3 +26,4 @@ Classifier: Topic :: TBD2
         Create realistic seismograms!
         
         
+

@@ -2,6 +2,7 @@ from setuptools import setup
 from numpy.distutils.core import Extension, setup as np_setup
 import importlib.util
 import os
+import sys
 
 from setuptools.command.install import install
 from setuptools.command.develop import develop
@@ -33,37 +34,102 @@ else:
             extra_link_args=["-pg",  "-fopenmp"]
         )
     else:
+        # ext1 = Extension(
+        #     name='shakermaker.core',
+        #     sources=srcs,
+        #     extra_f77_compile_args=["-ffixed-line-length-132", "-Wno-tabs", "-Wno-unused-dummy-argument", "-fPIC", "-fopenmp"],
+        #     extra_compile_args=["-DNPY_NO_DEPRECATED_API=NPY_1_7_API_VERSION"],
+        #     extra_link_args=["-fopenmp"]
+        if sys.platform == 'win32':
+            f77_args     = ["/Qopenmp", "/extend-source:132"]
+            link_args    = ["/Qopenmp"]
+            compile_args = ["-DNPY_NO_DEPRECATED_API=NPY_1_7_API_VERSION"]
+        else:
+            f77_args     = ["-ffixed-line-length-132", "-Wno-tabs", "-Wno-unused-dummy-argument", "-fPIC", "-fopenmp"]
+            link_args    = ["-fopenmp"]
+            compile_args = ["-DNPY_NO_DEPRECATED_API=NPY_1_7_API_VERSION"]
+
         ext1 = Extension(
             name='shakermaker.core',
             sources=srcs,
-            extra_f77_compile_args=["-ffixed-line-length-132", "-Wno-tabs", "-Wno-unused-dummy-argument", "-fPIC", "-fopenmp"],
-            extra_compile_args=["-DNPY_NO_DEPRECATED_API=NPY_1_7_API_VERSION"],
-            extra_link_args=["-fopenmp"]
+            extra_f77_compile_args=f77_args,
+            extra_compile_args=compile_args,
+            extra_link_args=link_args,
         )
 
     ext_modules = [ext1]
 
 # ========== FFSP compilation support
+# def compile_ffsp():
+#     """Compile FFSP wrapper module using f2py"""
+#     ffsp_dir = os.path.join(os.path.dirname(__file__), 'shakermaker', 'ffsp')    
+#     try:
+#         subprocess.run(['make', '-f', 'Makefile_f2py', 'clean'], 
+#                       cwd=ffsp_dir, check=False, capture_output=True)
+        
+#         result = subprocess.run(['make', '-f', 'Makefile_f2py'], 
+#                                cwd=ffsp_dir, check=True, capture_output=True, text=True)
+        
+#         so_files = [f for f in os.listdir(ffsp_dir) if f.startswith('ffsp_core') and f.endswith('.so')]
+        
+#         if so_files:
+#             print(f"[OK] FFSP wrapper compiled: {so_files[0]}")
+#         else:
+#             raise RuntimeError("FFSP wrapper not compiled")
+            
+#     except subprocess.CalledProcessError as e:
+#         print("✗ FFSP compilation failed")
+#         raise
 def compile_ffsp():
-    """Compile FFSP wrapper module using f2py"""
-    ffsp_dir = os.path.join(os.path.dirname(__file__), 'shakermaker', 'ffsp')    
+    ffsp_dir = os.path.join(os.path.dirname(__file__), 'shakermaker', 'ffsp')
+    if sys.platform == 'win32':
+        _compile_ffsp_windows(ffsp_dir)
+    else:
+        _compile_ffsp_linux(ffsp_dir)
+
+def _compile_ffsp_linux(ffsp_dir):
     try:
-        subprocess.run(['make', '-f', 'Makefile_f2py', 'clean'], 
+        subprocess.run(['make', '-f', 'Makefile_f2py', 'clean'],
                       cwd=ffsp_dir, check=False, capture_output=True)
-        
-        result = subprocess.run(['make', '-f', 'Makefile_f2py'], 
+        result = subprocess.run(['make', '-f', 'Makefile_f2py'],
                                cwd=ffsp_dir, check=True, capture_output=True, text=True)
-        
         so_files = [f for f in os.listdir(ffsp_dir) if f.startswith('ffsp_core') and f.endswith('.so')]
-        
         if so_files:
-            print(f"✓ FFSP wrapper compiled: {so_files[0]}")
+            print(f"[OK] FFSP wrapper compiled (Linux): {so_files[0]}")
         else:
             raise RuntimeError("FFSP wrapper not compiled")
-            
     except subprocess.CalledProcessError as e:
         print("✗ FFSP compilation failed")
         raise
+
+def _compile_ffsp_windows(ffsp_dir):
+    fortran_sources = [
+        "ffsp_wrapper.f90", "ffsp_comm.f90", "spfield_n.f90",
+        "dcf_subs_1.f90", "slip_rate.f90", "ffsp_tool.f",
+    ]
+    for f in os.listdir(ffsp_dir):
+        if f.startswith('ffsp_core') and (f.endswith('.pyd') or f.endswith('.so')):
+            os.remove(os.path.join(ffsp_dir, f))
+    cmd = [
+        sys.executable, "-m", "numpy.f2py",
+        "-c", "ffsp.pyf",
+        *fortran_sources,
+        "--fcompiler=intelvem",
+        "--f90flags=/Qopenmp",
+        "--f77flags=/Qopenmp",
+        "-m", "ffsp_core",
+    ]
+    result = subprocess.run(cmd, cwd=ffsp_dir, check=True,
+                            capture_output=True, text=True)
+    pyd_files = [f for f in os.listdir(ffsp_dir)
+                 if f.startswith('ffsp_core') and f.endswith('.pyd')]
+    if pyd_files:
+        print(f"[OK] FFSP wrapper compiled (Windows): {pyd_files[0]}")
+    else:
+        print("STDOUT:", result.stdout[-2000:])
+        print("STDERR:", result.stderr[-2000:])
+        raise RuntimeError("FFSP .pyd not found after compilation")
+        
 # Compile FFSP before the setup
 compile_ffsp()
 
