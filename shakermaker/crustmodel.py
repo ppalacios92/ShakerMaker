@@ -277,3 +277,41 @@ class CrustModel:
             z += self._d[i]
 
         return rep
+
+    def plot(self, figsize=(6, 4)):
+        """Plot the crust model layers as a vertical column.
+
+        :param figsize: Figure size as (width, height) in inches.
+        :type figsize: tuple
+        """
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        labels = []
+        thicknesses = []
+        for i in range(self.nlayers):
+            if self._d[i] == 0:
+                thicknesses.append(10)
+                labels.append(f'Layer {i+1}: ∞ (Half-space)')
+            else:
+                thicknesses.append(self._d[i])
+                labels.append(f'Layer {i+1}: {self._d[i]:.1f} km')
+
+        fig, ax = plt.subplots(figsize=figsize)
+        colors = plt.cm.Pastel1(np.linspace(0, 1, self.nlayers))
+
+        bottom = 0
+        for i in range(self.nlayers):
+            ax.bar(0, thicknesses[i], bottom=bottom, width=1,
+                   color=colors[i], edgecolor='black', linewidth=1.5,
+                   label=labels[i])
+            bottom += thicknesses[i]
+
+        ax.set_ylabel('Depth (km)', fontsize=12)
+        ax.set_title('Crust Model Layers', fontsize=14, fontweight='bold')
+        ax.set_xlim(-0.5, 0.5)
+        ax.set_ylim(bottom, 0)
+        ax.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+        ax.set_xticks([])
+        plt.tight_layout()
+        plt.show()

@@ -160,7 +160,7 @@ class FFSPSource:
         
         # Import Fortran wrapper module
         try:
-            from . import ffsp_core
+            from shakermaker.ffsp import ffsp_core
         except ImportError:
             # Fallback: add ffsp directory to path
             import sys

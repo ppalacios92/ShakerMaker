@@ -4,14 +4,16 @@ import importlib.util
 import os
 import sys
 
-from setuptools.command.install import install
-from setuptools.command.develop import develop
+from setuptools.command.install import install as _install
+from setuptools.command.develop import develop as _develop
+import shutil
+
 import subprocess
 
 on_rtd = os.environ.get('READTHEDOCS') == 'True'
 
 name = "shakermaker"
-version = "1.0"
+version = "2.0"
 release = "0.01"
 author = "Jose A. Abell, Jorge Crempien D., and Matias Recabarren"
 
@@ -88,19 +90,34 @@ def compile_ffsp():
         _compile_ffsp_linux(ffsp_dir)
 
 def _compile_ffsp_linux(ffsp_dir):
-    try:
-        subprocess.run(['make', '-f', 'Makefile_f2py', 'clean'],
-                      cwd=ffsp_dir, check=False, capture_output=True)
-        result = subprocess.run(['make', '-f', 'Makefile_f2py'],
-                               cwd=ffsp_dir, check=True, capture_output=True, text=True)
-        so_files = [f for f in os.listdir(ffsp_dir) if f.startswith('ffsp_core') and f.endswith('.so')]
-        if so_files:
-            print(f"[OK] FFSP wrapper compiled (Linux): {so_files[0]}")
-        else:
-            raise RuntimeError("FFSP wrapper not compiled")
-    except subprocess.CalledProcessError as e:
-        print("✗ FFSP compilation failed")
-        raise
+    fortran_sources = [
+        "ffsp_wrapper.f90", "ffsp_comm.f90", "spfield_n.f90",
+        "dcf_subs_1.f90", "slip_rate.f90", "ffsp_tool.f",
+    ]
+    # Remove existing artifact so f2py always does a full rebuild
+    for f in os.listdir(ffsp_dir):
+        if f.startswith('ffsp_core') and (f.endswith('.so') or f.endswith('.pyd')):
+            os.remove(os.path.join(ffsp_dir, f))
+    cmd = [
+        sys.executable, "-m", "numpy.f2py",
+        "-c", "ffsp.pyf",
+        *fortran_sources,
+        "--f90flags=-O3 -fPIC",
+        "--f77flags=-O3 -std=legacy -fPIC",
+        "-m", "ffsp_core",
+    ]
+    print("[ffsp] compiling on linux...")
+    result = subprocess.run(cmd, cwd=ffsp_dir, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(result.stdout[-3000:])
+        print(result.stderr[-3000:])
+        raise RuntimeError("[ffsp] compilation failed -- see output above")
+    so_files = [f for f in os.listdir(ffsp_dir)
+                if f.startswith('ffsp_core') and f.endswith('.so')]
+    if so_files:
+        print(f"[OK] FFSP wrapper compiled (Linux): {so_files[0]}")
+    else:
+        raise RuntimeError("FFSP .so not found after compilation")
 
 def _compile_ffsp_windows(ffsp_dir):
     fortran_sources = [
@@ -130,8 +147,34 @@ def _compile_ffsp_windows(ffsp_dir):
         print("STDERR:", result.stderr[-2000:])
         raise RuntimeError("FFSP .pyd not found after compilation")
         
-# Compile FFSP before the setup
-compile_ffsp()
+    print(f"[ffsp] compiling from: {ffsp_dir}")
+    import glob
+    for f in glob.glob(os.path.join(ffsp_dir, "*.f90")) + glob.glob(os.path.join(ffsp_dir, "*.f")):
+        print(f"[ffsp] source: {f}")
+
+
+def _install_ffsp_binary(ffsp_dir):
+    """Copy compiled .pyd/.so into site-packages after install creates the destination folder."""
+    import site
+    ext = ".pyd" if sys.platform == "win32" else ".so"
+    for sp in site.getsitepackages():
+        dest = os.path.join(sp, "shakermaker", "ffsp")
+        if os.path.isdir(dest):
+            for f in os.listdir(ffsp_dir):
+                if f.startswith("ffsp_core") and f.endswith(ext):
+                    shutil.copy2(os.path.join(ffsp_dir, f), os.path.join(dest, f))
+                    print(f"[ffsp] installed {f} -> {dest}")
+            return
+
+class PostInstallCommand(_install):
+    def run(self):
+        _install.run(self)
+        ffsp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shakermaker", "ffsp")
+        compile_ffsp()
+        _install_ffsp_binary(ffsp_dir)
+
+# Compile FFSP before the setup (source tree only, post-install handles site-packages)
+# compile_ffsp()
 
 # ============================================================
 
@@ -139,7 +182,7 @@ compile_ffsp()
 found_sphinx = importlib.util.find_spec('sphinx') is not None
 
 # ============================================================
-cmdclass = {}
+cmdclass = {'install': PostInstallCommand}
 command_options = {}
 
 # if found_sphinx:
@@ -169,7 +212,7 @@ np_setup(
         "shakermaker.ffsp", 
     ],
     package_data={
-        'shakermaker.ffsp': ['ffsp_core.cpython-*.so', '*.f90', '*.f', 'makefile', 'Makefile_f2py', 'ffsp.pyf'], 
+        'shakermaker.ffsp': ['ffsp_core.cpython-*.so', 'ffsp_core.cpython-*.pyd', '*.f90', '*.f', 'makefile', 'Makefile_f2py', 'ffsp.pyf'], 
     },
     ext_modules=ext_modules,
     version=version,

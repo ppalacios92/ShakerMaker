@@ -301,6 +301,7 @@ class ShakerMaker:
                         nt = len(z)
                         t1 = perf_counter()
                         t = np.arange(0, nt * dt, dt) + psource.tt + t0
+                        station.add_greens_function(z, e, n, t, tdata, t0, i_psource)
                         psource.stf.dt = dt
                         z_stf = psource.stf.convolve(z, t)
                         e_stf = psource.stf.convolve(e, t)
