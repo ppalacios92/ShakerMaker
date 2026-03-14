@@ -1,0 +1,191 @@
+C:\shakermaker_compiler\ShakerMaker\setup.py:2: DeprecationWarning: 
+
+  `numpy.distutils` is deprecated since NumPy 1.23.0, as a result
+  of the deprecation of `distutils` itself. It will be removed for
+  Python >= 3.12. For older Python versions it will remain present.
+  It is recommended to use `setuptools < 60.0` for those Python versions.
+  For more details, see:
+    https://numpy.org/devdocs/reference/distutils_status_migration.html 
+
+
+  from numpy.distutils.core import Extension, setup as np_setup
+[OK] FFSP wrapper compiled (Windows): ffsp_core.cp310-win_amd64.pyd
+running install
+C:\Users\ppala\barry_allen\lib\site-packages\setuptools\command\install.py:34: SetuptoolsDeprecationWarning: setup.py install is deprecated. Use build and pip and other standards-based tools.
+  warnings.warn(
+running build
+running config_cc
+INFO: unifing config_cc, config, build_clib, build_ext, build commands --compiler options
+running config_fc
+INFO: unifing config_fc, config, build_clib, build_ext, build commands --fcompiler options
+running build_src
+INFO: build_src
+INFO: building extension "shakermaker.core" sources
+INFO: f2py options: []
+INFO:   adding 'build\src.win-amd64-3.10\build\src.win-amd64-3.10\shakermaker\core\fortranobject.c' to sources.
+INFO:   adding 'build\src.win-amd64-3.10\build\src.win-amd64-3.10\shakermaker\core' to include_dirs.
+INFO:   adding 'build\src.win-amd64-3.10\shakermaker\core\core-f2pywrappers.f' to sources.
+INFO: build_src: building npy-pkg config files
+running build_py
+running build_ext
+INFO: No module named 'numpy.distutils._msvccompiler' in numpy.distutils; trying from distutils
+INFO: customize MSVCCompiler
+INFO: customize MSVCCompiler using build_ext
+INFO: CCompilerOpt.__init__[820] : load cache from file -> C:\shakermaker_compiler\ShakerMaker\build\temp.win-amd64-cpython-310\Release\ccompiler_opt_cache_ext.py
+INFO: CCompilerOpt.__init__[831] : hit the file cache
+INFO: get_default_fcompiler: matching types: '['gnu', 'intelv', 'absoft', 'compaqv', 'intelev', 'gnu95', 'g95', 'intelvem', 'intelem', 'flang']'
+INFO: customize GnuFCompiler
+WARN: Could not locate executable g77
+WARN: Could not locate executable f77
+INFO: customize IntelVisualFCompiler
+INFO: Found executable C:\Program Files (x86)\Intel\oneAPI\compiler\latest\bin\ifort.bat
+WARN: Could not locate executable C:\Program
+INFO: customize AbsoftFCompiler
+WARN: Could not locate executable f90
+INFO: customize CompaqVisualFCompiler
+WARN: Could not locate executable DF
+INFO: customize IntelItaniumVisualFCompiler
+WARN: Could not locate executable efl
+INFO: customize Gnu95FCompiler
+INFO: Found executable C:\msys64\mingw64\bin\gfortran.exe
+INFO: customize Gnu95FCompiler
+INFO: customize Gnu95FCompiler using build_ext
+INFO: building 'shakermaker.core' extension
+INFO: compiling C sources
+INFO: C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\bin\HostX86\x64\cl.exe /c /nologo /O2 /W3 /GL /DNDEBUG /MD -Ibuild\src.win-amd64-3.10\build\src.win-amd64-3.10\shakermaker\core -IC:\Users\ppala\barry_allen\lib\site-packages\numpy\core\include -Ibuild\src.win-amd64-3.10\numpy\distutils\include -IC:\Users\ppala\barry_allen\include -IC:\Users\ppala\AppData\Local\Programs\Python\Python310\include -IC:\Users\ppala\AppData\Local\Programs\Python\Python310\Include -IC:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include -IC:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\ATLMFC\include -IC:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\VS\include -IC:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\ucrt -IC:\Program Files (x86)\Windows Kits\10\\include\10.0.26100.0\\um -IC:\Program Files (x86)\Windows Kits\10\\include\10.0.26100.0\\shared -IC:\Program Files (x86)\Windows Kits\10\\include\10.0.26100.0\\winrt -IC:\Program Files (x86)\Windows Kits\10\\include\10.0.26100.0\\cppwinrt -IC:\Program Files (x86)\Intel\oneAPI\tbb\latest\env\..\include -IC:\Program Files (x86)\Intel\oneAPI\pti\latest\env\..\include -IC:\Program Files (x86)\Intel\oneAPI\ocloc\latest\include -IC:\Program Files (x86)\Intel\oneAPI\mpi\latest\env\\..\include -IC:\Program Files (x86)\Intel\oneAPI\mkl\latest\include -IC:\Program Files (x86)\Intel\oneAPI\ippcp\latest\include -IC:\Program Files (x86)\Intel\oneAPI\ipp\latest\include -IC:\Program Files (x86)\Intel\oneAPI\dpcpp-ct\latest\env\..\include -IC:\Program Files (x86)\Intel\oneAPI\dnnl\latest\env\..\include -IC:\Program Files (x86)\Intel\oneAPI\dev-utilities\latest\include -IC:\Program Files (x86)\Intel\oneAPI\dal\latest\include\dal -IC:\Program Files (x86)\Intel\oneAPI\compiler\latest\include -IC:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include -IC:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\ATLMFC\include -IC:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\VS\include -IC:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\ucrt -IC:\Program Files (x86)\Windows Kits\10\\include\10.0.26100.0\\um -IC:\Program Files (x86)\Windows Kits\10\\include\10.0.26100.0\\shared -IC:\Program Files (x86)\Windows Kits\10\\include\10.0.26100.0\\winrt -IC:\Program Files (x86)\Windows Kits\10\\include\10.0.26100.0\\cppwinrt -IC:\Program Files (x86)\Intel\oneAPI\umf\latest\include /Tcbuild\src.win-amd64-3.10\shakermaker\core\coremodule.c /Fobuild\temp.win-amd64-cpython-310\Release\build\src.win-amd64-3.10\shakermaker\core\coremodule.obj -DNPY_NO_DEPRECATED_API=NPY_1_7_API_VERSION
+INFO: C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\bin\HostX86\x64\cl.exe /c /nologo /O2 /W3 /GL /DNDEBUG /MD -Ibuild\src.win-amd64-3.10\build\src.win-amd64-3.10\shakermaker\core -IC:\Users\ppala\barry_allen\lib\site-packages\numpy\core\include -Ibuild\src.win-amd64-3.10\numpy\distutils\include -IC:\Users\ppala\barry_allen\include -IC:\Users\ppala\AppData\Local\Programs\Python\Python310\include -IC:\Users\ppala\AppData\Local\Programs\Python\Python310\Include -IC:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include -IC:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\ATLMFC\include -IC:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\VS\include -IC:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\ucrt -IC:\Program Files (x86)\Windows Kits\10\\include\10.0.26100.0\\um -IC:\Program Files (x86)\Windows Kits\10\\include\10.0.26100.0\\shared -IC:\Program Files (x86)\Windows Kits\10\\include\10.0.26100.0\\winrt -IC:\Program Files (x86)\Windows Kits\10\\include\10.0.26100.0\\cppwinrt -IC:\Program Files (x86)\Intel\oneAPI\tbb\latest\env\..\include -IC:\Program Files (x86)\Intel\oneAPI\pti\latest\env\..\include -IC:\Program Files (x86)\Intel\oneAPI\ocloc\latest\include -IC:\Program Files (x86)\Intel\oneAPI\mpi\latest\env\\..\include -IC:\Program Files (x86)\Intel\oneAPI\mkl\latest\include -IC:\Program Files (x86)\Intel\oneAPI\ippcp\latest\include -IC:\Program Files (x86)\Intel\oneAPI\ipp\latest\include -IC:\Program Files (x86)\Intel\oneAPI\dpcpp-ct\latest\env\..\include -IC:\Program Files (x86)\Intel\oneAPI\dnnl\latest\env\..\include -IC:\Program Files (x86)\Intel\oneAPI\dev-utilities\latest\include -IC:\Program Files (x86)\Intel\oneAPI\dal\latest\include\dal -IC:\Program Files (x86)\Intel\oneAPI\compiler\latest\include -IC:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include -IC:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\ATLMFC\include -IC:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\VS\include -IC:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\ucrt -IC:\Program Files (x86)\Windows Kits\10\\include\10.0.26100.0\\um -IC:\Program Files (x86)\Windows Kits\10\\include\10.0.26100.0\\shared -IC:\Program Files (x86)\Windows Kits\10\\include\10.0.26100.0\\winrt -IC:\Program Files (x86)\Windows Kits\10\\include\10.0.26100.0\\cppwinrt -IC:\Program Files (x86)\Intel\oneAPI\umf\latest\include /Tcshakermaker/core/fft.c /Fobuild\temp.win-amd64-cpython-310\Release\shakermaker\core\fft.obj -DNPY_NO_DEPRECATED_API=NPY_1_7_API_VERSION
+INFO: C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\bin\HostX86\x64\cl.exe /c /nologo /O2 /W3 /GL /DNDEBUG /MD -Ibuild\src.win-amd64-3.10\build\src.win-amd64-3.10\shakermaker\core -IC:\Users\ppala\barry_allen\lib\site-packages\numpy\core\include -Ibuild\src.win-amd64-3.10\numpy\distutils\include -IC:\Users\ppala\barry_allen\include -IC:\Users\ppala\AppData\Local\Programs\Python\Python310\include -IC:\Users\ppala\AppData\Local\Programs\Python\Python310\Include -IC:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include -IC:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\ATLMFC\include -IC:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\VS\include -IC:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\ucrt -IC:\Program Files (x86)\Windows Kits\10\\include\10.0.26100.0\\um -IC:\Program Files (x86)\Windows Kits\10\\include\10.0.26100.0\\shared -IC:\Program Files (x86)\Windows Kits\10\\include\10.0.26100.0\\winrt -IC:\Program Files (x86)\Windows Kits\10\\include\10.0.26100.0\\cppwinrt -IC:\Program Files (x86)\Intel\oneAPI\tbb\latest\env\..\include -IC:\Program Files (x86)\Intel\oneAPI\pti\latest\env\..\include -IC:\Program Files (x86)\Intel\oneAPI\ocloc\latest\include -IC:\Program Files (x86)\Intel\oneAPI\mpi\latest\env\\..\include -IC:\Program Files (x86)\Intel\oneAPI\mkl\latest\include -IC:\Program Files (x86)\Intel\oneAPI\ippcp\latest\include -IC:\Program Files (x86)\Intel\oneAPI\ipp\latest\include -IC:\Program Files (x86)\Intel\oneAPI\dpcpp-ct\latest\env\..\include -IC:\Program Files (x86)\Intel\oneAPI\dnnl\latest\env\..\include -IC:\Program Files (x86)\Intel\oneAPI\dev-utilities\latest\include -IC:\Program Files (x86)\Intel\oneAPI\dal\latest\include\dal -IC:\Program Files (x86)\Intel\oneAPI\compiler\latest\include -IC:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include -IC:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\ATLMFC\include -IC:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\VS\include -IC:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\ucrt -IC:\Program Files (x86)\Windows Kits\10\\include\10.0.26100.0\\um -IC:\Program Files (x86)\Windows Kits\10\\include\10.0.26100.0\\shared -IC:\Program Files (x86)\Windows Kits\10\\include\10.0.26100.0\\winrt -IC:\Program Files (x86)\Windows Kits\10\\include\10.0.26100.0\\cppwinrt -IC:\Program Files (x86)\Intel\oneAPI\umf\latest\include /Tcshakermaker/core/Complex.c /Fobuild\temp.win-amd64-cpython-310\Release\shakermaker\core\Complex.obj -DNPY_NO_DEPRECATED_API=NPY_1_7_API_VERSION
+INFO: C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\bin\HostX86\x64\cl.exe /c /nologo /O2 /W3 /GL /DNDEBUG /MD -Ibuild\src.win-amd64-3.10\build\src.win-amd64-3.10\shakermaker\core -IC:\Users\ppala\barry_allen\lib\site-packages\numpy\core\include -Ibuild\src.win-amd64-3.10\numpy\distutils\include -IC:\Users\ppala\barry_allen\include -IC:\Users\ppala\AppData\Local\Programs\Python\Python310\include -IC:\Users\ppala\AppData\Local\Programs\Python\Python310\Include -IC:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include -IC:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\ATLMFC\include -IC:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\VS\include -IC:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\ucrt -IC:\Program Files (x86)\Windows Kits\10\\include\10.0.26100.0\\um -IC:\Program Files (x86)\Windows Kits\10\\include\10.0.26100.0\\shared -IC:\Program Files (x86)\Windows Kits\10\\include\10.0.26100.0\\winrt -IC:\Program Files (x86)\Windows Kits\10\\include\10.0.26100.0\\cppwinrt -IC:\Program Files (x86)\Intel\oneAPI\tbb\latest\env\..\include -IC:\Program Files (x86)\Intel\oneAPI\pti\latest\env\..\include -IC:\Program Files (x86)\Intel\oneAPI\ocloc\latest\include -IC:\Program Files (x86)\Intel\oneAPI\mpi\latest\env\\..\include -IC:\Program Files (x86)\Intel\oneAPI\mkl\latest\include -IC:\Program Files (x86)\Intel\oneAPI\ippcp\latest\include -IC:\Program Files (x86)\Intel\oneAPI\ipp\latest\include -IC:\Program Files (x86)\Intel\oneAPI\dpcpp-ct\latest\env\..\include -IC:\Program Files (x86)\Intel\oneAPI\dnnl\latest\env\..\include -IC:\Program Files (x86)\Intel\oneAPI\dev-utilities\latest\include -IC:\Program Files (x86)\Intel\oneAPI\dal\latest\include\dal -IC:\Program Files (x86)\Intel\oneAPI\compiler\latest\include -IC:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include -IC:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\ATLMFC\include -IC:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\VS\include -IC:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\ucrt -IC:\Program Files (x86)\Windows Kits\10\\include\10.0.26100.0\\um -IC:\Program Files (x86)\Windows Kits\10\\include\10.0.26100.0\\shared -IC:\Program Files (x86)\Windows Kits\10\\include\10.0.26100.0\\winrt -IC:\Program Files (x86)\Windows Kits\10\\include\10.0.26100.0\\cppwinrt -IC:\Program Files (x86)\Intel\oneAPI\umf\latest\include /Tcbuild\src.win-amd64-3.10\build\src.win-amd64-3.10\shakermaker\core\fortranobject.c /Fobuild\temp.win-amd64-cpython-310\Release\build\src.win-amd64-3.10\build\src.win-amd64-3.10\shakermaker\core\fortranobject.obj -DNPY_NO_DEPRECATED_API=NPY_1_7_API_VERSION
+INFO: compiling Fortran sources
+INFO: Fortran f77 compiler: C:\msys64\mingw64\bin\gfortran.exe -Wall -g -ffixed-form -fno-second-underscore -O3 -funroll-loops
+Fortran f90 compiler: C:\msys64\mingw64\bin\gfortran.exe -Wall -g -fno-second-underscore -O3 -funroll-loops
+Fortran fix compiler: C:\msys64\mingw64\bin\gfortran.exe -Wall -g -ffixed-form -fno-second-underscore -Wall -g -fno-second-underscore -O3 -funroll-loops
+INFO: compile options: '-Ibuild\src.win-amd64-3.10\build\src.win-amd64-3.10\shakermaker\core -IC:\Users\ppala\barry_allen\lib\site-packages\numpy\core\include -Ibuild\src.win-amd64-3.10\numpy\distutils\include -IC:\Users\ppala\barry_allen\include -IC:\Users\ppala\AppData\Local\Programs\Python\Python310\include -IC:\Users\ppala\AppData\Local\Programs\Python\Python310\Include -c'
+INFO: extra f77 options: '-ffixed-line-length-132 -Wno-tabs -Wno-unused-dummy-argument -fopenmp'
+INFO: extra f77 options: '-ffixed-line-length-132 -Wno-tabs -Wno-unused-dummy-argument -fopenmp'
+INFO: gfortran.exe:f77: shakermaker/core/subgreen.f
+INFO: extra f77 options: '-ffixed-line-length-132 -Wno-tabs -Wno-unused-dummy-argument -fopenmp'
+INFO: extra f77 options: '-ffixed-line-length-132 -Wno-tabs -Wno-unused-dummy-argument -fopenmp'
+INFO: gfortran.exe:f77: shakermaker/core/subgreen2.f
+INFO: extra f77 options: '-ffixed-line-length-132 -Wno-tabs -Wno-unused-dummy-argument -fopenmp'
+INFO: gfortran.exe:f77: shakermaker/core/subfk.f
+INFO: extra f77 options: '-ffixed-line-length-132 -Wno-tabs -Wno-unused-dummy-argument -fopenmp'
+INFO: gfortran.exe:f77: shakermaker/core/subfocal.f
+INFO: gfortran.exe:f77: shakermaker/core/tau_p.f
+INFO: gfortran.exe:f77: shakermaker/core/subtrav.f
+INFO: extra f77 options: '-ffixed-line-length-132 -Wno-tabs -Wno-unused-dummy-argument -fopenmp'
+INFO: extra f77 options: '-ffixed-line-length-132 -Wno-tabs -Wno-unused-dummy-argument -fopenmp'
+INFO: gfortran.exe:f77: shakermaker/core/prop.f
+INFO: gfortran.exe:f77: shakermaker/core/kernel.f
+model.h:25:15:
+
+Warning: Unused variable 'ka' declared at (1) [-Wunused-variable]
+model.h:25:24:
+
+Warning: Unused variable 'kb' declared at (1) [-Wunused-variable]
+model.h:25:15:
+
+Warning: Unused variable 'ka' declared at (1) [-Wunused-variable]
+model.h:25:24:
+
+Warning: Unused variable 'kb' declared at (1) [-Wunused-variable]
+model.h:25:15:
+
+Warning: Unused variable 'ka' declared at (1) [-Wunused-variable]
+model.h:25:24:
+
+Warning: Unused variable 'kb' declared at (1) [-Wunused-variable]
+shakermaker/core/subtrav.f:76:13:
+
+   76 |         td = taup(pd,x)
+      |             1
+Warning: Possible change of value in conversion from COMPLEX(4) to REAL(4) at (1) [-Wconversion]
+shakermaker/core/subtrav.f:89:15:
+
+   89 |            t = taup(p,x)
+      |               1
+Warning: Possible change of value in conversion from COMPLEX(4) to REAL(4) at (1) [-Wconversion]
+shakermaker/core/subtrav.f:107:15:
+
+  107 |            t = taup(p,x)
+      |               1
+Warning: Possible change of value in conversion from COMPLEX(4) to REAL(4) at (1) [-Wconversion]
+shakermaker/core/kernel.f:101:18:
+
+  101 |          u(i,1) = dum*z(i,2)/rayl
+      |                  1
+Warning: Possible change of value in conversion from COMPLEX(8) to COMPLEX(4) at (1) [-Wconversion]
+shakermaker/core/kernel.f:102:18:
+
+  102 |          u(i,2) = dum*z(i,1)/rayl
+      |                  1
+Warning: Possible change of value in conversion from COMPLEX(8) to COMPLEX(4) at (1) [-Wconversion]
+shakermaker/core/kernel.f:103:18:
+
+  103 |          u(i,3) = dum*z(i,5)/love
+      |                  1
+Warning: Possible change of value in conversion from COMPLEX(8) to COMPLEX(4) at (1) [-Wconversion]
+shakermaker/core/tau_p.f:17:17:
+
+   17 |          dtdp0 = dtdp(x,p0)
+      |                 1
+Warning: Possible change of value in conversion from COMPLEX(4) to REAL(4) at (1) [-Wconversion]
+INFO: extra f77 options: '-ffixed-line-length-132 -Wno-tabs -Wno-unused-dummy-argument -fopenmp'
+INFO: gfortran.exe:f77: shakermaker/core/source.f
+INFO: extra f77 options: '-ffixed-line-length-132 -Wno-tabs -Wno-unused-dummy-argument -fopenmp'
+INFO: gfortran.exe:f77: shakermaker/core/bessel.f
+shakermaker/core/bessel.f:30:15:
+
+   30 |         bessj0=(r1+y*(r2+y*(r3+y*(r4+y*(r5+y*r6)))))/(s1+y*(s2+y*(s3+y*
+      |               1
+Warning: Possible change of value in conversion from REAL(8) to REAL(4) at (1) [-Wconversion]
+shakermaker/core/bessel.f:38:15:
+
+   38 |         bessj0=sqrt(.636619772/ax)*(cos(xx)*(p1+y*(p2+y*(p3+y*(p4+y*
+      |               1
+Warning: Possible change of value in conversion from REAL(8) to REAL(4) at (1) [-Wconversion]
+shakermaker/core/bessel.f:60:15:
+
+   60 |         bessj1=x*(r1+y*(r2+y*(r3+y*(r4+y*(r5+y*r6)))))/(s1+y*(s2+y*(s3+
+      |               1
+Warning: Possible change of value in conversion from REAL(8) to REAL(4) at (1) [-Wconversion]
+shakermaker/core/bessel.f:68:15:
+
+   68 |         bessj1=sqrt(.636619772/ax)*(cos(xx)*(p1+y*(p2+y*(p3+y*(p4+y*
+      |               1
+Warning: Possible change of value in conversion from REAL(8) to REAL(4) at (1) [-Wconversion]
+INFO: extra f77 options: '-ffixed-line-length-132 -Wno-tabs -Wno-unused-dummy-argument -fopenmp'
+INFO: gfortran.exe:f77: shakermaker/core/haskell.f
+INFO: extra f77 options: '-ffixed-line-length-132 -Wno-tabs -Wno-unused-dummy-argument -fopenmp'
+INFO: gfortran.exe:f77: build\src.win-amd64-3.10\shakermaker\core\core-f2pywrappers.f
+INFO: C:\msys64\mingw64\bin\gfortran.exe -Wall -g -Wall -g -shared C:\shakermaker_compiler\ShakerMaker\build\temp.win-amd64-cpython-310\Release\shakermaker\core\subgreen.o C:\shakermaker_compiler\ShakerMaker\build\temp.win-amd64-cpython-310\Release\shakermaker\core\subgreen2.o C:\shakermaker_compiler\ShakerMaker\build\temp.win-amd64-cpython-310\Release\shakermaker\core\subfocal.o C:\shakermaker_compiler\ShakerMaker\build\temp.win-amd64-cpython-310\Release\shakermaker\core\subfk.o C:\shakermaker_compiler\ShakerMaker\build\temp.win-amd64-cpython-310\Release\shakermaker\core\subtrav.o C:\shakermaker_compiler\ShakerMaker\build\temp.win-amd64-cpython-310\Release\shakermaker\core\tau_p.o C:\shakermaker_compiler\ShakerMaker\build\temp.win-amd64-cpython-310\Release\shakermaker\core\kernel.o C:\shakermaker_compiler\ShakerMaker\build\temp.win-amd64-cpython-310\Release\shakermaker\core\prop.o C:\shakermaker_compiler\ShakerMaker\build\temp.win-amd64-cpython-310\Release\shakermaker\core\source.o C:\shakermaker_compiler\ShakerMaker\build\temp.win-amd64-cpython-310\Release\shakermaker\core\bessel.o C:\shakermaker_compiler\ShakerMaker\build\temp.win-amd64-cpython-310\Release\shakermaker\core\haskell.o C:\shakermaker_compiler\ShakerMaker\build\temp.win-amd64-cpython-310\Release\build\src.win-amd64-3.10\shakermaker\core\core-f2pywrappers.o -LC:\msys64\mingw64\lib -LC:\msys64\mingw64\lib\gcc\x86_64-w64-mingw32\15.2.0 -LC:\msys64\mingw64\lib -LC:\Users\ppala\barry_allen\libs -LC:\Users\ppala\AppData\Local\Programs\Python\Python310\libs -LC:\Users\ppala\AppData\Local\Programs\Python\Python310 -LC:\Users\ppala\barry_allen\PCbuild\amd64 -o build\temp.win-amd64-cpython-310\Release\.libs\libsubgreen.7W4HNM6B5ESRAOL5XSEUQUMO3PDSJEGH.gfortran-win_amd64.dll -Wl,--allow-multiple-definition -Wl,--output-def,build\temp.win-amd64-cpython-310\Release\libsubgreen.7W4HNM6B5ESRAOL5XSEUQUMO3PDSJEGH.gfortran-win_amd64.def -Wl,--export-all-symbols -Wl,--enable-auto-import -static -mlong-double-64
+C:/msys64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/15.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: C:\shakermaker_compiler\ShakerMaker\build\temp.win-amd64-cpython-310\Release\shakermaker\core\subfk.o: in function `subfk_._omp_fn.1':
+C:\shakermaker_compiler\ShakerMaker/shakermaker/core/subfk.f:156:(.text+0x6c): undefined reference to `omp_get_num_threads'
+C:/msys64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/15.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: C:\shakermaker_compiler\ShakerMaker/shakermaker/core/subfk.f:156:(.text+0x79): undefined reference to `omp_get_thread_num'
+C:/msys64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/15.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: C:\shakermaker_compiler\ShakerMaker/shakermaker/core/subfk.f:170:(.text+0x428): undefined reference to `fftr_'
+C:/msys64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/15.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: C:\shakermaker_compiler\ShakerMaker\build\temp.win-amd64-cpython-310\Release\shakermaker\core\subfk.o: in function `subfk_._omp_fn.0':
+C:\shakermaker_compiler\ShakerMaker/shakermaker/core/subfk.f:87:(.text+0x76f): undefined reference to `GOMP_loop_nonmonotonic_dynamic_start'
+C:/msys64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/15.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: C:\shakermaker_compiler\ShakerMaker/shakermaker/core/subfk.f:131:(.text+0x2f53): undefined reference to `GOMP_loop_nonmonotonic_dynamic_next'
+C:/msys64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/15.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: C:\shakermaker_compiler\ShakerMaker/shakermaker/core/subfk.f:131:(.text+0x2f60): undefined reference to `GOMP_loop_end_nowait'
+C:/msys64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/15.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: C:\shakermaker_compiler\ShakerMaker\build\temp.win-amd64-cpython-310\Release\shakermaker\core\subfk.o: in function `subfk_':
+C:\shakermaker_compiler\ShakerMaker/shakermaker/core/subfk.f:87:(.text+0x3a99): undefined reference to `GOMP_parallel'
+C:/msys64/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/15.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: C:\shakermaker_compiler\ShakerMaker/shakermaker/core/subfk.f:156:(.text+0x3b99): undefined reference to `GOMP_parallel'
+collect2.exe: error: ld returned 1 exit status
+error: Command "C:\msys64\mingw64\bin\gfortran.exe -Wall -g -Wall -g -shared C:\shakermaker_compiler\ShakerMaker\build\temp.win-amd64-cpython-310\Release\shakermaker\core\subgreen.o C:\shakermaker_compiler\ShakerMaker\build\temp.win-amd64-cpython-310\Release\shakermaker\core\subgreen2.o C:\shakermaker_compiler\ShakerMaker\build\temp.win-amd64-cpython-310\Release\shakermaker\core\subfocal.o C:\shakermaker_compiler\ShakerMaker\build\temp.win-amd64-cpython-310\Release\shakermaker\core\subfk.o C:\shakermaker_compiler\ShakerMaker\build\temp.win-amd64-cpython-310\Release\shakermaker\core\subtrav.o C:\shakermaker_compiler\ShakerMaker\build\temp.win-amd64-cpython-310\Release\shakermaker\core\tau_p.o C:\shakermaker_compiler\ShakerMaker\build\temp.win-amd64-cpython-310\Release\shakermaker\core\kernel.o C:\shakermaker_compiler\ShakerMaker\build\temp.win-amd64-cpython-310\Release\shakermaker\core\prop.o C:\shakermaker_compiler\ShakerMaker\build\temp.win-amd64-cpython-310\Release\shakermaker\core\source.o C:\shakermaker_compiler\ShakerMaker\build\temp.win-amd64-cpython-310\Release\shakermaker\core\bessel.o C:\shakermaker_compiler\ShakerMaker\build\temp.win-amd64-cpython-310\Release\shakermaker\core\haskell.o C:\shakermaker_compiler\ShakerMaker\build\temp.win-amd64-cpython-310\Release\build\src.win-amd64-3.10\shakermaker\core\core-f2pywrappers.o -LC:\msys64\mingw64\lib -LC:\msys64\mingw64\lib\gcc\x86_64-w64-mingw32\15.2.0 -LC:\msys64\mingw64\lib -LC:\Users\ppala\barry_allen\libs -LC:\Users\ppala\AppData\Local\Programs\Python\Python310\libs -LC:\Users\ppala\AppData\Local\Programs\Python\Python310 -LC:\Users\ppala\barry_allen\PCbuild\amd64 -o build\temp.win-amd64-cpython-310\Release\.libs\libsubgreen.7W4HNM6B5ESRAOL5XSEUQUMO3PDSJEGH.gfortran-win_amd64.dll -Wl,--allow-multiple-definition -Wl,--output-def,build\temp.win-amd64-cpython-310\Release\libsubgreen.7W4HNM6B5ESRAOL5XSEUQUMO3PDSJEGH.gfortran-win_amd64.def -Wl,--export-all-symbols -Wl,--enable-auto-import -static -mlong-double-64" failed with exit status 1
+INFO: 
+########### EXT COMPILER OPTIMIZATION ###########
+INFO: Platform      : 
+  Architecture: x64
+  Compiler    : msvc
+
+CPU baseline  : 
+  Requested   : 'min'
+  Enabled     : SSE SSE2 SSE3
+  Flags       : none
+  Extra checks: none
+
+CPU dispatch  : 
+  Requested   : 'max -xop -fma4'
+  Enabled     : SSSE3 SSE41 POPCNT SSE42 AVX F16C FMA3 AVX2
+  Generated   : none
+INFO: CCompilerOpt.cache_flush[864] : write cache to path -> C:\shakermaker_compiler\ShakerMaker\build\temp.win-amd64-cpython-310\Release\ccompiler_opt_cache_ext.py

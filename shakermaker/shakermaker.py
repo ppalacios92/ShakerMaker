@@ -82,7 +82,8 @@ try:
     comm   = MPI.COMM_WORLD
     rank   = comm.Get_rank()
     nprocs = comm.Get_size()
-except ImportError:
+# except ImportError:
+except (ImportError, RuntimeError):
     use_mpi = False
     rank   = 0
     nprocs = 1
@@ -223,7 +224,7 @@ class ShakerMaker:
         :param writer_mode: 'progressive' or 'legacy'
         :type writer_mode: str
         """
-        title = f"🎉 ¡LARGA VIDA AL LADRUNO_OP_kdTREE_pointCloud! 🎉 ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+        title = f"¡LARGA VIDA AL LADRUNO_windows1! ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
         
         if rank == 0:
             print(f"\n\n{title}")
@@ -563,7 +564,7 @@ class ShakerMaker:
         nstations = self._receivers.nstations
         N         = nstations * nsources          # total pairs
 
-        title = (f"🎉 ¡LARGA VIDA AL LADRUNO_OP_kdTREE_pointCloud! 🎉 ShakerMaker Gen GF database pairs begin. "
+        title = (f"¡LARGA VIDA AL LADRUNO_windows1! ShakerMaker Gen GF database pairs begin. "
                  f"{delta_h=} {delta_v_rec=} {delta_v_src=}")
         if rank == 0:
             print(f"\n\n{title}")
@@ -722,7 +723,7 @@ class ShakerMaker:
             # ----------------------------------------------------------
             # Step 5: write HDF5 database
             # ----------------------------------------------------------
-            with h5py.File(h5_database_name, 'w') as hf:
+            with h5py.File(h5_database_name, 'w', locking=False) as hf:
                 hf.create_dataset("pairs_to_compute", data=pairs_to_compute)
                 hf.create_dataset("dh_of_pairs",      data=dh_of_pairs)
                 hf.create_dataset("dv_of_pairs",      data=dv_of_pairs)
@@ -806,7 +807,7 @@ class ShakerMaker:
         :param showProgress: Print ETA on rank 0.
         :type showProgress: bool
         """
-        title = (f"🎉 ¡LARGA VIDA AL LADRUNO_OP_kdTREE_pointCloud! 🎉 ShakerMaker Gen Green's functions database begin. "
+        title = (f"¡LARGA VIDA AL LADRUNO_windows1! ShakerMaker Gen Green's functions database begin. "
                  f"{dt=} {nfft=} {dk=} {tb=}")
 
         if rank == 0:
@@ -815,9 +816,9 @@ class ShakerMaker:
             print(f"  MPI processes  : {nprocs}")
             print(f"  OpenMP threads : {os.environ.get('OMP_NUM_THREADS','not set')}")
             print(f"  Loading database: {h5_database_name}")
-            hfile = h5py.File(h5_database_name, 'r+')
+            hfile = h5py.File(h5_database_name, 'r+', locking=False)
         else:
-            hfile = h5py.File(h5_database_name, 'r')
+            hfile = h5py.File(h5_database_name, 'r', locking=False)
 
         pairs_to_compute = hfile["/pairs_to_compute"][:]
         npairs = len(pairs_to_compute)
@@ -981,7 +982,7 @@ class ShakerMaker:
         :type tmax: double
         (remaining parameters identical to :meth:`run`)
         """
-        title = (f"🎉 ¡LARGA VIDA AL LADRUNO_OP_kdTREE_pointCloud! 🎉 ShakerMaker Run (Stage 2 - OP) begin. "
+        title = (f"¡LARGA VIDA AL LADRUNO_windows1! ShakerMaker Run (Stage 2 - OP) begin. "
                  f"{dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}")
 
         if rank == 0:
@@ -990,9 +991,9 @@ class ShakerMaker:
             print(f"  MPI processes  : {nprocs}")
             print(f"  OpenMP threads : {os.environ.get('OMP_NUM_THREADS','not set')}")
             print(f"  Loading database: {h5_database_name}")
-            hfile = h5py.File(h5_database_name, 'r+')
+            hfile = h5py.File(h5_database_name, 'r+', locking=False)
         else:
-            hfile = h5py.File(h5_database_name, 'r')
+            hfile = h5py.File(h5_database_name, 'r', locking=False)
 
         # O(1) lookup array
         pair_to_slot = hfile["/pair_to_slot"][:]
@@ -1282,7 +1283,7 @@ class ShakerMaker:
         perf_time_begin = perf_counter()
 
         if rank == 0:
-            title = (f"🎉 ¡LARGA VIDA AL LADRUNO_OP_kdTREE_pointCloud! 🎉 ShakerMaker run_fast_faster_op | stage={stage} | "
+            title = (f"¡LARGA VIDA AL LADRUNO_windows1! ShakerMaker run_fast_faster_op | stage={stage} | "
                      f"{dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}")
             print(f"\n\n{title}")
             print("-" * len(title))
@@ -1415,7 +1416,7 @@ class ShakerMaker:
         # Step 1: rank 0 reads slot geometry + tolerances, broadcasts to all
         # ------------------------------------------------------------------
         if rank == 0:
-            with h5py.File(h5_database_name, 'r') as hf:
+            with h5py.File(h5_database_name, 'r', locking=False) as hf:
                 dh_of_pairs   = hf["/dh_of_pairs"][:]
                 zrec_of_pairs = hf["/zrec_of_pairs"][:]
                 zsrc_of_pairs = hf["/zsrc_of_pairs"][:]
@@ -1438,7 +1439,7 @@ class ShakerMaker:
         npairs_total = nstations * nsources
 
         if rank == 0:
-            title = (f"🎉 ¡LARGA VIDA AL LADRUNO_OP_kdTREE_pointCloud! 🎉 ShakerMaker build_pair_to_slot_from_legacy_h5 -- "
+            title = (f"¡LARGA VIDA AL LADRUNO_windows1! ShakerMaker build_pair_to_slot_from_legacy_h5 -- "
                      f"{h5_database_name}")
             print(f"\n\n{title}")
             print("-" * len(title))
@@ -1558,7 +1559,7 @@ class ShakerMaker:
                 print(f"  WARNING: {n_oob} pairs had no match. "
                       "Verify model consistency.")
 
-            with h5py.File(h5_database_name, 'r+') as hf:
+            with h5py.File(h5_database_name, 'r+', locking=False) as hf:
                 for key in ('pair_to_slot', 'nstations', 'nsources'):
                     if key in hf:
                         del hf[key]
@@ -1613,7 +1614,7 @@ class ShakerMaker:
         print(f"  Receiver type: {type(self._receivers).__name__}")
         print(f"  Stations (excl. QA): {nstations}")
 
-        with h5py.File(filename, 'w') as hf:
+        with h5py.File(filename, 'w', locking=False) as hf:
             grp_data = hf.create_group('DRM_Data')
             grp_qa   = hf.create_group('DRM_QA_Data')
             grp_meta = hf.create_group('DRM_Metadata')

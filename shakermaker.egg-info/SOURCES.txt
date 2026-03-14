@@ -15,10 +15,6 @@ shakermaker.egg-info/PKG-INFO
 shakermaker.egg-info/SOURCES.txt
 shakermaker.egg-info/dependency_links.txt
 shakermaker.egg-info/top_level.txt
-shakermaker/cm_library/AbellThesis.py
-shakermaker/cm_library/LOH.py
-shakermaker/cm_library/SOCal_LF.py
-shakermaker/cm_library/__init__.py
 shakermaker/core/Complex.c
 shakermaker/core/Complex.h
 shakermaker/core/aseries.h
@@ -38,12 +34,15 @@ shakermaker/core/subgreen.f
 shakermaker/core/subgreen2.f
 shakermaker/core/subtrav.f
 shakermaker/core/tau_p.f
+shakermaker/cm_library/AbellThesis.py
+shakermaker/cm_library/LOH.py
+shakermaker/cm_library/SOCal_LF.py
+shakermaker/cm_library/__init__.py
 shakermaker/ffsp/Makefile_f2py
 shakermaker/ffsp/__init__.py
 shakermaker/ffsp/dcf_subs_1.f90
 shakermaker/ffsp/ffsp.pyf
 shakermaker/ffsp/ffsp_comm.f90
-shakermaker/ffsp/ffsp_core.cpython-310-x86_64-linux-gnu.so
 shakermaker/ffsp/ffsp_dcf_v2.f90
 shakermaker/ffsp/ffsp_tool.f
 shakermaker/ffsp/ffsp_wrapper.f90

@@ -517,7 +517,7 @@ class FFSPSource:
             grp_crust.create_dataset('qa', data=self.crust_model.qa)
             grp_crust.create_dataset('qb', data=self.crust_model.qb)
         
-        print(f"✓ HDF5 saved\n")
+        print(f"[OK] HDF5 saved\n")
     
     def load_hdf5(self, filename: str):
         """
@@ -629,7 +629,7 @@ class FFSPSource:
                 print(f"Best realization activated\n")
 
         
-        print(f"✓ HDF5 loaded\n")
+        print(f"[OK] HDF5 loaded\n")
     
     @classmethod
     def from_hdf5(cls, filename: str):
@@ -960,7 +960,7 @@ class FFSPSource:
                         f.write(f"{octave['logmean_synth'][i]:15.6e} ")
                         f.write(f"{octave['logmean_dcf'][i]:15.6e}\n")
             
-            print(f"✓ FFSP saved\n")
+            print(f"[OK] FFSP saved\n")
 
 
 
@@ -1205,9 +1205,9 @@ class FFSPSource:
             rank = 0
 
         if self.verbose and rank == 0:
-            print(f"✓ FFSP loaded")
+            print(f"[OK] FFSP loaded")
             print(f"Best realization activated\n")
-        print(f"✓ FFSP loaded\n")
+        print(f"[OK] FFSP loaded\n")
 
 
     @classmethod
@@ -1740,7 +1740,7 @@ class FFSPSource:
         self.subfaults = self.best_realization
         self.active_realization = 'best'
         
-        print(f"✓ Legacy FFSP loaded\n")
+        print(f"[OK] Legacy FFSP loaded\n")
     
 
     # ============ PLOTTING METHODS ============
