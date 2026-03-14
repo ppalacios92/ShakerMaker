@@ -7,11 +7,8 @@ build/
 dist/
 *.egg-info/
 
-# Compiled extensions - Linux
+# Compiled extensions
 *.so
-*.cpython-*.so
-
-# Compiled extensions - Windows  
 *.pyd
 *.dll
 
@@ -27,6 +24,3 @@ __pycache__/
 # IDE
 .idea/
 .vscode/
-
-# Temporary
-*.egg
