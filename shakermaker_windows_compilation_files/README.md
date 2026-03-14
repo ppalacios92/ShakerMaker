@@ -70,10 +70,10 @@ PYTHON_DEPS = numpy==1.26.4 setuptools wheel h5py mpi4py matplotlib scipy
 
 ### Step 0.1 — Unblock the scripts
 
-Windows blocks scripts downloaded from the internet. Before running anything, open PowerShell and unblock all files in the SCRIPTS folder:
+Windows blocks scripts downloaded from the internet. Before running anything, open PowerShell, navigate to the `shakermaker_windows_compilation_files` folder and unblock all files in the SCRIPTS folder:
 
 ```powershell
-Get-ChildItem "C:\path\to\SCRIPTS" | Unblock-File
+Get-ChildItem SCRIPTS | Unblock-File
 ```
 
 You must do this every time you download or update the scripts from GitHub or Dropbox.
