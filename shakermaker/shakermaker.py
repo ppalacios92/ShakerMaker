@@ -3,7 +3,7 @@ shakermaker.py  --  ShakerMaker simulation engine, OP architecture.
 
 Three-stage pipeline with O(1) Green's Function lookup via pair_to_slot:
 
-  Stage 0  gen_pairs_op
+  Stage 0  gen_pairs
       Identifies unique geometries (dh, z_src, z_rec) across all
       (station, source) pairs and builds the flat mapping
           pair_to_slot[i_station * nsources + i_psource] = k
@@ -16,18 +16,18 @@ Three-stage pipeline with O(1) Green's Function lookup via pair_to_slot:
       rank runs a tiny 1-D greedy, results are merged and pairs are
       assigned via KDTree lookup.
 
-  Stage 1  compute_gf_op
+  Stage 1  compute_gf
       Computes the FK kernel (tdata) for each unique slot k.
       MPI parallel: workers compute, rank 0 collects and writes to HDF5.
 
-  Stage 2  run_op
+  Stage 2  run_fast
       For every (station, source) pair, retrieves tdata via O(1) lookup,
       calls _call_core_fast, convolves with the source time function, and
       accumulates the station response.
       MPI parallel: stations distributed across ranks.
 
 Orchestrator:
-  run_fast_faster_op(stage=0|1|2|'all')
+  run_nearest(stage=0|1|2|'all')
 
 Debug / validation (no database):
   run()
@@ -39,7 +39,7 @@ Legacy HDF5 migration (JAA / PXP databases already containing tdata_dict):
   build_pair_to_slot_from_legacy_h5()
       Reads the existing geometry arrays (dh_of_pairs, zrec_of_pairs,
       zsrc_of_pairs) from a JAA/PXP HDF5 file and writes the three
-      datasets needed by run_op:
+      datasets needed by run_fast:
           /pair_to_slot   (nstations * nsources,)  int32
           /nstations      scalar
           /nsources       scalar
@@ -375,10 +375,10 @@ class ShakerMaker:
         _print_perf_stats(c, perf_time_total)
 
     # =========================================================================
-    # Stage 0  --  gen_pairs_op
+    # Stage 0  --  gen_pairs
     # =========================================================================
 
-    def gen_pairs_op(self,
+    def gen_pairs(self,
                      h5_database_name,
                      delta_h=0.04,
                      delta_v_rec=0.002,
@@ -744,10 +744,10 @@ class ShakerMaker:
             comm.Barrier()
 
     # =========================================================================
-    # Stage 1  --  compute_gf_op
+    # Stage 1  --  compute_gf
     # =========================================================================
 
-    def compute_gf_op(self,
+    def compute_gf(self,
                       h5_database_name,
                       dt=0.05,
                       nfft=4096,
@@ -840,7 +840,7 @@ class ShakerMaker:
             printMPI = lambda *args: None
 
         self._logger.info(
-            'ShakerMaker.compute_gf_op - starting\n'
+            'ShakerMaker.compute_gf - starting\n'
             '\tNumber of sources: {}\n\tNumber of receivers: {}\n'
             '\tTotal src-rcv pairs: {}\n\tdt: {}\n\tnfft: {}'
             .format(self._source.nsources, self._receivers.nstations,
@@ -932,10 +932,10 @@ class ShakerMaker:
             comm.Barrier()
 
     # =========================================================================
-    # Stage 2  --  run_op
+    # Stage 2  --  run_fast
     # =========================================================================
 
-    def run_op(self,
+    def run_fast(self,
                h5_database_name,
                dt=0.05,
                nfft=4096,
@@ -1032,7 +1032,7 @@ class ShakerMaker:
             printMPI = lambda *args: None
 
         self._logger.info(
-            'ShakerMaker.run_op - starting\n'
+            'ShakerMaker.run_fast - starting\n'
             '\tNumber of sources: {}\n\tNumber of receivers: {}\n'
             '\tTotal src-rcv pairs: {}\n\tdt: {}\n\tnfft: {}'
             .format(self._source.nsources, self._receivers.nstations,
@@ -1180,10 +1180,10 @@ class ShakerMaker:
         _print_perf_stats(c, perf_time_total)
 
     # =========================================================================
-    # Orchestrator  --  run_fast_faster_op
+    # Orchestrator  --  run_nearest
     # =========================================================================
 
-    def run_fast_faster_op(self,
+    def run_nearest(self,
                            stage='all',
                            h5_database_name=None,
                            # Stage 0
@@ -1277,14 +1277,14 @@ class ShakerMaker:
         :type showProgress: bool
         """
         assert h5_database_name is not None, \
-            "run_fast_faster_op: h5_database_name is required"
+            "run_nearest: h5_database_name is required"
         assert stage in (0, 1, 2, 'all'), \
-            "run_fast_faster_op: stage must be 0, 1, 2, or 'all'"
+            "run_nearest: stage must be 0, 1, 2, or 'all'"
 
         perf_time_begin = perf_counter()
 
         if rank == 0:
-            title = (f"¡LARGA VIDA AL LADRUNO_windows1! ShakerMaker run_fast_faster_op | stage={stage} | "
+            title = (f"¡LARGA VIDA AL LADRUNO_windows1! ShakerMaker run_nearest | stage={stage} | "
                      f"{dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}")
             print(f"\n\n{title}")
             print("-" * len(title))
@@ -1302,7 +1302,7 @@ class ShakerMaker:
             print("-" * len(title))
 
         if stage in (0, 'all'):
-            self.gen_pairs_op(
+            self.gen_pairs(
                 h5_database_name=h5_database_name,
                 delta_h=delta_h, delta_v_rec=delta_v_rec,
                 delta_v_src=delta_v_src, npairs_max=npairs_max,
@@ -1313,7 +1313,7 @@ class ShakerMaker:
                 return
 
         if stage in (1, 'all'):
-            self.compute_gf_op(
+            self.compute_gf(
                 h5_database_name=h5_database_name,
                 dt=dt, nfft=nfft, tb=tb, smth=smth,
                 sigma=sigma, taper=taper, wc1=wc1, wc2=wc2,
@@ -1329,7 +1329,7 @@ class ShakerMaker:
             if writer is None and rank == 0:
                 print("WARNING: Stage 2 requires a writer. Aborting.")
                 return
-            self.run_op(
+            self.run_fast(
                 h5_database_name=h5_database_name,
                 dt=dt, nfft=nfft, tb=tb, smth=smth,
                 sigma=sigma, taper=taper, wc1=wc1, wc2=wc2,
@@ -1371,8 +1371,8 @@ class ShakerMaker:
         - ``/nstations``     scalar
         - ``/nsources``      scalar
 
-        After this call the database is fully compatible with :meth:`run_op`
-        and :meth:`run_fast_faster_op` (stage=2), reusing all previously
+        After this call the database is fully compatible with :meth:`run_fast`
+        and :meth:`run_nearest` (stage=2), reusing all previously
         computed Green's Functions without any recomputation.
 
         **Algorithm** (MPI + KDTree):
@@ -1570,7 +1570,7 @@ class ShakerMaker:
 
             print(f"pair_to_slot, nstations, nsources written to: "
                   f"{h5_database_name}")
-            print("Database is now compatible with run_op (Stage 2).")
+            print("Database is now compatible with run_fast (Stage 2).")
 
         if use_mpi and nprocs > 1:
             comm.Barrier()
@@ -1674,7 +1674,7 @@ class ShakerMaker:
                    verbose=False):
         """Call core.subgreen to compute the full FK kernel (tdata).
 
-        Used by: run(), compute_gf_op() (Stage 1).
+        Used by: run(), compute_gf() (Stage 1).
 
         Returns tdata with Fortran layout (1, 9, nt), plus component
         seismograms z, e, n and time offset t0.
@@ -1737,7 +1737,7 @@ class ShakerMaker:
                         verbose=False):
         """Call core.subgreen2, reusing a precomputed tdata kernel.
 
-        Used by: run_op() (Stage 2).
+        Used by: run_fast() (Stage 2).
 
         ``tdata`` must be in C-order with shape (nt, 9) as stored in the HDF5
         database. It is reshaped to (1, 9, nt) before being passed to the
