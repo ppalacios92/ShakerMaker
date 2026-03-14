@@ -7,13 +7,14 @@ This repository contains the automated scripts to compile and install **ShakerMa
 ## Repository Structure
 
 ```
-SCRIPTS/
-├── shakermaker.cfg               ← Central configuration file (edit this first)
-├── 00_shakermaker_common.ps1     ← Shared functions used by all scripts (do not edit)
-├── 01_shakermaker_setup.ps1      ← Step 1: Install prerequisites and create virtual environment
-├── 02_shakermaker_junction.ps1   ← Step 2: Create junction to the ShakerMaker repository
-├── 03_shakermaker_build.ps1      ← Step 3: Compile ShakerMaker and configure DLL loading
-└── RUN_ME.bat                    ← Main launcher with interactive menu
+shakermaker_windows_compilation_files/
+└── SCRIPTS/
+    ├── shakermaker.cfg               ← Central configuration file (edit this first)
+    ├── 00_shakermaker_common.ps1     ← Shared functions used by all scripts (do not edit)
+    ├── 01_shakermaker_setup.ps1      ← Step 1: Install prerequisites and create virtual environment
+    ├── 02_shakermaker_junction.ps1   ← Step 2: Create junction to the ShakerMaker repository
+    ├── 03_shakermaker_build.ps1      ← Step 3: Compile ShakerMaker and configure DLL loading
+    └── RUN_ME.bat                    ← Main launcher with interactive menu
 ```
 
 ---
