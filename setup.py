@@ -13,7 +13,7 @@ import subprocess
 on_rtd = os.environ.get('READTHEDOCS') == 'True'
 
 name = "shakermaker"
-version = "2.0"
+version = "1.0"
 release = "0.01"
 author = "Jose A. Abell, Jorge Crempien D., and Matias Recabarren"
 
@@ -152,7 +152,7 @@ def _compile_ffsp_windows(ffsp_dir):
     for f in glob.glob(os.path.join(ffsp_dir, "*.f90")) + glob.glob(os.path.join(ffsp_dir, "*.f")):
         print(f"[ffsp] source: {f}")
 
-
+        
 def _install_ffsp_binary(ffsp_dir):
     """Copy compiled .pyd/.so into site-packages after install creates the destination folder."""
     import site
