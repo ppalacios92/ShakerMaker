@@ -5,7 +5,7 @@ cls
 :MENU
 echo.
 echo  +==========================================================+
-echo  ^|         ShakerMaker - Windows Setup Menu                ^|
+echo  ^| LARGA VIDA AL LADRUNO ShakerMaker - Windows Setup Menu  ^|
 echo  +==========================================================+
 echo  ^|                                                          ^|
 echo  ^|   [1]  Step 1 - Install Prerequisites                   ^|
@@ -40,21 +40,21 @@ goto MENU
 echo.
 echo  Launching Step 1 - Prerequisites Setup...
 echo.
-PowerShell -ExecutionPolicy Bypass -File "%~dp0shakermaker_setup.ps1"
+PowerShell -ExecutionPolicy Bypass -File "%~dp001_shakermaker_setup.ps1"
 goto MENU
 
 :STEP2
 echo.
 echo  Launching Step 2 - Junction Setup...
 echo.
-PowerShell -ExecutionPolicy Bypass -File "%~dp0shakermaker_junction.ps1"
+PowerShell -ExecutionPolicy Bypass -File "%~dp002_shakermaker_junction.ps1"
 goto MENU
 
 :STEP3
 echo.
 echo  Launching Step 3 - Build and Compile...
 echo.
-PowerShell -ExecutionPolicy Bypass -File "%~dp0shakermaker_build.ps1"
+PowerShell -ExecutionPolicy Bypass -File "%~dp003_shakermaker_build.ps1"
 goto MENU
 
 :RUNALL
@@ -62,13 +62,13 @@ echo.
 echo  Running all steps in order...
 echo.
 echo  --- Step 1 ---
-PowerShell -ExecutionPolicy Bypass -File "%~dp0shakermaker_setup.ps1"
+PowerShell -ExecutionPolicy Bypass -File "%~dp001_shakermaker_setup.ps1"
 echo  --- Step 2 ---
-PowerShell -ExecutionPolicy Bypass -File "%~dp0shakermaker_junction.ps1"
+PowerShell -ExecutionPolicy Bypass -File "%~dp002_shakermaker_junction.ps1"
 echo  --- Step 3 ---
-PowerShell -ExecutionPolicy Bypass -File "%~dp0shakermaker_build.ps1"
+PowerShell -ExecutionPolicy Bypass -File "%~dp003_shakermaker_build.ps1"
 echo.
-echo  All steps complete.
+echo  All steps complete. LARGA VIDA AL LADRUNO
 pause
 goto MENU
 

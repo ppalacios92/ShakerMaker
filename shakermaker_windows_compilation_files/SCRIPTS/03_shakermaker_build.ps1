@@ -46,6 +46,7 @@ Write-Host "  |      Python $PYTHON_FULL_VERSION  |  Venv: $VENV_NAME" -Foregrou
 Write-Host "  +---------------------------------------------------------+" -ForegroundColor Cyan
 Write-Host ""
 Log "Build started - user: $env:USERNAME - Python: $PYTHON_FULL_VERSION"
+Start-Transcript -Path "$PSScriptRoot\shakermaker.log" -Append -Force | Out-Null
 
 # ==============================================================================
 Print-Header "STEP 1 - Pre-Build Checks"
@@ -168,10 +169,10 @@ set PATH=%PATH%;C:\Program Files (x86)\Intel\oneAPI\compiler\latest\bin
 
 echo  Running build...
 cd /d "$JUNCTION_PATH"
-python setup.py install
+python setup.py install 2>&1
 if errorlevel 1 (
-    echo  [!!] Build failed
-    exit /b 1
+    echo  [!!] Build failed - will retry once using cache
+    exit /b 2
 )
 
 echo  [OK] Build completed successfully
@@ -181,13 +182,30 @@ exit /b 0
 $cmdContent | Set-Content $buildCmdScript -Encoding ASCII
 Log "CMD build script written to $buildCmdScript"
 
-# Run the CMD script and stream output
+# Run the CMD script
 $process = Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$buildCmdScript`"" `
     -NoNewWindow -Wait -PassThru
 
 if ($process.ExitCode -eq 0) {
     Print-OK "Build completed successfully"
     Log "[OK] Build subprocess exited 0"
+} elseif ($process.ExitCode -eq 2) {
+    Print-INFO "First attempt failed - this is normal on long venv names (WinError 206)"
+    Print-INFO "Retrying build using compilation cache..."
+    Log "[--] First build attempt failed - retrying with cache"
+
+    $process2 = Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$buildCmdScript`"" `
+        -NoNewWindow -Wait -PassThru
+
+    if ($process2.ExitCode -eq 0) {
+        Print-OK "Build completed successfully on second attempt"
+        Log "[OK] Build succeeded on retry"
+    } else {
+        Print-FAIL "Build failed on retry (exit code $($process2.ExitCode))"
+        Log "[!!] Build failed on retry"
+        Read-Host "  Press Enter to exit"
+        exit 1
+    }
 } else {
     Print-FAIL "Build failed (exit code $($process.ExitCode))"
     Log "[!!] Build subprocess exited $($process.ExitCode)"
@@ -216,13 +234,24 @@ os.add_dll_directory(r"$INTEL_MPI")
 "@
 
 # Find Python base site-packages
-$pythonBase = & "$VENV_PATH\Scripts\python.exe" -c "import sys; print([p for p in sys.path if 'AppData' in p and 'site-packages' in p][0])" 2>&1
-if (-not $pythonBase -or $pythonBase -notmatch "site-packages") {
-    $pythonBase = & "$VENV_PATH\Scripts\python.exe" -c "import sysconfig; print(sysconfig.get_path('purelib', 'nt'))" 2>&1
+$pythonExeBase = & "$VENV_PATH\Scripts\python.exe" -c "import sys; print(sys._base_executable)" 2>&1
+$pythonBaseLib = Split-Path $pythonExeBase
+$siteCustomizeBase = "$pythonBaseLib\Lib\site-packages\sitecustomize.py"
+$siteCustomizeVenv = "$SITE_PKG\sitecustomize.py"
+
+# Remove any stale sitecustomize.py before writing new ones
+if (Test-Path $siteCustomizeVenv) {
+    Remove-Item $siteCustomizeVenv -Force
+    Print-INFO "Removed stale sitecustomize.py from venv"
+    Log "[--] Removed stale $siteCustomizeVenv"
+}
+if (Test-Path $siteCustomizeBase) {
+    Remove-Item $siteCustomizeBase -Force
+    Print-INFO "Removed stale sitecustomize.py from Python base"
+    Log "[--] Removed stale $siteCustomizeBase"
 }
 
 # Write to venv site-packages
-$siteCustomizeVenv = "$SITE_PKG\sitecustomize.py"
 try {
     [System.IO.File]::WriteAllText($siteCustomizeVenv, $siteContent)
     Print-OK "sitecustomize.py created in venv: $siteCustomizeVenv"
@@ -233,13 +262,6 @@ try {
 }
 
 # Write to Python base site-packages
-$pythonExeBase = (Get-Command python -ErrorAction SilentlyContinue).Source
-if (-not $pythonExeBase) {
-    $pythonExeBase = & "$VENV_PATH\Scripts\python.exe" -c "import sys; print(sys._base_executable)" 2>&1
-}
-$pythonBaseLib = Split-Path $pythonExeBase
-$siteCustomizeBase = "$pythonBaseLib\Lib\site-packages\sitecustomize.py"
-
 try {
     [System.IO.File]::WriteAllText($siteCustomizeBase, $siteContent)
     Print-OK "sitecustomize.py created in Python base: $siteCustomizeBase"
@@ -309,13 +331,10 @@ Write-Host "  Venv    : $VENV_PATH" -ForegroundColor White
 Write-Host "  Build   : $JUNCTION_PATH" -ForegroundColor White
 Write-Host "  Log     : $LOG_FILE" -ForegroundColor White
 Write-Host ""
-Write-Host "  IMPORTANT: Always activate from CMD, never from PowerShell." -ForegroundColor Red
-Write-Host ""
-Write-Host "  Open a fresh CMD window and run:" -ForegroundColor White
-Write-Host "  call `"$VS_DEV_CMD`" -arch=x64 -host_arch=x64" -ForegroundColor Yellow
-Write-Host "  call `"%ProgramFiles(x86)%\Intel\oneAPI\setvars.bat`" intel64" -ForegroundColor Yellow
-Write-Host "  $VENV_PATH\Scripts\activate.bat" -ForegroundColor Yellow
+Write-Host "  To activate your environment:" -ForegroundColor White
+Write-Host "  $VENV_PATH\Scripts\Activate.ps1" -ForegroundColor Yellow
 Write-Host $line -ForegroundColor Cyan
 Write-Host ""
 Log "Build script complete"
+Stop-Transcript | Out-Null
 Read-Host "  Press Enter to exit"

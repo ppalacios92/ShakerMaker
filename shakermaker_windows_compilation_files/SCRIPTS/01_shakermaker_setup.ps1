@@ -36,6 +36,59 @@ Write-Host "  |      Python $PYTHON_FULL_VERSION  |  Venv: $VENV_NAME  |  User: 
 Write-Host "  +---------------------------------------------------------+" -ForegroundColor Cyan
 Write-Host ""
 Log "Setup started - user: $env:USERNAME - Python: $PYTHON_FULL_VERSION - Venv: $VENV_NAME"
+Start-Transcript -Path "$PSScriptRoot\shakermaker.log" -Append -Force | Out-Null
+
+# ==============================================================================
+Print-Header "STEP 0 - Clean stale sitecustomize.py"
+# ==============================================================================
+# Remove any stale sitecustomize.py files before doing anything else.
+# Stale files from previous installations cause errors when creating or using any venv.
+
+$INTEL_BIN_PATH = "C:\Program Files (x86)\Intel\oneAPI\compiler\latest\bin"
+$INTEL_MPI_PATH = "C:\Program Files (x86)\Intel\oneAPI\mpi\latest\bin"
+
+$cleanSiteContent = @"
+import os
+os.environ["I_MPI_FABRICS"] = "shm"
+os.environ["FI_PROVIDER"] = "sockets"
+os.add_dll_directory(r"$INTEL_BIN_PATH")
+os.add_dll_directory(r"$INTEL_MPI_PATH")
+"@
+
+try {
+    $pyBaseExe = (py -3.10 -c "import sys; print(sys.executable)" 2>&1)
+    $pyBaseDir  = Split-Path $pyBaseExe
+
+    # Check root of Python base (e.g. C:\Users\...\Python310\sitecustomize.py)
+    $siteBaseRoot = "$pyBaseDir\sitecustomize.py"
+    if (Test-Path $siteBaseRoot) {
+        Remove-Item $siteBaseRoot -Force
+        Print-INFO "Removed stale sitecustomize.py from Python root: $siteBaseRoot"
+        Log "[--] Removed stale $siteBaseRoot"
+    }
+
+    # Check Lib\site-packages
+    $siteBase = "$pyBaseDir\Lib\site-packages\sitecustomize.py"
+    if (Test-Path $siteBase) {
+        Remove-Item $siteBase -Force
+        Print-INFO "Removed stale sitecustomize.py from Python base: $siteBase"
+        Log "[--] Removed stale $siteBase"
+    }
+
+    [System.IO.File]::WriteAllText($siteBase, $cleanSiteContent)
+    Print-OK "Clean sitecustomize.py written to Python base"
+    Log "[OK] Clean sitecustomize.py written to $siteBase"
+} catch {
+    Print-FAIL "Could not clean Python base sitecustomize.py: $_"
+    Log "[!!] sitecustomize.py clean failed: $_"
+}
+
+$siteVenv = "$VENV_PATH\Lib\site-packages\sitecustomize.py"
+if (Test-Path $siteVenv) {
+    Remove-Item $siteVenv -Force
+    Print-INFO "Removed stale sitecustomize.py from venv"
+    Log "[--] Removed stale $siteVenv"
+}
 
 # ==============================================================================
 Print-Header "STEP 1 - System Checklist"
@@ -189,8 +242,8 @@ Write-Host "  Virtual environment : $VENV_NAME" -ForegroundColor White
 Write-Host "  Location            : $VENV_PATH" -ForegroundColor White
 Write-Host ""
 
-$confirm = Read-Host "  Do you want to proceed with the installation? (Y/N)"
-if ($confirm -notmatch "^[Yy]$") {
+$confirm = Read-Host "  Do you want to proceed with the installation? (Y/N - Enter = Yes)"
+if ($confirm -ne "" -and $confirm -notmatch "^[Yy]$") {
     Write-Host "  Aborted by user." -ForegroundColor Red
     Log "Aborted by user"
     exit 0
@@ -292,7 +345,54 @@ if ($missingDeps.Count -gt 0) {
 }
 
 # ==============================================================================
-Print-Header "STEP 8 - Final Verification"
+Print-Header "STEP 8 - Fix Python Base sitecustomize.py"
+# ==============================================================================
+
+# Write sitecustomize.py to the Python base so that any Python process
+# (Jupyter, VS Code, CMD) loads Intel DLL paths automatically at startup.
+# This also prevents errors from stale sitecustomize.py files left by old venvs.
+
+$INTEL_BIN_PATH = "C:\Program Files (x86)\Intel\oneAPI\compiler\latest\bin"
+$INTEL_MPI_PATH = "C:\Program Files (x86)\Intel\oneAPI\mpi\latest\bin"
+
+$siteContent = @"
+import os
+os.environ["I_MPI_FABRICS"] = "shm"
+os.environ["FI_PROVIDER"] = "sockets"
+os.add_dll_directory(r"$INTEL_BIN_PATH")
+os.add_dll_directory(r"$INTEL_MPI_PATH")
+"@
+
+$pythonBaseExe = & $pythonExe -c "import sys; print(sys._base_executable)" 2>&1
+$pythonBaseDir = Split-Path $pythonBaseExe
+$siteCustomizeBase = "$pythonBaseDir\Lib\site-packages\sitecustomize.py"
+
+# Remove stale sitecustomize.py from Python base if it exists
+if (Test-Path $siteCustomizeBase) {
+    Remove-Item $siteCustomizeBase -Force
+    Print-INFO "Removed stale sitecustomize.py from Python base"
+    Log "[--] Removed stale sitecustomize.py from $siteCustomizeBase"
+}
+
+# Remove stale sitecustomize.py from venv if it exists
+$siteCustomizeVenv = "$VENV_PATH\Lib\site-packages\sitecustomize.py"
+if (Test-Path $siteCustomizeVenv) {
+    Remove-Item $siteCustomizeVenv -Force
+    Print-INFO "Removed stale sitecustomize.py from venv"
+    Log "[--] Removed stale sitecustomize.py from $siteCustomizeVenv"
+}
+
+try {
+    [System.IO.File]::WriteAllText($siteCustomizeBase, $siteContent)
+    Print-OK "sitecustomize.py written to Python base: $siteCustomizeBase"
+    Log "[OK] sitecustomize.py base written"
+} catch {
+    Print-FAIL "Failed to write sitecustomize.py to Python base: $_"
+    Log "[!!] sitecustomize.py base failed: $_"
+}
+
+# ==============================================================================
+Print-Header "STEP 9 - Final Verification"
 # ==============================================================================
 
 $venvPyVer = (& $pythonExe --version 2>&1)
@@ -320,7 +420,9 @@ Write-Host "  Setup complete!" -ForegroundColor Green
 Write-Host "  Venv : $VENV_NAME  at  $VENV_PATH" -ForegroundColor White
 Write-Host "  Log  : $LOG_FILE" -ForegroundColor White
 Write-Host "  Next : Run Step 2 - Junction Setup" -ForegroundColor Yellow
+
 Write-Host $line -ForegroundColor Cyan
 Write-Host ""
 Log "Setup complete"
+Stop-Transcript | Out-Null
 Read-Host "  Press Enter to exit"

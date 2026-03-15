@@ -31,6 +31,7 @@ Write-Host "  |      User: $env:USERNAME" -ForegroundColor Cyan
 Write-Host "  +---------------------------------------------------------+" -ForegroundColor Cyan
 Write-Host ""
 Log "Junction setup started - user: $env:USERNAME"
+Start-Transcript -Path "$PSScriptRoot\shakermaker.log" -Append -Force | Out-Null
 
 # ==============================================================================
 Print-Header "STEP 1 - Check Existing Junction"
@@ -47,8 +48,8 @@ if (Test-Path $JUNCTION_PATH) {
         Log "[OK] Junction exists - target: $existingTarget"
 
         Write-Host ""
-        $overwrite = Read-Host "  Do you want to replace the existing junction? (Y/N)"
-        if ($overwrite -notmatch "^[Yy]$") {
+        $overwrite = Read-Host "  Do you want to replace the existing junction? (Y/N - Enter = Yes)"
+        if ($overwrite -ne "" -and $overwrite -notmatch "^[Yy]$") {
             Write-Host ""
             Print-OK "Keeping existing junction. Nothing changed."
             Log "User kept existing junction"
@@ -77,8 +78,8 @@ if ($SOURCE_FROM_CFG -ne "") {
     Write-Host "  Source path found in shakermaker.cfg:" -ForegroundColor White
     Write-Host "  $SOURCE_FROM_CFG" -ForegroundColor Yellow
     Write-Host ""
-    $useCfg = Read-Host "  Use this path? (Y/N)"
-    if ($useCfg -match "^[Yy]$") {
+    $useCfg = Read-Host "  Use this path? (Y/N - Enter = Yes)"
+    if ($useCfg -eq "" -or $useCfg -match "^[Yy]$") {
         $sourcePath = $SOURCE_FROM_CFG
     }
 }
@@ -231,4 +232,5 @@ Write-Host "  Next     : Run Step 3 - Build and Compile" -ForegroundColor Yellow
 Write-Host $line -ForegroundColor Cyan
 Write-Host ""
 Log "Junction setup complete"
+Stop-Transcript | Out-Null
 Read-Host "  Press Enter to exit"
