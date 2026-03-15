@@ -4,6 +4,19 @@ This repository contains the automated scripts to compile and install **ShakerMa
 
 ---
 
+## Important: Run as Administrator
+
+**Always run `RUN_ME.bat` as Administrator.** Right-click the file and select "Run as administrator".
+
+This is required for two reasons:
+
+- **Step 3** adds the Intel MPI and compiler paths to the Windows system PATH permanently, which requires Administrator access. Without this, `mpiexec` will not be found when running parallel simulations.
+- **Step 1** installs system-wide tools (Git, Python, Visual Studio, Intel oneAPI) via `winget`, which also requires elevated privileges.
+
+> If you run without Administrator rights, the installation will still complete but **parallel execution with `mpiexec` will not work**. You will only be able to run sequential (single-process) simulations.
+
+---
+
 ## Repository Structure
 
 ```
@@ -30,7 +43,7 @@ Before running anything, make sure your machine has internet access and enough d
 | Git | 2.x | Repository access |
 | Visual Studio 2022 Community | 17.x | C++ compiler (`cl.exe`) |
 | Intel oneAPI Base Toolkit | 2025.x | Math Kernel Library (MKL) |
-| Intel oneAPI HPC Toolkit | 2025.x | Fortran compiler (`ifx`) |
+| Intel oneAPI HPC Toolkit | 2025.x | Fortran compiler (`ifx`) and Intel MPI |
 | NumPy | 1.26.4 | Build dependency — do NOT use 2.x |
 
 ---
@@ -47,10 +60,11 @@ PYTHON_VERSION      = 3.10
 PYTHON_FULL_VERSION = 3.10.9
 
 # Name of the virtual environment to create
-VENV_NAME           = shakermaker_venv
+# Keep this SHORT to avoid Windows command-line length errors during compilation
+VENV_NAME           = sm_venv
 
 # Base folder for the virtual environment
-# Result will be: C:\Users\your_username\shakermaker_venv
+# Result will be: C:\Users\your_username\sm_venv
 VENV_BASE           = C:\Users\%USERNAME%
 
 # Folder where the junction will be created (must have no spaces)
@@ -58,9 +72,10 @@ COMPILER_DIR        = C:\shakermaker_compiler
 
 # Full path to your ShakerMaker source repository
 # This path may contain spaces — the junction script handles it
-SHAKERMAKER_SOURCE  = C:\path\to\your\ShakerMaker_OP
+SHAKERMAKER_SOURCE  = C:\path\to\your\ShakerMaker
 
 # Python packages to install in the virtual environment
+# Add any additional packages you need here
 PYTHON_DEPS = numpy==1.26.4 setuptools wheel h5py mpi4py matplotlib scipy
 ```
 
@@ -73,6 +88,7 @@ PYTHON_DEPS = numpy==1.26.4 setuptools wheel h5py mpi4py matplotlib scipy
 Windows blocks scripts downloaded from the internet. Before running anything, open PowerShell, navigate to the `shakermaker_windows_compilation_files` folder and unblock all files in the SCRIPTS folder:
 
 ```powershell
+cd "C:\path\to\shakermaker_windows_compilation_files"
 Get-ChildItem SCRIPTS | Unblock-File
 ```
 
@@ -80,9 +96,9 @@ You must do this every time you download or update the scripts from GitHub or Dr
 
 ---
 
-### Step 0.2 — Run the launcher
+### Step 0.2 — Run the launcher as Administrator
 
-Double-click `RUN_ME.bat` or open it from PowerShell. You will see an interactive menu:
+Right-click `RUN_ME.bat` and select **Run as administrator**. You will see an interactive menu:
 
 ```
 +==========================================================+
@@ -99,6 +115,8 @@ Double-click `RUN_ME.bat` or open it from PowerShell. You will see an interactiv
 ```
 
 For a fresh installation on a new machine, choose **[4] Run All Steps in Order**.
+
+All confirmation prompts accept **Enter** as Yes.
 
 ---
 
@@ -126,24 +144,18 @@ Do not run this file directly.
 
 **What it does:**
 
-1. Reads configuration from `shakermaker.cfg`
-2. Checks whether each required tool is already installed:
-   - Git
-   - Python 3.10
-   - Visual Studio 2022 Community
-   - Intel oneAPI Base Toolkit
-   - Intel oneAPI HPC Toolkit
-3. Shows a checklist with `[OK]` for installed tools and `[--]` for missing ones
-4. Checks whether the virtual environment already exists — if it does, it reuses it; if not, it creates it
-5. Checks which Python packages are already installed and at the correct version
-6. Asks for confirmation before installing anything
-7. Installs only the missing components via `winget`
-8. Creates the virtual environment using `py -3.10 -m venv`
-9. Upgrades `pip`
-10. Installs missing Python packages
-11. Verifies all packages are correctly installed
+1. **STEP 0** — Cleans any stale `sitecustomize.py` files left by previous installations that could cause DLL errors
+2. **STEP 1** — Checks whether each required tool is already installed: Git, Python 3.10, Visual Studio 2022, Intel oneAPI Base and HPC Toolkits. Shows `[OK]` for installed tools and `[--]` for missing ones
+3. **STEP 2** — Checks whether the virtual environment already exists. If it does, reuses it. If not, creates it
+4. **STEP 3** — Checks which Python packages from `PYTHON_DEPS` are already installed at the correct version
+5. **STEP 4** — Shows a summary of everything that will be installed and asks for confirmation (Enter = Yes)
+6. **STEP 5** — Installs only the missing system components via `winget`
+7. **STEP 6** — Upgrades `pip`
+8. **STEP 7** — Installs missing Python packages from `PYTHON_DEPS`
+9. **STEP 8** — Writes a clean `sitecustomize.py` to the Python base so Intel DLLs and MPI are configured at every Python startup
+10. **STEP 9** — Final verification of all installed packages
 
-**Log file:** `C:\Users\your_username\shakermaker_setup.log`
+**Log file:** `SCRIPTS\shakermaker.log`
 
 > **Note:** Visual Studio and Intel oneAPI are large downloads (5–10 GB each). The script waits for each installer to finish before proceeding.
 
@@ -153,22 +165,19 @@ Do not run this file directly.
 
 **Why this is needed:**
 
-The ShakerMaker source repository may live inside a path with spaces (for example inside Dropbox or OneDrive). The Windows compiler tools used during the build cannot handle spaces in paths and will fail silently or with cryptic errors. The solution is to create a Windows junction — a filesystem link — from a clean path with no spaces to the actual repository location.
+The ShakerMaker source repository may live inside a path with spaces (for example inside Dropbox or OneDrive). The Windows compiler tools cannot handle spaces in paths and will fail. The solution is to create a Windows junction — a filesystem link — from a clean path with no spaces to the actual repository location.
 
 **What it does:**
 
-1. Reads `COMPILER_DIR` and `SHAKERMAKER_SOURCE` from `shakermaker.cfg`
-2. Checks if a junction already exists at `COMPILER_DIR\ShakerMaker` — if it does, asks whether to replace it
-3. If `SHAKERMAKER_SOURCE` is defined in the config, offers to use it directly; otherwise asks the user to enter the path interactively
-4. Validates that the path exists and contains `setup.py`
-5. Creates the `COMPILER_DIR` folder if it does not exist
-6. Creates the junction using `mklink /J`
-7. Writes the validated `SHAKERMAKER_SOURCE` back to `shakermaker.cfg` so the build script can find it
-8. Verifies the junction is a valid reparse point and that `setup.py` is reachable through it
+1. **STEP 1** — Checks if a junction already exists at `COMPILER_DIR\ShakerMaker`. If it does, asks whether to replace it (Enter = Yes)
+2. **STEP 2** — If `SHAKERMAKER_SOURCE` is defined in `shakermaker.cfg`, offers to use it directly. Otherwise asks interactively. Validates that the path contains `setup.py`
+3. **STEP 3** — Creates the `COMPILER_DIR` folder if needed, then creates the junction using `mklink /J`
+4. **STEP 4** — Saves the validated source path back to `shakermaker.cfg`
+5. **STEP 5** — Verifies the junction is a valid reparse point and that `setup.py` is reachable
 
 **Result:** `C:\shakermaker_compiler\ShakerMaker\` → your actual repository
 
-**Log file:** `C:\Users\your_username\shakermaker_junction.log`
+**Log file:** `SCRIPTS\shakermaker.log`
 
 ---
 
@@ -176,33 +185,30 @@ The ShakerMaker source repository may live inside a path with spaces (for exampl
 
 **What it does:**
 
-1. Reads all paths and settings from `shakermaker.cfg`
-2. Pre-build checks: verifies the junction, virtual environment, Visual Studio, and Intel `ifx` compiler are all present
-3. Creates the `ifort.bat` wrapper — Intel oneAPI 2025.x ships `ifx.exe` but NumPy's f2py looks for `ifort.exe`; this wrapper redirects `ifort` calls to `ifx`
-4. Launches a CMD subprocess (not PowerShell) with the full build environment initialized:
-   - Calls `VsDevCmd.bat` to set up the MSVC compiler
-   - Calls `setvars.bat` to initialize Intel oneAPI
-   - Activates the virtual environment
-   - Sets the Intel `LIB` and `PATH` manually (required because `setvars.bat` sometimes does not set them correctly)
-   - Runs `python setup.py install` from the junction path
-5. Creates `sitecustomize.py` in both the virtual environment site-packages and the Python base site-packages — this file is loaded automatically by Python at every startup and configures the Intel MPI environment and DLL paths so that ShakerMaker can be imported from Jupyter and VS Code without any manual setup
-6. Runs a smoke test (`from shakermaker import core`) inside an initialized CMD to verify the build succeeded
+1. **STEP 1** — Pre-build checks: verifies junction, virtual environment, Visual Studio, and Intel `ifx` compiler are all present
+2. **STEP 2** — Creates the `ifort.bat` wrapper — Intel oneAPI 2025.x ships `ifx.exe` but NumPy's f2py looks for `ifort.exe`; this wrapper redirects `ifort` calls to `ifx`
+3. **STEP 3** — Launches a CMD subprocess with the full build environment initialized (VsDevCmd + setvars + venv + Intel paths) and runs `python setup.py install`. If the first attempt fails due to Windows path-length limits (`WinError 206`), automatically retries using the compilation cache
+4. **STEP 4** — Cleans any stale `sitecustomize.py` files and writes a fresh one to both the venv and the Python base site-packages. This file configures Intel MPI environment variables and DLL paths so ShakerMaker can be imported from Jupyter, VS Code, or any launcher without manual setup
+5. **STEP 4b** — Adds Intel compiler and MPI paths to the Windows system PATH permanently. This is what allows `mpiexec` to be called from any CMD window without running `setvars.bat` first. **Requires Administrator rights**
+6. **STEP 5** — Smoke test: runs `from shakermaker import core` inside an initialized CMD to verify the build succeeded
 
 **Why CMD and not PowerShell for the build:**
 
-`VsDevCmd.bat` and `setvars.bat` modify the PATH and environment variables of the shell that calls them. This only works correctly in CMD. The script handles this by launching a temporary `.bat` file as a subprocess.
+`VsDevCmd.bat` and `setvars.bat` modify the PATH and environment variables of the shell that calls them. This only works correctly in CMD. The script launches a temporary `.bat` file as a subprocess to handle this.
 
-**Log file:** `C:\Users\your_username\shakermaker_build.log`
+**Log file:** `SCRIPTS\shakermaker.log`
 
-> **Note on first-time compilation:** If the virtual environment name is long, the first build attempt may fail with `WinError 206: The filename or extension is too long`. This is a Windows limitation on command-line length. Simply run Step 3 again — the second attempt uses the compilation cache and succeeds. To avoid this entirely, use a short virtual environment name in `shakermaker.cfg`.
+> **Note on first-time compilation:** If the virtual environment name is long, the first build attempt may fail with `WinError 206`. The script detects this automatically and retries — the second attempt uses the compilation cache and succeeds. To avoid this entirely, use a short virtual environment name.
 
 ---
 
 ## After Installation
 
-Once the build completes successfully, ShakerMaker is ready to use. The `sitecustomize.py` created by Step 3 handles DLL loading automatically at every Python startup — no manual environment initialization is needed.
+Once the build completes successfully, ShakerMaker is ready to use.
 
-To use ShakerMaker in Jupyter or VS Code, select the virtual environment you created as your Python kernel. The imports will work directly:
+### Using in Jupyter or VS Code
+
+Select the virtual environment you created as your Python kernel. The imports work directly with no additional setup:
 
 ```python
 from shakermaker import shakermaker
@@ -213,16 +219,29 @@ import numpy as np
 import matplotlib.pyplot as plt
 ```
 
-To run models with MPI from the command line, open a **fresh CMD** window (not PowerShell) and initialize the environment manually:
+### Running parallel simulations with MPI
+
+Open a **fresh CMD** window, activate your virtual environment, and run directly:
 
 ```cmd
-call "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
-call "%ProgramFiles(x86)%\Intel\oneAPI\setvars.bat" intel64
 C:\Users\your_username\your_venv\Scripts\activate.bat
-chcp 65001
 cd "C:\path\to\your\model"
 mpiexec -n 10 python your_script.py
 ```
+
+> **Note:** `mpiexec` is available from any CMD window after Step 3 adds the Intel MPI path to the system PATH permanently. You no longer need to run `setvars.bat` or `VsDevCmd.bat` to use MPI.
+
+---
+
+## Log File
+
+All three scripts write to a single log file at:
+
+```
+SCRIPTS\shakermaker.log
+```
+
+If you encounter any issue, send this file for support.
 
 ---
 
@@ -230,37 +249,41 @@ mpiexec -n 10 python your_script.py
 
 ### Scripts are blocked and cannot run
 
-Run this in PowerShell from the SCRIPTS folder:
+Run this in PowerShell from the `shakermaker_windows_compilation_files` folder:
 
 ```powershell
-Get-ChildItem "C:\path\to\SCRIPTS" | Unblock-File
+Get-ChildItem SCRIPTS | Unblock-File
 ```
+
+### `mpiexec` is not recognized
+
+Step 3 was not run as Administrator so the Intel MPI path was not added to the system PATH. Run Step 3 again as Administrator.
 
 ### Build fails with `WinError 206: The filename or extension is too long`
 
-Your virtual environment name is too long. Use a short name in `shakermaker.cfg` such as `sm_venv` and run Step 3 again.
+The script retries automatically. If it still fails, use a shorter virtual environment name in `shakermaker.cfg` (e.g. `sm_venv`).
 
 ### `DLL load failed while importing core`
 
-The `sitecustomize.py` was not created or was deleted. Run Step 3 again — it recreates the file automatically.
+Run Step 3 again — it recreates `sitecustomize.py` automatically.
 
 ### `CompilerNotFound: intelvem`
 
-The `ifort.bat` wrapper was not created or is not on PATH. Run Step 3 again.
+The `ifort.bat` wrapper is missing. Run Step 3 again.
 
 ### `The input line is too long` in CMD
 
-The PATH variable overflowed from running `VsDevCmd.bat` or `setvars.bat` multiple times in the same CMD window. Close the window and open a fresh one.
+The PATH overflowed from running `VsDevCmd.bat` or `setvars.bat` multiple times. Close the window and open a fresh one.
 
-### Build fails on first attempt but succeeds on second
+### `FileNotFoundError: barry_allen\Scripts` or similar stale venv error
 
-This is a known Windows path-length issue with longer virtual environment names. Run Step 3 a second time — it will use the compilation cache and complete successfully.
+A `sitecustomize.py` from a previous installation is still active. Run Step 1 — STEP 0 cleans all stale files automatically.
 
 ---
 
 ## Reinstalling ShakerMaker
 
-If you need to reinstall after modifying the source code, simply run Step 3 again. It will recompile and reinstall, and recreate `sitecustomize.py` automatically.
+If you need to reinstall after modifying the source code, run Step 3 again. It recompiles, reinstalls, and recreates `sitecustomize.py` automatically.
 
 ---
 

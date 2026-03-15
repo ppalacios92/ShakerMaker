@@ -280,6 +280,41 @@ if ($written -match "I_MPI_FABRICS") {
     Log "[!!] sitecustomize.py verification failed"
 }
 
+
+# ==============================================================================
+Print-Header "STEP 4b - Add Intel paths to system PATH permanently"
+# ==============================================================================
+
+# This allows mpiexec and Intel DLLs to be found from any CMD or terminal
+# without needing to run setvars.bat manually each time.
+
+$pathsToAdd = @(
+    "C:\Program Files (x86)\Intel\oneAPI\compiler\latest\bin",
+    "C:\Program Files (x86)\Intel\oneAPI\mpi\latest\bin"
+)
+
+$systemPath = [Environment]::GetEnvironmentVariable("PATH", "Machine")
+
+foreach ($p in $pathsToAdd) {
+    if ($systemPath -notlike "*$p*") {
+        $systemPath = "$systemPath;$p"
+        Print-INFO "Adding to system PATH: $p"
+        Log "[--] Adding to PATH: $p"
+    } else {
+        Print-OK "Already in system PATH: $p"
+        Log "[OK] Already in PATH: $p"
+    }
+}
+
+try {
+    [Environment]::SetEnvironmentVariable("PATH", $systemPath, "Machine")
+    Print-OK "System PATH updated - Intel MPI and DLLs now available permanently"
+    Log "[OK] System PATH updated"
+} catch {
+    Print-FAIL "Failed to update system PATH - try running as Administrator: $_"
+    Log "[!!] System PATH update failed: $_"
+}
+
 # ==============================================================================
 Print-Header "STEP 5 - Smoke Test"
 # ==============================================================================
