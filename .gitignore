@@ -26,4 +26,4 @@ __pycache__/
 .vscode/
 
 # windows log
-SCRIPTS/shakermaker.log
+*.log
