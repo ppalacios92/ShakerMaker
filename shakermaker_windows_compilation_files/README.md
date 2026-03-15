@@ -4,33 +4,19 @@ This repository contains the automated scripts to compile and install **ShakerMa
 
 ---
 
-## Important: Run as Administrator
+## Requirements
 
-Always run the scripts from a **PowerShell window opened as Administrator**.
+Before running anything, make sure your machine has internet access and enough disk space. The full installation requires approximately 20 GB for Visual Studio 2022 and the Intel oneAPI toolkits.
 
-1. Press `Win + X` and select **Windows PowerShell (Admin)** or **Terminal (Admin)**
-2. Navigate to the `shakermaker_windows_compilation_files` folder:
-```powershell
-   cd "C:\path\to\shakermaker_windows_compilation_files"
-```
-3. Unblock the scripts (first time only):
-```powershell
-   Get-ChildItem SCRIPTS | Unblock-File
-```
-4. Launch the menu:
-```powershell
-   .\SCRIPTS\RUN_ME.bat
-```
-
-If you run without Administrator rights, the installation will still complete but **parallel execution with `mpiexec` will not work**. You will only be able to run sequential simulations.
-
-
-This is required for two reasons:
-
-- **Step 3** adds the Intel MPI and compiler paths to the Windows system PATH permanently, which requires Administrator access. Without this, `mpiexec` will not be found when running parallel simulations.
-- **Step 1** installs system-wide tools (Git, Python, Visual Studio, Intel oneAPI) via `winget`, which also requires elevated privileges.
-
-> If you run without Administrator rights, the installation will still complete but **parallel execution with `mpiexec` will not work**. You will only be able to run sequential (single-process) simulations.
+| Tool | Version | Purpose |
+|------|---------|---------|
+| Windows 11 | Any | Operating system |
+| Python | 3.10.x | Runtime and build environment |
+| Git | 2.x | Repository access |
+| Visual Studio 2022 Community | 17.x | C++ compiler (`cl.exe`) |
+| Intel oneAPI Base Toolkit | 2025.x | Math Kernel Library (MKL) |
+| Intel oneAPI HPC Toolkit | 2025.x | Fortran compiler (`ifx`) and Intel MPI |
+| NumPy | 1.26.4 | Build dependency — do NOT use 2.x |
 
 ---
 
@@ -49,27 +35,11 @@ shakermaker_windows_compilation_files/
 
 ---
 
-## Requirements
-
-Before running anything, make sure your machine has internet access and enough disk space. The full installation requires approximately 20 GB for Visual Studio 2022 and the Intel oneAPI toolkits.
-
-| Tool | Version | Purpose |
-|------|---------|---------|
-| Windows 11 | Any | Operating system |
-| Python | 3.10.x | Runtime and build environment |
-| Git | 2.x | Repository access |
-| Visual Studio 2022 Community | 17.x | C++ compiler (`cl.exe`) |
-| Intel oneAPI Base Toolkit | 2025.x | Math Kernel Library (MKL) |
-| Intel oneAPI HPC Toolkit | 2025.x | Fortran compiler (`ifx`) and Intel MPI |
-| NumPy | 1.26.4 | Build dependency — do NOT use 2.x |
-
----
-
 ## Quick Start
 
-### Step 0 — Edit the configuration file
+### Step 1 — Edit the configuration file
 
-Open `shakermaker.cfg` and fill in your settings. This is the only file you need to edit. Everything else reads from here automatically.
+Open `SCRIPTS\shakermaker.cfg` and fill in your settings. This is the only file you need to edit.
 
 ```ini
 # Python version
@@ -100,22 +70,25 @@ PYTHON_DEPS = numpy==1.26.4 setuptools wheel h5py mpi4py matplotlib scipy
 
 ---
 
-### Step 0.1 — Unblock the scripts
+### Step 2 — Open PowerShell as Administrator and run the scripts
 
-Windows blocks scripts downloaded from the internet. Before running anything, open PowerShell, navigate to the `shakermaker_windows_compilation_files` folder and unblock all files in the SCRIPTS folder:
+All scripts must be run from a **PowerShell window opened as Administrator**. This is required because Step 3 adds Intel MPI to the Windows system PATH permanently — without Administrator rights, `mpiexec` will not work and you will only be able to run sequential simulations.
 
-```powershell
-cd "C:\path\to\shakermaker_windows_compilation_files"
-Get-ChildItem SCRIPTS | Unblock-File
-```
+1. Press `Win + X` and select **Windows PowerShell (Admin)** or **Terminal (Admin)**
+2. Navigate to the `shakermaker_windows_compilation_files` folder:
+   ```powershell
+   cd "C:\path\to\shakermaker_windows_compilation_files"
+   ```
+3. Unblock the scripts (only needed the first time, or after downloading updates):
+   ```powershell
+   Get-ChildItem SCRIPTS | Unblock-File
+   ```
+4. Launch the menu:
+   ```powershell
+   .\SCRIPTS\RUN_ME.bat
+   ```
 
-You must do this every time you download or update the scripts from GitHub or Dropbox.
-
----
-
-### Step 0.2 — Run the launcher as Administrator
-
-Right-click `RUN_ME.bat` and select **Run as administrator**. You will see an interactive menu:
+You will see an interactive menu:
 
 ```
 +==========================================================+
@@ -131,9 +104,7 @@ Right-click `RUN_ME.bat` and select **Run as administrator**. You will see an in
 +==========================================================+
 ```
 
-For a fresh installation on a new machine, choose **[4] Run All Steps in Order**.
-
-All confirmation prompts accept **Enter** as Yes.
+For a fresh installation on a new machine, choose **[4] Run All Steps in Order**. All confirmation prompts accept **Enter** as Yes.
 
 ---
 
@@ -163,7 +134,7 @@ Do not run this file directly.
 
 1. **STEP 0** — Cleans any stale `sitecustomize.py` files left by previous installations that could cause DLL errors
 2. **STEP 1** — Checks whether each required tool is already installed: Git, Python 3.10, Visual Studio 2022, Intel oneAPI Base and HPC Toolkits. Shows `[OK]` for installed tools and `[--]` for missing ones
-3. **STEP 2** — Checks whether the virtual environment already exists. If it does, reuses it. If not, creates it
+3. **STEP 2** — Checks whether the virtual environment already exists. If it does, reuses it. If not, marks it for creation
 4. **STEP 3** — Checks which Python packages from `PYTHON_DEPS` are already installed at the correct version
 5. **STEP 4** — Shows a summary of everything that will be installed and asks for confirmation (Enter = Yes)
 6. **STEP 5** — Installs only the missing system components via `winget`
@@ -171,8 +142,6 @@ Do not run this file directly.
 8. **STEP 7** — Installs missing Python packages from `PYTHON_DEPS`
 9. **STEP 8** — Writes a clean `sitecustomize.py` to the Python base so Intel DLLs and MPI are configured at every Python startup
 10. **STEP 9** — Final verification of all installed packages
-
-**Log file:** `SCRIPTS\shakermaker.log`
 
 > **Note:** Visual Studio and Intel oneAPI are large downloads (5–10 GB each). The script waits for each installer to finish before proceeding.
 
@@ -182,7 +151,7 @@ Do not run this file directly.
 
 **Why this is needed:**
 
-The ShakerMaker source repository may live inside a path with spaces (for example inside Dropbox or OneDrive). The Windows compiler tools cannot handle spaces in paths and will fail. The solution is to create a Windows junction — a filesystem link — from a clean path with no spaces to the actual repository location.
+The ShakerMaker source repository may live inside a path with spaces (for example inside Dropbox or OneDrive). Windows compiler tools cannot handle spaces in paths and will fail. The solution is to create a Windows junction — a filesystem link — from a clean path with no spaces to the actual repository location.
 
 **What it does:**
 
@@ -193,8 +162,6 @@ The ShakerMaker source repository may live inside a path with spaces (for exampl
 5. **STEP 5** — Verifies the junction is a valid reparse point and that `setup.py` is reachable
 
 **Result:** `C:\shakermaker_compiler\ShakerMaker\` → your actual repository
-
-**Log file:** `SCRIPTS\shakermaker.log`
 
 ---
 
@@ -213,9 +180,7 @@ The ShakerMaker source repository may live inside a path with spaces (for exampl
 
 `VsDevCmd.bat` and `setvars.bat` modify the PATH and environment variables of the shell that calls them. This only works correctly in CMD. The script launches a temporary `.bat` file as a subprocess to handle this.
 
-**Log file:** `SCRIPTS\shakermaker.log`
-
-> **Note on first-time compilation:** If the virtual environment name is long, the first build attempt may fail with `WinError 206`. The script detects this automatically and retries — the second attempt uses the compilation cache and succeeds. To avoid this entirely, use a short virtual environment name.
+> **Note on first-time compilation:** If the virtual environment name is long, the first build attempt may fail with `WinError 206`. The script detects this automatically and retries using the compilation cache.
 
 ---
 
@@ -238,7 +203,7 @@ import matplotlib.pyplot as plt
 
 ### Running parallel simulations with MPI
 
-Open a **fresh CMD** window, activate your virtual environment, and run directly:
+Open a **fresh CMD** window, activate your virtual environment, and run:
 
 ```cmd
 C:\Users\your_username\your_venv\Scripts\activate.bat
@@ -246,7 +211,7 @@ cd "C:\path\to\your\model"
 mpiexec -n 10 python your_script.py
 ```
 
-> **Note:** `mpiexec` is available from any CMD window after Step 3 adds the Intel MPI path to the system PATH permanently. You no longer need to run `setvars.bat` or `VsDevCmd.bat` to use MPI.
+After Step 3, `mpiexec` is available from any CMD window without needing `setvars.bat` or `VsDevCmd.bat`.
 
 ---
 
@@ -266,7 +231,7 @@ If you encounter any issue, send this file for support.
 
 ### Scripts are blocked and cannot run
 
-Run this in PowerShell from the `shakermaker_windows_compilation_files` folder:
+Open PowerShell as Administrator, navigate to `shakermaker_windows_compilation_files` and run:
 
 ```powershell
 Get-ChildItem SCRIPTS | Unblock-File
@@ -274,7 +239,7 @@ Get-ChildItem SCRIPTS | Unblock-File
 
 ### `mpiexec` is not recognized
 
-Step 3 was not run as Administrator so the Intel MPI path was not added to the system PATH. Run Step 3 again as Administrator.
+Step 3 was not run as Administrator so the Intel MPI path was not added to the system PATH. Open PowerShell as Administrator and run Step 3 again.
 
 ### Build fails with `WinError 206: The filename or extension is too long`
 
@@ -290,7 +255,7 @@ The `ifort.bat` wrapper is missing. Run Step 3 again.
 
 ### `The input line is too long` in CMD
 
-The PATH overflowed from running `VsDevCmd.bat` or `setvars.bat` multiple times. Close the window and open a fresh one.
+The PATH overflowed from running `VsDevCmd.bat` or `setvars.bat` multiple times in the same window. Close it and open a fresh one.
 
 ### `FileNotFoundError: barry_allen\Scripts` or similar stale venv error
 
