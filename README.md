@@ -55,6 +55,7 @@ In this simple example, we specify a simple strike-slip (strike=90, that is due 
 point source at the origin and a depth of 4km, on a custom two-layer crustal model, 
 and a single receiver 5km away to the north::
 
+```python
 	from shakermaker.shakermaker import ShakerMaker
 	from shakermaker.crustmodel import CrustModel
 	from shakermaker.pointsource import PointSource 
@@ -92,21 +93,21 @@ and a single receiver 5km away to the north::
 	#Initialize Receiver
 	s = Station([0,4,0],metadata={"name":"a station"})
 	stations = StationList([s], metadata=s.metadata)
-
-
+```
 These are fed into the shakermaker model class::
-
+```python
 	model = ShakerMaker(crust, fault, stations)
-
+```
 Which is executed::
-
+```python
 	model.run()
+```
 
 Results at the station can be readily visualized using the utility function :func:`Tools.Plotting.ZENTPlot`::
-
+```python
 	from shakermaker.Tools.Plotting import ZENTPlot
 	ZENTPlot(s, xlim=[0,60], show=True)
-
+```
 Yielding:
 
 ![ShakerMaker](/examples/example0_fig1.png)
@@ -128,7 +129,7 @@ In this example, we generate a stochastic finite fault rupture by specifying the
 **Slip Distribution** - `nb_taper_trbl`: Taper zones [top, right, bottom, left] to smooth slip edges - `seeds`: Random seeds for stochastic slip generation - `id_ran1`, `id_ran2`: First and last index of stochastic realizations to generate (model numbers)
 
 **Coordinate System and Output** - `angle_north_to_x`: Rotation angle of coordinate system (degrees) - `is_moment`: Flag for moment tensor calculation - `crust_model`: :class:`CrustModel` defining velocity structure for Green's functions - `work_dir`: Output directory path for results and temporary files - `cleanup`: Remove temporary files after computation (boolean) - `verbose`: Print detailed progress information (boolean)
-
+```python
 	from shakermaker.crustmodel import CrustModel
 	from shakermaker.ffspsource import FFSPSource
 	
@@ -160,6 +161,6 @@ In this example, we generate a stochastic finite fault rupture by specifying the
 	    output_name="FFSP_OUTPUT", 
 	    verbose=True,
 	)
-
+```
 
 ![ShakerMaker](/examples/example1_fig1.png)
