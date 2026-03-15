@@ -6,7 +6,24 @@ This repository contains the automated scripts to compile and install **ShakerMa
 
 ## Important: Run as Administrator
 
-**Always run `RUN_ME.bat` as Administrator.** Right-click the file and select "Run as administrator".
+Always run the scripts from a **PowerShell window opened as Administrator**.
+
+1. Press `Win + X` and select **Windows PowerShell (Admin)** or **Terminal (Admin)**
+2. Navigate to the `shakermaker_windows_compilation_files` folder:
+```powershell
+   cd "C:\path\to\shakermaker_windows_compilation_files"
+```
+3. Unblock the scripts (first time only):
+```powershell
+   Get-ChildItem SCRIPTS | Unblock-File
+```
+4. Launch the menu:
+```powershell
+   .\SCRIPTS\RUN_ME.bat
+```
+
+If you run without Administrator rights, the installation will still complete but **parallel execution with `mpiexec` will not work**. You will only be able to run sequential simulations.
+
 
 This is required for two reasons:
 
