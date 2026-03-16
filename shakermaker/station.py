@@ -212,10 +212,6 @@ class Station:
             self._tmin = loaddict["_tmin"]  
             self._tmax = loaddict["_tmax"]  
 
-
-
-
-
         return
         # Green funcitons
     def add_greens_function(self, z, e, n, t, tdata, t0, subfault_id):

@@ -129,13 +129,13 @@ class SurfaceGrid(StationList):
         self.metadata["surfacegrid_nelems"] = self._nelems
         self.metadata["surfacegrid_mode"] = self._mode
         # DRMBox compatibility
-        self.metadata["drmbox_x0"] = self._x0
-        self.metadata["drmbox_xmax"] = self._xmax[0]
-        self.metadata["drmbox_ymax"] = self._xmax[1]
-        self.metadata["drmbox_zmax"] = self._xmax[2]
-        self.metadata["drmbox_xmin"] = self._xmin[0]
-        self.metadata["drmbox_ymin"] = self._xmin[1]
-        self.metadata["drmbox_zmin"] = self._xmin[2]
+        self.metadata["surfacegrid_x0"] = self._x0
+        self.metadata["surfacegrid_xmax"] = self._xmax[0]
+        self.metadata["surfacegrid_ymax"] = self._xmax[1]
+        self.metadata["surfacegrid_zmax"] = self._xmax[2]
+        self.metadata["surfacegrid_xmin"] = self._xmin[0]
+        self.metadata["surfacegrid_ymin"] = self._xmin[1]
+        self.metadata["surfacegrid_zmin"] = self._xmin[2]
 
 
 StationList.register(SurfaceGrid)

@@ -54,8 +54,9 @@ class DRMHDF5StationListWriter(HDF5StationListWriter):
         Legacy mode accumulates all data in memory before writing at close().
         """
         from shakermaker.sl_extensions.SurfaceGrid import SurfaceGrid
-        assert isinstance(station_list, (DRMBox, SurfaceGrid)), \
-            "DRMHDF5StationListWriter.initialize - 'station_list' Should be a DRMBox or SurfaceGrid"
+        from shakermaker.sl_extensions.PointCloudDRMReceiver import PointCloudDRMReceiver
+        assert isinstance(station_list, (DRMBox, SurfaceGrid, PointCloudDRMReceiver)), \
+            "DRMHDF5StationListWriter.initialize - 'station_list' Should be a DRMBox, SurfaceGrid or PointCloudDRMReceiver"
 
         # Validate writer_mode parameter
         valid_modes = ['legacy', 'progressive']

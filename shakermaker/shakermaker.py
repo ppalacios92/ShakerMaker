@@ -1081,6 +1081,7 @@ class ShakerMaker:
                 z_stf = psource.stf.convolve(z, t_arr)
                 e_stf = psource.stf.convolve(e, t_arr)
                 n_stf = psource.stf.convolve(n, t_arr)
+                station.add_greens_function(z, e, n, t_arr, tdata, t0, i_psource)
                 c['conv'] += perf_counter() - t1
 
                 try:
