@@ -99,7 +99,19 @@ class SurfaceGrid(StationList):
         lx, ly, lz = nx * hx, ny * hy, nz * hz
 
         # Origin centred on x0
-        origin = self._x0 - np.array([lx / 2, ly / 2, lz / 2])
+        if self._mode == 'plane':
+            if self._plane_z is not None:
+                # XY plane — z is fixed, center x and y
+                origin = self._x0 - np.array([lx/2, ly/2, 0])
+            elif self._plane_y is not None:
+                # XZ plane — center x, z starts from x0[2]
+                origin = self._x0 - np.array([lx/2, 0, 0])
+            elif self._plane_x is not None:
+                # YZ plane — center y, z starts from x0[2]
+                origin = self._x0 - np.array([0, ly/2, 0])
+        else:
+            origin = self._x0 - np.array([lx/2, ly/2, 0])
+
 
         if self._mode == 'plane':
             self._create_plane(origin, nx, ny, nz, hx, hy, hz)
