@@ -1,5 +1,3 @@
-from shakermaker.version import shakermaker_version as __version__
-
 # Core simulation engine
 from shakermaker.shakermaker import ShakerMaker
 from shakermaker.crustmodel import CrustModel

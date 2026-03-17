@@ -886,9 +886,12 @@ class ShakerMaker:
                     if rank > 0:
                         t1 = perf_counter()
                         comm.Send(np.array([nt], dtype=np.int32),
-                                  dest=0, tag=3 * ipair)
-                        comm.Send(t0_arr,  dest=0, tag=3 * ipair + 1)
-                        comm.Send(tdata_c, dest=0, tag=3 * ipair + 2)
+                                  dest=0, tag=6 * ipair)
+                        comm.Send(t0_arr,  dest=0, tag=6 * ipair + 1)
+                        comm.Send(tdata_c, dest=0, tag=6 * ipair + 2)
+                        comm.Send(z.copy(),       dest=0, tag=6 * ipair + 3)
+                        comm.Send(e.copy(),       dest=0, tag=6 * ipair + 4)
+                        comm.Send(n.copy(),       dest=0, tag=6 * ipair + 5)
                         c['send'] += perf_counter() - t1
                         next_pair += skip_pairs
 
@@ -899,16 +902,25 @@ class ShakerMaker:
                         ant     = np.empty(1, dtype=np.int32)
                         t0_arr  = np.empty(1, dtype=np.double)
                         printMPI(f"P0 Recv from remote {remote}")
-                        comm.Recv(ant,    source=remote, tag=3 * ipair)
-                        comm.Recv(t0_arr, source=remote, tag=3 * ipair + 1)
+                        comm.Recv(ant,    source=remote, tag=6 * ipair)
+                        comm.Recv(t0_arr, source=remote, tag=6 * ipair + 1)
                         nt = ant[0]
                         tdata_c = np.empty((nt, 9), dtype=np.float64)
-                        comm.Recv(tdata_c, source=remote, tag=3 * ipair + 2)
+                        comm.Recv(tdata_c, source=remote, tag=6 * ipair + 2)
+                        z = np.empty(nt, dtype=np.float64)
+                        e = np.empty(nt, dtype=np.float64)
+                        n = np.empty(nt, dtype=np.float64)
+                        comm.Recv(z, source=remote, tag=6 * ipair + 3)
+                        comm.Recv(e, source=remote, tag=6 * ipair + 4)
+                        comm.Recv(n, source=remote, tag=6 * ipair + 5)
                         c['recv'] += perf_counter() - t1
 
                     # Write slot k to HDF5
                     tdata_group[f"{ipair}_t0"]    = t0_arr[0]
                     tdata_group[f"{ipair}_tdata"] = tdata_c
+                    tdata_group[f"{ipair}_z"]     = z.copy()
+                    tdata_group[f"{ipair}_e"]     = e.copy()
+                    tdata_group[f"{ipair}_n"]     = n.copy()
                     next_pair += 1
 
                     if showProgress:
@@ -1081,7 +1093,6 @@ class ShakerMaker:
                 z_stf = psource.stf.convolve(z, t_arr)
                 e_stf = psource.stf.convolve(e, t_arr)
                 n_stf = psource.stf.convolve(n, t_arr)
-                station.add_greens_function(z, e, n, t_arr, tdata, t0, i_psource)
                 c['conv'] += perf_counter() - t1
 
                 try:

@@ -8,8 +8,8 @@ dist/
 *.egg-info/
 
 # Compiled extensions
-*.so
-*.pyd
+# *.so
+# *.pyd
 *.dll
 
 # Build artifacts
