@@ -224,7 +224,7 @@ class ShakerMaker:
         :param writer_mode: 'progressive' or 'legacy'
         :type writer_mode: str
         """
-        title = f"¡LARGA VIDA AL LADRUNO_windows1! ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+        title = f"¡LARGA VIDA AL LADRUNO_h5drm_progressive! ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
         
         if rank == 0:
             print(f"\n\n{title}")
@@ -565,7 +565,7 @@ class ShakerMaker:
         nstations = self._receivers.nstations
         N         = nstations * nsources          # total pairs
 
-        title = (f"¡LARGA VIDA AL LADRUNO_windows1! ShakerMaker Gen GF database pairs begin. "
+        title = (f"¡LARGA VIDA AL LADRUNO_h5drm_progressive! ShakerMaker Gen GF database pairs begin. "
                  f"{delta_h=} {delta_v_rec=} {delta_v_src=}")
         if rank == 0:
             print(f"\n\n{title}")
@@ -808,7 +808,7 @@ class ShakerMaker:
         :param showProgress: Print ETA on rank 0.
         :type showProgress: bool
         """
-        title = (f"¡LARGA VIDA AL LADRUNO_windows1! ShakerMaker Gen Green's functions database begin. "
+        title = (f"¡LARGA VIDA AL LADRUNO_h5drm_progressive! ShakerMaker Gen Green's functions database begin. "
                  f"{dt=} {nfft=} {dk=} {tb=}")
 
         if rank == 0:
@@ -995,7 +995,7 @@ class ShakerMaker:
         :type tmax: double
         (remaining parameters identical to :meth:`run`)
         """
-        title = (f"¡LARGA VIDA AL LADRUNO_windows1! ShakerMaker Run (Stage 2 - OP) begin. "
+        title = (f"¡LARGA VIDA AL LADRUNO_h5drm_progressive! ShakerMaker Run (Stage 2 - OP) begin. "
                  f"{dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}")
 
         if rank == 0:
@@ -1129,6 +1129,9 @@ class ShakerMaker:
         if use_mpi and nprocs > 1:
             if rank > 0:
                 printMPI(f"Rank {rank} sending data to rank 0")
+
+                printMPI(f"Rank {rank} reached Pass 2 - about to send {n_my_stations} stations")
+                print(f"  [rank={rank}] reached Pass 2 - sending {n_my_stations} stations", flush=True)
                 my_sta = rank
                 while my_sta < nstations:
                     sta = self._receivers.get_station_by_id(my_sta)
@@ -1139,11 +1142,14 @@ class ShakerMaker:
                     comm.Send(np.column_stack([z_r, e_r, n_r, t_r]),
                               dest=0, tag=2 * my_sta + 1)
                     c['send'] += perf_counter() - t1
+                    sta.clear_response()  # for implement the progressive write to .h5drm (copy the architecture of the .h5 files)
                     my_sta += nprocs
                 printMPI(f"Rank {rank} DONE sending.")
 
             if rank == 0:
                 print("Rank 0 collecting results from workers...")
+
+                print(f"  [rank=0] reached Pass 2 - waiting to collect from {nprocs-1} workers", flush=True)
                 count = 0
                 for remote in range(1, nprocs):
                     rsta = remote
@@ -1155,12 +1161,16 @@ class ShakerMaker:
                         nt   = ant[0]
                         data = np.empty((nt, 4), dtype=np.float64)
                         comm.Recv(data, source=remote, tag=2 * rsta + 1)
+                        print(f"  [rank=0] received sta={rsta} from remote={remote}", flush=True)
                         c['recv'] += perf_counter() - t1
                         sta.add_to_response(
                             data[:, 0], data[:, 1], data[:, 2], data[:, 3],
                             tmin, tmax)
                         if writer:
                             writer.write_station(sta, rsta)
+                        if writer_mode == 'progressive':
+                            sta.clear_response()  
+
                         count += 1
                         rsta += nprocs
 
@@ -1170,6 +1180,8 @@ class ShakerMaker:
                     sta = self._receivers.get_station_by_id(my_sta)
                     if writer:
                         writer.write_station(sta, my_sta)
+                    if writer_mode == 'progressive':
+                        sta.clear_response()  
                     my_sta += nprocs
                 count += n_my_stations
                 print(f"Rank 0: {count}/{nstations} stations collected.")
@@ -1179,6 +1191,8 @@ class ShakerMaker:
             if writer:
                 for i_station, station in enumerate(self._receivers):
                     writer.write_station(station, i_station)
+                    if writer_mode == 'progressive':
+                        station.clear_response() 
                 writer.close()
 
         fid.close()
@@ -1296,7 +1310,7 @@ class ShakerMaker:
         perf_time_begin = perf_counter()
 
         if rank == 0:
-            title = (f"¡LARGA VIDA AL LADRUNO_windows1! ShakerMaker run_nearest | stage={stage} | "
+            title = (f"¡LARGA VIDA AL LADRUNO_h5drm_progressive! ShakerMaker run_nearest | stage={stage} | "
                      f"{dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}")
             print(f"\n\n{title}")
             print("-" * len(title))
@@ -1452,7 +1466,7 @@ class ShakerMaker:
         npairs_total = nstations * nsources
 
         if rank == 0:
-            title = (f"¡LARGA VIDA AL LADRUNO_windows1! ShakerMaker build_pair_to_slot_from_legacy_h5 -- "
+            title = (f"¡LARGA VIDA AL LADRUNO_h5drm_progressive! ShakerMaker build_pair_to_slot_from_legacy_h5 -- "
                      f"{h5_database_name}")
             print(f"\n\n{title}")
             print("-" * len(title))

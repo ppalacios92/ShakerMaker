@@ -222,3 +222,14 @@ class Station:
     
     def get_greens_functions(self):
         return self._greens_functions
+
+
+# sta.clear_response()  # for implement the progressive write to .h5drm (copy the architecture of the .h5 files)
+# for implement the progressive write to .h5drm (copy the architecture of the .h5 files)
+    def clear_response(self):
+        """Release response arrays from memory after writing."""
+        self._z = None
+        self._e = None
+        self._n = None
+        self._t = None
+        self._initialized = False
