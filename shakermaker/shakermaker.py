@@ -976,8 +976,13 @@ class ShakerMaker:
         integration), convolves with the source time function, and accumulates
         the station response.
 
-        MPI: each rank processes its assigned stations; rank 0 then collects
-        results from workers and writes via the writer.
+        MPI: unified single-pass loop — each station is computed, sent/received,
+        written, and cleared immediately. RAM usage is O(1) per rank regardless
+        of the number of stations.
+
+        All ranks iterate over every station in canonical order [0..nstations).
+        Owner of station i: owner = i % nprocs. Rank 0 always knows which rank
+        to receive from at each step — no deadlock possible.
 
         Requires ``/pair_to_slot`` in the HDF5 file. Use
         :meth:`build_pair_to_slot_from_legacy_h5` to add it to legacy
@@ -987,7 +992,8 @@ class ShakerMaker:
         :type h5_database_name: str
         :param writer: Use this writer class to store outputs
         :type writer: StationListWriter
-        :param writer_mode: 'progressive' or 'legacy'
+        :param writer_mode: 'progressive' writes each station immediately to disk
+            (O(1) RAM). 'legacy' accumulates all stations in memory before writing.
         :type writer_mode: str
         :param tmin: Start of output time window (s).
         :type tmin: double
@@ -1004,11 +1010,12 @@ class ShakerMaker:
             print(f"  MPI processes  : {nprocs}")
             print(f"  OpenMP threads : {os.environ.get('OMP_NUM_THREADS','not set')}")
             print(f"  Loading database: {h5_database_name}")
+            print(f"  writer_mode     : {writer_mode}")
             hfile = h5py.File(h5_database_name, 'r+', locking=False)
         else:
             hfile = h5py.File(h5_database_name, 'r', locking=False)
 
-        # O(1) lookup array
+        # O(1) lookup array — loaded once, shared across all stations
         pair_to_slot = hfile["/pair_to_slot"][:]
         nsources_db  = int(hfile["/nsources"][()])
         nstations_db = int(hfile["/nstations"][()])
@@ -1025,6 +1032,7 @@ class ShakerMaker:
             f"[Stage 2] nstations mismatch: "
             f"HDF5={nstations_db}, model={self._receivers.nstations}")
 
+        # Only rank 0 owns the writer
         if rank > 0:
             writer = None
         if writer and rank == 0:
@@ -1050,152 +1058,165 @@ class ShakerMaker:
             .format(self._source.nsources, self._receivers.nstations,
                     self._source.nsources * self._receivers.nstations, dt, nfft))
 
-        nsources      = self._source.nsources
-        nstations     = self._receivers.nstations
-        next_station  = rank
-        skip_stations = nprocs
+        nsources  = self._source.nsources
+        nstations = self._receivers.nstations
         perf_time_begin = perf_counter()
-        c             = _perf_counters()
-        n_my_stations = 0
+        c         = _perf_counters()
+        tstart    = perf_counter()
 
         # ------------------------------------------------------------------
-        # Pass 1: each rank processes its assigned stations
+        # Unified single-pass loop — identical pattern to compute_gf.
+        #
+        # All ranks iterate over every station in canonical order [0..nstations).
+        # Owner of station i: owner = i % nprocs
+        #
+        # Memory contract:
+        #   progressive: clear_response() after every write → O(1) RAM per rank
+        #   legacy:      clear_response() NOT called → all responses accumulate
+        #                in RAM until writer.close() flushes them all at once.
+        #                This is the original behaviour, kept for compatibility.
+        #
+        # Anti-deadlock proof:
+        #   At iteration i_station, rank 0 knows owner = i_station % nprocs.
+        #   If owner==0: rank 0 computes and writes directly (no MPI).
+        #   If owner>0:  rank 0 blocks on Recv(source=owner).
+        #                owner blocks on Send(dest=0) after computing.
+        #                All other ranks are idle at this iteration.
+        #   Both rank 0 and owner reach their matching Send/Recv at the same
+        #   loop iteration → guaranteed rendezvous, no deadlock.
+        #
+        # Tags: 2*i_station and 2*i_station+1 — unique per station, no collision.
         # ------------------------------------------------------------------
-        for i_station, station in enumerate(self._receivers):
-            if i_station != next_station:
-                continue
 
-            tstart_sta = perf_counter()
+        for i_station in range(nstations):
+            owner = i_station % nprocs
 
-            for i_psource, psource in enumerate(self._source):
-                # O(1) slot lookup
-                k     = int(pair_to_slot[i_station * nsources + i_psource])
-                tdata = hfile[f"/tdata_dict/{k}_tdata"][:]
+            # ----------------------------------------------------------------
+            # Owner rank: compute this station (inner loop over all sources)
+            # ----------------------------------------------------------------
+            if rank == owner:
+                station    = self._receivers.get_station_by_id(i_station)
+                tstart_sta = perf_counter()
 
-                aux_crust = copy.deepcopy(self._crust)
-                aux_crust.split_at_depth(psource.x[2])
-                aux_crust.split_at_depth(station.x[2])
+                for i_psource, psource in enumerate(self._source):
+                    # O(1) slot lookup
+                    k     = int(pair_to_slot[i_station * nsources + i_psource])
+                    tdata = hfile[f"/tdata_dict/{k}_tdata"][:]
 
-                if verbose:
-                    print(f"  rank={rank} sta={i_station} "
-                          f"src={i_psource} slot={k}")
+                    aux_crust = copy.deepcopy(self._crust)
+                    aux_crust.split_at_depth(psource.x[2])
+                    aux_crust.split_at_depth(station.x[2])
 
-                t1 = perf_counter()
-                z, e, n, t0 = self._call_core_fast(
-                    tdata, dt, nfft, tb, nx, sigma, smth,
-                    wc1, wc2, pmin, pmax, dk, kc,
-                    taper, aux_crust, psource, station, verbose)
-                c['core'] += perf_counter() - t1
+                    if verbose:
+                        print(f"  rank={rank} sta={i_station} "
+                              f"src={i_psource} slot={k}")
 
-                t1    = perf_counter()
-                t_arr = np.arange(0, len(z) * dt, dt) + psource.tt + t0
-                psource.stf.dt = dt
-                z_stf = psource.stf.convolve(z, t_arr)
-                e_stf = psource.stf.convolve(e, t_arr)
-                n_stf = psource.stf.convolve(n, t_arr)
-                c['conv'] += perf_counter() - t1
-
-                try:
                     t1 = perf_counter()
-                    station.add_to_response(z_stf, e_stf, n_stf,
-                                            t_arr, tmin, tmax)
-                    c['add'] += perf_counter() - t1
-                except Exception:
-                    traceback.print_exc()
-                    if use_mpi and nprocs > 1:
-                        comm.Abort()
+                    z, e, n, t0 = self._call_core_fast(
+                        tdata, dt, nfft, tb, nx, sigma, smth,
+                        wc1, wc2, pmin, pmax, dk, kc,
+                        taper, aux_crust, psource, station, verbose)
+                    c['core'] += perf_counter() - t1
 
-                if showProgress and i_psource % 1000 == 0:
-                    elapsed = perf_counter() - tstart_sta
-                    print(f"  rank={rank} sta={i_station} "
-                          f"src={i_psource}/{nsources} "
-                          f"({i_psource/nsources*100:.1f}%)  "
-                          f"ETA={_eta_str(elapsed, i_psource+1, nsources)}")
+                    t1    = perf_counter()
+                    t_arr = np.arange(0, len(z) * dt, dt) + psource.tt + t0
+                    psource.stf.dt = dt
+                    z_stf = psource.stf.convolve(z, t_arr)
+                    e_stf = psource.stf.convolve(e, t_arr)
+                    n_stf = psource.stf.convolve(n, t_arr)
+                    c['conv'] += perf_counter() - t1
 
-            n_my_stations += 1
-            elapsed_sta = perf_counter() - tstart_sta
-            nsta_left   = (nstations - i_station - 1) // skip_stations
-            print(f"  rank={rank} sta {i_station+1}/{nstations} "
-                  f"({(i_station+1)/nstations*100:.1f}%)  "
-                  f"sta_time={elapsed_sta:.1f}s  "
-                  f"ETA_total={_eta_str(elapsed_sta*nsta_left,1,2)}")
-            next_station += skip_stations
+                    try:
+                        t1 = perf_counter()
+                        station.add_to_response(z_stf, e_stf, n_stf,
+                                                t_arr, tmin, tmax)
+                        c['add'] += perf_counter() - t1
+                    except Exception:
+                        traceback.print_exc()
+                        if use_mpi and nprocs > 1:
+                            comm.Abort()
 
-        hfile.close()
+                    if showProgress and i_psource % 1000 == 0:
+                        elapsed = perf_counter() - tstart_sta
+                        print(f"  rank={rank} sta={i_station} "
+                              f"src={i_psource}/{nsources} "
+                              f"({i_psource/nsources*100:.1f}%)  "
+                              f"ETA={_eta_str(elapsed, i_psource+1, nsources)}")
 
-        # ------------------------------------------------------------------
-        # Pass 2: workers send, rank 0 collects and writes
-        # ------------------------------------------------------------------
-        if use_mpi and nprocs > 1:
-            if rank > 0:
-                printMPI(f"Rank {rank} sending data to rank 0")
+                # All sources done for this station
+                elapsed_sta = perf_counter() - tstart_sta
+                nsta_left   = (nstations - i_station - 1) // nprocs
+                print(f"  rank={rank} sta {i_station+1}/{nstations} "
+                      f"({(i_station+1)/nstations*100:.1f}%)  "
+                      f"sta_time={elapsed_sta:.1f}s  "
+                      f"ETA_total={_eta_str(elapsed_sta*nsta_left,1,2)}")
 
-                printMPI(f"Rank {rank} reached Pass 2 - about to send {n_my_stations} stations")
-                print(f"  [rank={rank}] reached Pass 2 - sending {n_my_stations} stations", flush=True)
-                my_sta = rank
-                while my_sta < nstations:
-                    sta = self._receivers.get_station_by_id(my_sta)
-                    z_r, e_r, n_r, t_r = sta.get_response()
+                if use_mpi and nprocs > 1 and rank > 0:
+                    # Worker: send accumulated response to rank 0
+                    z_r, e_r, n_r, t_r = station.get_response()
                     t1 = perf_counter()
                     comm.Send(np.array([len(z_r)], dtype=np.int32),
-                              dest=0, tag=2 * my_sta)
+                              dest=0, tag=2 * i_station)
                     comm.Send(np.column_stack([z_r, e_r, n_r, t_r]),
-                              dest=0, tag=2 * my_sta + 1)
+                              dest=0, tag=2 * i_station + 1)
                     c['send'] += perf_counter() - t1
-                    sta.clear_response()  # for implement the progressive write to .h5drm (copy the architecture of the .h5 files)
-                    my_sta += nprocs
-                printMPI(f"Rank {rank} DONE sending.")
+                    printMPI(f"rank={rank} sent sta={i_station}")
+                    # Workers always clear — they never own the writer
+                    station.clear_response()
 
-            if rank == 0:
-                print("Rank 0 collecting results from workers...")
-
-                print(f"  [rank=0] reached Pass 2 - waiting to collect from {nprocs-1} workers", flush=True)
-                count = 0
-                for remote in range(1, nprocs):
-                    rsta = remote
-                    while rsta < nstations:
-                        sta = self._receivers.get_station_by_id(rsta)
-                        t1  = perf_counter()
-                        ant = np.empty(1, dtype=np.int32)
-                        comm.Recv(ant, source=remote, tag=2 * rsta)
-                        nt   = ant[0]
-                        data = np.empty((nt, 4), dtype=np.float64)
-                        comm.Recv(data, source=remote, tag=2 * rsta + 1)
-                        print(f"  [rank=0] received sta={rsta} from remote={remote}", flush=True)
-                        c['recv'] += perf_counter() - t1
-                        sta.add_to_response(
-                            data[:, 0], data[:, 1], data[:, 2], data[:, 3],
-                            tmin, tmax)
-                        if writer:
-                            writer.write_station(sta, rsta)
-                        if writer_mode == 'progressive':
-                            sta.clear_response()  
-
-                        count += 1
-                        rsta += nprocs
-
-                # Write rank 0's own stations
-                my_sta = 0
-                while my_sta < nstations:
-                    sta = self._receivers.get_station_by_id(my_sta)
+                elif rank == 0:
+                    # Rank 0 owns this station: write directly
                     if writer:
-                        writer.write_station(sta, my_sta)
+                        t1 = perf_counter()
+                        writer.write_station(station, i_station)
+                        c['recv'] += perf_counter() - t1
+                    # progressive: release RAM now. legacy: keep in memory.
                     if writer_mode == 'progressive':
-                        sta.clear_response()  
-                    my_sta += nprocs
-                count += n_my_stations
-                print(f"Rank 0: {count}/{nstations} stations collected.")
-                if writer:
-                    writer.close()
-        else:
-            if writer:
-                for i_station, station in enumerate(self._receivers):
-                    writer.write_station(station, i_station)
-                    if writer_mode == 'progressive':
-                        station.clear_response() 
-                writer.close()
+                        station.clear_response()
 
+            # ----------------------------------------------------------------
+            # Rank 0 only: receive from worker owner and write
+            # (this branch is only reached when owner != 0)
+            # ----------------------------------------------------------------
+            elif rank == 0:
+                sta = self._receivers.get_station_by_id(i_station)
+                t1  = perf_counter()
+                ant = np.empty(1, dtype=np.int32)
+                comm.Recv(ant, source=owner, tag=2 * i_station)
+                nt   = ant[0]
+                data = np.empty((nt, 4), dtype=np.float64)
+                comm.Recv(data, source=owner, tag=2 * i_station + 1)
+                c['recv'] += perf_counter() - t1
+                printMPI(f"rank=0 recv sta={i_station} from owner={owner}")
+
+                sta.add_to_response(
+                    data[:, 0], data[:, 1], data[:, 2], data[:, 3],
+                    tmin, tmax)
+
+                if writer:
+                    writer.write_station(sta, i_station)
+
+                # progressive: release RAM now. legacy: keep in memory.
+                if writer_mode == 'progressive':
+                    sta.clear_response()
+
+                if showProgress:
+                    elapsed = perf_counter() - tstart
+                    print(f"  [rank=0] written sta {i_station+1}/{nstations} "
+                          f"({(i_station+1)/nstations*100:.1f}%)  "
+                          f"ETA={_eta_str(elapsed, i_station+1, nstations)}")
+
+            # other ranks (rank > 0, rank != owner): idle this iteration
+
+        # ------------------------------------------------------------------
+        # All stations processed — close resources
+        # ------------------------------------------------------------------
+        hfile.close()
         fid.close()
+
+        if rank == 0 and writer:
+            writer.close()
+
         perf_time_total = perf_counter() - perf_time_begin
 
         if rank == 0:
@@ -1204,6 +1225,8 @@ class ShakerMaker:
             print("-" * 50)
 
         _print_perf_stats(c, perf_time_total)
+            
+
 
     # =========================================================================
     # Orchestrator  --  run_nearest
