@@ -6,7 +6,12 @@
 #      PowerShell -ExecutionPolicy Bypass -File .\shakermaker_setup.ps1
 # ==============================================================================
 
+param([switch]$NonInteractive)
+
 . "$PSScriptRoot\00_shakermaker_common.ps1"
+
+# Wraps "Press Enter to exit" so it is skipped when called from Run All
+function Wait-Enter { if (-not $NonInteractive) { Read-Host "  Press Enter to exit" } }
 
 # --- Load config --------------------------------------------------------------
 $cfg            = Read-ShakerConfig "$PSScriptRoot\shakermaker.cfg"
@@ -217,7 +222,7 @@ if ($missing.Count -eq 0 -and $missingDeps.Count -eq 0) {
     Write-Host "  Everything is already installed. Nothing to do!" -ForegroundColor Green
     Write-Host ""
     Log "Nothing to install - all checks passed"
-    Read-Host "  Press Enter to exit"
+    Wait-Enter
     exit 0
 }
 
@@ -425,4 +430,4 @@ Write-Host $line -ForegroundColor Cyan
 Write-Host ""
 Log "Setup complete"
 Stop-Transcript | Out-Null
-Read-Host "  Press Enter to exit"
+Wait-Enter

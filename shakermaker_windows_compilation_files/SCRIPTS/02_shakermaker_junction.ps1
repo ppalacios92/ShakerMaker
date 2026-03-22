@@ -9,7 +9,12 @@
 #      PowerShell -ExecutionPolicy Bypass -File .\shakermaker_junction.ps1
 # ==============================================================================
 
+param([switch]$NonInteractive)
+
 . "$PSScriptRoot\00_shakermaker_common.ps1"
+
+# Wraps "Press Enter to exit" so it is skipped when called from Run All
+function Wait-Enter { if (-not $NonInteractive) { Read-Host "  Press Enter to exit" } }
 
 # --- Load config --------------------------------------------------------------
 $cfg             = Read-ShakerConfig "$PSScriptRoot\shakermaker.cfg"
@@ -53,7 +58,7 @@ if (Test-Path $JUNCTION_PATH) {
             Write-Host ""
             Print-OK "Keeping existing junction. Nothing changed."
             Log "User kept existing junction"
-            Read-Host "  Press Enter to exit"
+            Wait-Enter
             exit 0
         }
         Remove-Item $JUNCTION_PATH -Force
@@ -97,7 +102,7 @@ if ($sourcePath -eq "") {
         if ($attempts -gt 5) {
             Print-FAIL "Too many invalid attempts. Exiting."
             Log "Aborted - too many invalid path attempts"
-            Read-Host "  Press Enter to exit"
+            Wait-Enter
             exit 1
         }
 
@@ -132,14 +137,14 @@ if ($SOURCE_FROM_CFG -ne "" -and $sourcePath -eq $SOURCE_FROM_CFG) {
         Print-FAIL "Path from config does not exist: $sourcePath"
         Print-INFO "Update SHAKERMAKER_SOURCE in shakermaker.cfg and try again."
         Log "[!!] Source path from cfg not found: $sourcePath"
-        Read-Host "  Press Enter to exit"
+        Wait-Enter
         exit 1
     }
     if (-not (Test-Path "$sourcePath\setup.py")) {
         Print-FAIL "setup.py not found in: $sourcePath"
         Print-INFO "Update SHAKERMAKER_SOURCE in shakermaker.cfg and try again."
         Log "[!!] setup.py not found in cfg path: $sourcePath"
-        Read-Host "  Press Enter to exit"
+        Wait-Enter
         exit 1
     }
     Print-OK "Source path validated: $sourcePath"
@@ -159,7 +164,7 @@ if (-not (Test-Path $COMPILER_DIR)) {
     } catch {
         Print-FAIL "Failed to create $COMPILER_DIR : $_"
         Log "[!!] Failed to create $COMPILER_DIR"
-        Read-Host "  Press Enter to exit"
+        Wait-Enter
         exit 1
     }
 } else {
@@ -178,13 +183,13 @@ try {
     } else {
         Print-FAIL "Junction creation failed: $result"
         Log "[!!] Junction creation failed: $result"
-        Read-Host "  Press Enter to exit"
+        Wait-Enter
         exit 1
     }
 } catch {
     Print-FAIL "Error creating junction: $_"
     Log "[!!] Exception creating junction: $_"
-    Read-Host "  Press Enter to exit"
+    Wait-Enter
     exit 1
 }
 
@@ -233,4 +238,4 @@ Write-Host $line -ForegroundColor Cyan
 Write-Host ""
 Log "Junction setup complete"
 Stop-Transcript | Out-Null
-Read-Host "  Press Enter to exit"
+Wait-Enter

@@ -13,7 +13,12 @@
 #      PowerShell -ExecutionPolicy Bypass -File .\shakermaker_build.ps1
 # ==============================================================================
 
+param([switch]$NonInteractive)
+
 . "$PSScriptRoot\00_shakermaker_common.ps1"
+
+# Wraps "Press Enter to exit" so it is skipped when called from Run All
+function Wait-Enter { if (-not $NonInteractive) { Read-Host "  Press Enter to exit" } }
 
 # --- Load config --------------------------------------------------------------
 $cfg             = Read-ShakerConfig "$PSScriptRoot\shakermaker.cfg"
@@ -46,7 +51,9 @@ Write-Host "  |      Python $PYTHON_FULL_VERSION  |  Venv: $VENV_NAME" -Foregrou
 Write-Host "  +---------------------------------------------------------+" -ForegroundColor Cyan
 Write-Host ""
 Log "Build started - user: $env:USERNAME - Python: $PYTHON_FULL_VERSION"
-Start-Transcript -Path "$PSScriptRoot\shakermaker.log" -Append -Force | Out-Null
+# NOTE: Transcript starts AFTER the CMD build subprocess completes.
+# Starting it here causes "The pipeline has been stopped" in PS 5.1
+# when Start-Process cmd.exe writes output back to the console.
 
 # ==============================================================================
 Print-Header "STEP 1 - Pre-Build Checks"
@@ -101,7 +108,7 @@ if ($abort) {
     Write-Host ""
     Print-FAIL "One or more required components are missing. Cannot proceed."
     Log "Build aborted - missing components"
-    Read-Host "  Press Enter to exit"
+    Wait-Enter
     exit 1
 }
 
@@ -122,7 +129,7 @@ if (Test-Path $IFORT_BAT) {
         Print-FAIL "Failed to create ifort.bat - try running as Administrator"
         Print-INFO "Or manually run: echo @ifx %* > `"$IFORT_BAT`""
         Log "[!!] ifort.bat creation failed: $_"
-        Read-Host "  Press Enter to exit"
+        Wait-Enter
         exit 1
     }
 }
@@ -194,6 +201,16 @@ if ($process.ExitCode -eq 0) {
     Print-INFO "Retrying build using compilation cache..."
     Log "[--] First build attempt failed - retrying with cache"
 
+    # Wait up to 20s for numpy's CPU dispatch cache to be written to disk.
+    # The first attempt generates the cache; the second attempt uses it.
+    $cacheFile = "$JUNCTION_PATH\build\temp.win-amd64-cpython-310\Release\ccompiler_opt_cache_ext.py"
+    $waited = 0
+    while (-not (Test-Path $cacheFile) -and $waited -lt 20) {
+        Start-Sleep -Seconds 1
+        $waited++
+    }
+    if ($waited -gt 0) { Print-INFO "Waited ${waited}s for cache file before retrying" }
+
     $process2 = Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$buildCmdScript`"" `
         -NoNewWindow -Wait -PassThru
 
@@ -203,18 +220,21 @@ if ($process.ExitCode -eq 0) {
     } else {
         Print-FAIL "Build failed on retry (exit code $($process2.ExitCode))"
         Log "[!!] Build failed on retry"
-        Read-Host "  Press Enter to exit"
+        Wait-Enter
         exit 1
     }
 } else {
     Print-FAIL "Build failed (exit code $($process.ExitCode))"
     Log "[!!] Build subprocess exited $($process.ExitCode)"
-    Read-Host "  Press Enter to exit"
+    Wait-Enter
     exit 1
 }
 
 # Clean up temp file
 Remove-Item $buildCmdScript -Force -ErrorAction SilentlyContinue
+
+# Start transcript NOW - all CMD subprocesses are done, safe to start
+Start-Transcript -Path "$PSScriptRoot\shakermaker.log" -Append -Force | Out-Null
 
 # ==============================================================================
 Print-Header "STEP 4 - Create sitecustomize.py"
@@ -372,4 +392,4 @@ Write-Host $line -ForegroundColor Cyan
 Write-Host ""
 Log "Build script complete"
 Stop-Transcript | Out-Null
-Read-Host "  Press Enter to exit"
+Wait-Enter

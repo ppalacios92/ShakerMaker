@@ -62,11 +62,14 @@ echo.
 echo  Running all steps in order...
 echo.
 echo  --- Step 1 ---
-PowerShell -ExecutionPolicy Bypass -File "%~dp001_shakermaker_setup.ps1"
+PowerShell -ExecutionPolicy Bypass -File "%~dp001_shakermaker_setup.ps1" -NonInteractive
+if errorlevel 1 ( echo  [!!] Step 1 failed. Stopping. & pause & goto MENU )
 echo  --- Step 2 ---
-PowerShell -ExecutionPolicy Bypass -File "%~dp002_shakermaker_junction.ps1"
+PowerShell -ExecutionPolicy Bypass -File "%~dp002_shakermaker_junction.ps1" -NonInteractive
+if errorlevel 1 ( echo  [!!] Step 2 failed. Stopping. & pause & goto MENU )
 echo  --- Step 3 ---
-PowerShell -ExecutionPolicy Bypass -File "%~dp003_shakermaker_build.ps1"
+PowerShell -ExecutionPolicy Bypass -File "%~dp003_shakermaker_build.ps1" -NonInteractive
+if errorlevel 1 ( echo  [!!] Step 3 failed. Stopping. & pause & goto MENU )
 echo.
 echo  All steps complete. LARGA VIDA AL LADRUNO
 pause
