@@ -136,16 +136,20 @@ def _compile_ffsp_windows(ffsp_dir):
         "--f77flags=/Qopenmp",
         "-m", "ffsp_core",
     ]
-    result = subprocess.run(cmd, cwd=ffsp_dir, check=True,
-                            capture_output=True, text=True)
+    # Windows change: capture_output=False so ifx compiler errors print
+    # directly to the console instead of being silently swallowed.
+    result = subprocess.run(cmd, cwd=ffsp_dir, check=False)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"[ffsp] f2py/ifx failed (exit {result.returncode}) "
+            "-- read the ifx error lines above this message."
+        )
     pyd_files = [f for f in os.listdir(ffsp_dir)
                  if f.startswith('ffsp_core') and f.endswith('.pyd')]
     if pyd_files:
         print(f"[OK] FFSP wrapper compiled (Windows): {pyd_files[0]}")
     else:
-        print("STDOUT:", result.stdout[-2000:])
-        print("STDERR:", result.stderr[-2000:])
-        raise RuntimeError("FFSP .pyd not found after compilation")
+        raise RuntimeError("FFSP .pyd not found after compilation despite returncode=0")
         
     print(f"[ffsp] compiling from: {ffsp_dir}")
     import glob

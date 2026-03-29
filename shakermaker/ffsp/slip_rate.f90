@@ -15,24 +15,35 @@ subroutine sum_point_svf(svf)
  implicit NONE
  integer:: i,j,j0,j1,j2,jmm
  real:: rise_time
- real, dimension(ntime):: svf,svf_s
- real, dimension(2*ntime):: mr
+! Windows change: svf_s and mr changed from stack arrays to heap (allocatable).
+! Stack arrays of size ntime (131072 reals = 512 KB each) cause stack overflow on Windows.
+ real, dimension(ntime):: svf
+ real, allocatable:: svf_s(:), mr(:)
+  allocate(svf_s(ntime), mr(2*ntime))
   svf=0.0
   mr=0.0
  do i=1,nsum
    rise_time=rstm(i)+pktm(i)
    cft1=pktm(i)/rise_time
-   call svf_yoffe(ntime,dt,rise_time,cft1,svf_s)
+! Windows change: pass ntime as nsvf so svf_yoffe uses explicit-size interface.
+   call svf_yoffe(ntime,dt,rise_time,cft1,svf_s,ntime)
    j0=int(rptm(i)/dt+0.5)
    j1=j0+1
    j2=int(rise_time/dt)+j1
    do j=j1,j2
-     mr(j)=mr(j)+slip(i)*svf_s(j-j0)
+! Windows change: bounds guards prevent out-of-bounds write that crashes
+! silently on Windows/ifx (Linux/gfortran tolerates it due to memory layout).
+     if(j.ge.1 .and. j.le.2*ntime .and. &
+        (j-j0).ge.1 .and. (j-j0).le.ntime) then
+       mr(j)=mr(j)+slip(i)*svf_s(j-j0)
+     endif
    enddo
  enddo
  do i=1,ntime
     svf(i)=mr(i)
  enddo
+! Windows change: deallocate heap arrays allocated above.
+ deallocate(svf_s, mr)
 end subroutine sum_point_svf
 !
 !======================================================================
@@ -55,13 +66,24 @@ end subroutine peak_slip_rate
 !======================================================================
 ! modified normalized yoffe function. Chen Ji, 2020
 !
-subroutine svf_yoffe(nt,dt,rise_time,cft1,svf)
+! Windows change: added nsvf argument so svf uses explicit-size declaration svf(nsvf).
+! Passing an assumed-shape (dimension(:)) or fixed-size array from an allocatable
+! caller without an explicit interface is illegal Fortran 90 and causes heap
+! corruption on Windows/ifx (crash inside allocate). Explicit-size passes by
+! address only — no array descriptor, no interface needed, legal on all compilers.
+! yoffe and hsin also moved to heap (allocatable) to avoid 3x512 KB on the stack.
+subroutine svf_yoffe(nt,dt,rise_time,cft1,svf,nsvf)
  implicit NONE
  real, parameter:: pi=3.14159265
- integer:: nt,npt_yoffe,nsin,i,j,nall
+ integer:: nt,nsvf,npt_yoffe,nsin,i,j,nall
  real:: cft1,dt,rise_time
  real:: ty,tsin,sn,t,tsin_min
- real,dimension(nt):: svf,yoffe,hsin
+! Windows change: svf explicit-size (no descriptor), yoffe/hsin heap-allocated.
+ real,intent(out):: svf(nsvf)
+ real,allocatable:: yoffe(:),hsin(:)
+ allocate(yoffe(nt),hsin(nt))
+ yoffe=0.0
+ hsin=0.0
 
  svf=0.0
  if(cft1.ge.1.0)then
@@ -93,7 +115,8 @@ subroutine svf_yoffe(nt,dt,rise_time,cft1,svf)
    enddo
    do i=1,npt_yoffe
      do j=1,nsin
-       svf(i+j-1)=svf(i+j-1)+yoffe(i)*hsin(j)
+! Windows change: guard prevents write past end of svf(nsvf).
+       if((i+j-1).le.nsvf) svf(i+j-1)=svf(i+j-1)+yoffe(i)*hsin(j)
      enddo
    enddo
  else
@@ -105,7 +128,10 @@ subroutine svf_yoffe(nt,dt,rise_time,cft1,svf)
  do i=1,nall
     sn=sn+svf(i)
  enddo
- svf=svf/(dt*sn)
+! Windows change: guard against division by zero if sn=0 after clamping.
+ if(sn.ne.0.0) svf=svf/(dt*sn)
+! Windows change: deallocate heap arrays.
+ deallocate(yoffe,hsin)
 end subroutine svf_yoffe
 !
 !======================================================================

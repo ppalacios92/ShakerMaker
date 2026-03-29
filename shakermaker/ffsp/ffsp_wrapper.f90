@@ -329,7 +329,10 @@ subroutine compute_spectral_data(rmt, fc1, fc2, &
     ! Local variables
     integer :: i, j, i1, i2
     real :: tim, dtmt, sum, f2_temp
-    real, dimension(131072) :: svf  ! Max size
+! Windows change: svf moved from stack (131072 reals = 512 KB) to heap.
+! A 512 KB stack array causes stack overflow on Windows where the default
+! thread stack is ~1 MB. Using allocatable puts it on the heap instead.
+    real, allocatable :: svf(:)
     
     ! Set output dimensions from time_freq module
     ntime_out = ntime
@@ -339,6 +342,8 @@ subroutine compute_spectral_data(rmt, fc1, fc2, &
     !--------------------------------------------------------------------------
     ! 1. Calculate STF in time domain
     !--------------------------------------------------------------------------
+! Windows change: allocate svf on heap (see declaration change above).
+    allocate(svf(ntime))
     svf = 0.0
     call sum_point_svf(svf)
     
@@ -398,4 +403,6 @@ subroutine compute_spectral_data(rmt, fc1, fc2, &
         freq_center(i) = 0.5 * (freq(i1) + freq(i2))
     enddo
     
+! Windows change: deallocate heap array allocated above.
+    deallocate(svf)
 end subroutine compute_spectral_data
