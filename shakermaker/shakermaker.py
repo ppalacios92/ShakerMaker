@@ -64,7 +64,39 @@ HDF5 database layout
 
 import copy
 import os
+import sys
+import threading
 import traceback
+
+# Windows change: the default Windows thread stack is ~1 MB, which is not
+# enough for the Fortran FK core with large nfft (e.g. 16384 needs ~4 MB).
+# _win_run() relaunches a callable in a 64 MB thread on Windows only.
+# On Linux/macOS it is a transparent no-op (calls fn directly).
+_WIN_STACK_SIZE = 64 * 1024 * 1024  # 64 MB
+
+def _win_run(fn, *args, **kwargs):
+    """Call fn(*args, **kwargs) in a 64 MB stack thread on Windows only."""
+    if sys.platform != 'win32':
+        return fn(*args, **kwargs)
+    result = [None]
+    error  = [None]
+    def _target():
+        threading.current_thread()._sm_large_stack = True
+        try:
+            result[0] = fn(*args, **kwargs)
+        except Exception as exc:
+            error[0] = exc
+    old_size = threading.stack_size()
+    try:
+        threading.stack_size(_WIN_STACK_SIZE)
+        t = threading.Thread(target=_target)
+        t.start()
+        t.join()
+    finally:
+        threading.stack_size(old_size)
+    if error[0] is not None:
+        raise error[0]
+    return result[0]
 import logging
 import numpy as np
 import h5py
@@ -224,6 +256,15 @@ class ShakerMaker:
         :param writer_mode: 'progressive' or 'legacy'
         :type writer_mode: str
         """
+        # Windows change: relaunch in a 64 MB stack thread so the
+        # Fortran FK core has enough stack for large nfft values.
+        if sys.platform == 'win32' and not getattr(threading.current_thread(), '_sm_large_stack', False):
+            return _win_run(self.run,
+                dt=dt, nfft=nfft, tb=tb, smth=smth, sigma=sigma,
+                taper=taper, wc1=wc1, wc2=wc2, pmin=pmin, pmax=pmax,
+                dk=dk, nx=nx, kc=kc, writer=writer, verbose=verbose,
+                debugMPI=debugMPI, tmin=tmin, tmax=tmax,
+                showProgress=showProgress, writer_mode=writer_mode)
         title = f"¡LARGA VIDA AL LADRUNO_h5drm_progressive! ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
         
         if rank == 0:
@@ -808,6 +849,15 @@ class ShakerMaker:
         :param showProgress: Print ETA on rank 0.
         :type showProgress: bool
         """
+        # Windows change: relaunch in a 64 MB stack thread so the
+        # Fortran FK core has enough stack for large nfft values.
+        if sys.platform == 'win32' and not getattr(threading.current_thread(), '_sm_large_stack', False):
+            return _win_run(self.compute_gf,
+                h5_database_name=h5_database_name,
+                dt=dt, nfft=nfft, tb=tb, smth=smth, sigma=sigma,
+                taper=taper, wc1=wc1, wc2=wc2, pmin=pmin, pmax=pmax,
+                dk=dk, nx=nx, kc=kc, verbose=verbose,
+                debugMPI=debugMPI, showProgress=showProgress)
         title = (f"¡LARGA VIDA AL LADRUNO_h5drm_progressive! ShakerMaker Gen Green's functions database begin. "
                  f"{dt=} {nfft=} {dk=} {tb=}")
 
@@ -1001,6 +1051,16 @@ class ShakerMaker:
         :type tmax: double
         (remaining parameters identical to :meth:`run`)
         """
+        # Windows change: relaunch in a 64 MB stack thread so the
+        # Fortran FK core has enough stack for large nfft values.
+        if sys.platform == 'win32' and not getattr(threading.current_thread(), '_sm_large_stack', False):
+            return _win_run(self.run_fast,
+                h5_database_name=h5_database_name,
+                dt=dt, nfft=nfft, tb=tb, smth=smth, sigma=sigma,
+                taper=taper, wc1=wc1, wc2=wc2, pmin=pmin, pmax=pmax,
+                dk=dk, nx=nx, kc=kc, writer=writer, writer_mode=writer_mode,
+                verbose=verbose, debugMPI=debugMPI,
+                tmin=tmin, tmax=tmax, showProgress=showProgress)
         title = (f"¡LARGA VIDA AL LADRUNO_h5drm_progressive! ShakerMaker Run (Stage 2 - OP) begin. "
                  f"{dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}")
 

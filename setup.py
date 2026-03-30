@@ -44,7 +44,7 @@ else:
         #     extra_link_args=["-fopenmp"]
         if sys.platform == 'win32':
             f77_args     = ["/Qopenmp", "/extend-source:132"]
-            link_args    = ["/Qopenmp"]
+            link_args    = ["/Qopenmp", "/F67108864"]
             compile_args = ["-DNPY_NO_DEPRECATED_API=NPY_1_7_API_VERSION"]
         else:
             f77_args     = ["-ffixed-line-length-132", "-Wno-tabs", "-Wno-unused-dummy-argument", "-fPIC", "-fopenmp"]
