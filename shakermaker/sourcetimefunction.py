@@ -2,11 +2,6 @@ import numpy as np
 import abc
 import scipy.signal as sig
 from scipy.interpolate import interp1d
-from scipy.fft import fft, irfft, next_fast_len
-
-
-def _get_fft_kernel_size(n_signal, kernel_len):
-    return next_fast_len(n_signal + kernel_len - 1)
 
 
 class SourceTimeFunction(metaclass=abc.ABCMeta):
@@ -15,9 +10,6 @@ class SourceTimeFunction(metaclass=abc.ABCMeta):
         self._dt = dt
         self._data = None
         self._t = None
-        self._fft_kernel = None
-        self._fft_kernel_size = None
-        self._fft_kernel_valid_for_dt = None
 
     @property
     def dt(self):
@@ -29,7 +21,6 @@ class SourceTimeFunction(metaclass=abc.ABCMeta):
 
         self._dt = value
         self._generate_data()
-        self._fft_kernel = None
 
     @property
     def data(self):
@@ -43,15 +34,6 @@ class SourceTimeFunction(metaclass=abc.ABCMeta):
             self._generate_data()
         return self._t
 
-    def _get_fft_kernel(self, n_signal):
-        if self._fft_kernel is None or self._fft_kernel_valid_for_dt != self._dt:
-            kernel = self.data
-            n_fft = _get_fft_kernel_size(n_signal, len(kernel))
-            self._fft_kernel = fft(kernel, n=n_fft)
-            self._fft_kernel_size = n_fft
-            self._fft_kernel_valid_for_dt = self._dt
-        return self._fft_kernel, self._fft_kernel_size
-
     @abc.abstractmethod
     def _generate_data(self):
         raise NotImplementedError('derived class must define method generate_data')
@@ -62,14 +44,35 @@ class SourceTimeFunction(metaclass=abc.ABCMeta):
         else:
             dt_old = t[1] - t[0]
             dt_new = self.dt
+            # print(f"Resampling VAL from {dt_old} to {dt_new}")
+            # val = 0*val
+            # val[len(val)//2]=1
             t_resampled = np.arange(t[0], t[-1], dt_new)
             val_resampled = interp1d(t, val, bounds_error=False, fill_value=(val[0], val[-1]))(t_resampled)
+            # val_resampled = sig.resample(val, len(t_resampled))
+            # val_resampled *= 0
+            # val_resampled[len(val_resampled)//2]=1
+            # val_stf_resampled = sig.convolve(val_resampled, self.data, mode="full")[0:len(val_resampled)]*dt_new
+            # val_stf_resampled = sig.convolve(val_resampled, self.data, mode="full")[0:len(val_resampled)] / sum(self.data)
+            # val_stf_resampled = sig.convolve(val_resampled, self.data, mode="same") / (sum(self.data)*dt_new)
             val_stf_resampled = sig.convolve(val_resampled, self.data, mode="full")[0:len(val_resampled)] * dt_new 
+            # val_stf_resampled = sig.convolve(val_resampled, self.data, mode="same") * dt_new / dt_old
+            # val_stf_resampled = sig.convolve(val_resampled, self.data, mode="same") 
+            # val_stf_resampled = sig.convolve(val_resampled, self.data, mode="full")[0:len(val_resampled)]
             val_stf = interp1d(t_resampled, val_stf_resampled, bounds_error=False, fill_value=(val[0], val[-1]))(t)
+            # print(f"Resampling VAL from {t_resampled[1] - t_resampled[0]} to {t[1] - t[0]}")
+            # print(f"  len before = {len(val_stf_resampled)} len after = {len(val_stf)}")
+            # interp1d
+            # tstf_resampled = np.arange(0, self.t.max(), self.dt)
+            # dstf_resampled = interp1d(self.t, self.data)(tstf_resampled)
+            # val_stf = sig.convolve(val, dstf_resampled, mode="full")[0:len(val)]
+            # sig.convolve
             if debug:
                 import matplotlib.pylab as plt
 
                 plt.figure(1)
+                # plt.plot(tstf_resampled, dstf_resampled, label="resampled STF")
+                # plt.legend()
                 plt.plot(t, val, label="original val")
                 plt.plot(t_resampled, val_resampled, ".", label="resampled val")
 
@@ -86,62 +89,5 @@ class SourceTimeFunction(metaclass=abc.ABCMeta):
                 plt.legend()
                 plt.show()
 
+
         return val_stf
-
-    def convolve_fft(self, val, t):
-        if len(self.data) == 1:
-            return val * self.data[0]
-        
-        dt_new = self.dt
-        n_signal = len(val)
-        fft_kernel, n_fft = self._get_fft_kernel(n_signal)
-        
-        val_fft = fft(val, n=n_fft)
-        val_conv_fft = val_fft * fft_kernel
-        val_conv = irfft(val_conv_fft, n=n_fft)[:n_signal]
-        return val_conv * dt_new
-
-    def convolve_batch(self, seis, t):
-        if len(self.data) == 1:
-            return seis * self.data[0]
-        
-        dt_new = self.dt
-        n_signal = seis.shape[-1]
-        fft_kernel, n_fft = self._get_fft_kernel(n_signal)
-        
-        seis_fft = fft(seis, n=n_fft, axis=-1)
-        seis_conv_fft = seis_fft * fft_kernel
-        seis_conv = irfft(seis_conv_fft, n=n_fft, axis=-1)
-        
-        result = seis_conv[..., :n_signal] * dt_new
-        
-        boundaries = (seis[..., 0], seis[..., -1])
-        
-        return result
-
-    def convolve_batch_with_resample(self, seis, t, t_resampled):
-        if len(self.data) == 1:
-            return seis * self.data[0]
-        
-        n_comp = seis.shape[0]
-        n_new = len(t_resampled)
-        
-        dt_new = self.dt
-        fft_kernel, n_fft = self._get_fft_kernel(n_new)
-        
-        val_resampled = np.zeros((n_comp, n_new), dtype=np.float64)
-        for i in range(n_comp):
-            val_resampled[i] = interp1d(t, seis[i], bounds_error=False, 
-                                        fill_value=(seis[i, 0], seis[i, -1]))(t_resampled)
-        
-        seis_fft = fft(val_resampled, n=n_fft, axis=-1)
-        seis_conv_fft = seis_fft * fft_kernel
-        seis_conv = irfft(seis_conv_fft, n=n_fft, axis=-1)
-        val_stf_resampled = seis_conv[..., :n_new] * dt_new
-        
-        val_stf = np.zeros((n_comp, len(t)), dtype=np.float64)
-        for i in range(n_comp):
-            val_stf[i] = interp1d(t_resampled, val_stf_resampled[i], bounds_error=False,
-                                  fill_value=(seis[i, 0], seis[i, -1]))(t)
-        
-        return val_stf[0], val_stf[1], val_stf[2]
