@@ -265,7 +265,7 @@ class ShakerMaker:
                 dk=dk, nx=nx, kc=kc, writer=writer, verbose=verbose,
                 debugMPI=debugMPI, tmin=tmin, tmax=tmax,
                 showProgress=showProgress, writer_mode=writer_mode)
-        title = f"¡LARGA VIDA AL LADRUNO_agents! ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+        title = f"¡LARGA VIDA AL LADRUNO_source_plots_h5! ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
         
         if rank == 0:
             print(f"\n\n{title}")
@@ -606,7 +606,7 @@ class ShakerMaker:
         nstations = self._receivers.nstations
         N         = nstations * nsources          # total pairs
 
-        title = (f"¡LARGA VIDA AL LADRUNO_agents! ShakerMaker Gen GF database pairs begin. "
+        title = (f"¡LARGA VIDA AL LADRUNO_source_plots_h5! ShakerMaker Gen GF database pairs begin. "
                  f"{delta_h=} {delta_v_rec=} {delta_v_src=}")
         if rank == 0:
             print(f"\n\n{title}")
@@ -858,7 +858,7 @@ class ShakerMaker:
                 taper=taper, wc1=wc1, wc2=wc2, pmin=pmin, pmax=pmax,
                 dk=dk, nx=nx, kc=kc, verbose=verbose,
                 debugMPI=debugMPI, showProgress=showProgress)
-        title = (f"¡LARGA VIDA AL LADRUNO_agents! ShakerMaker Gen Green's functions database begin. "
+        title = (f"¡LARGA VIDA AL LADRUNO_source_plots_h5! ShakerMaker Gen Green's functions database begin. "
                  f"{dt=} {nfft=} {dk=} {tb=}")
 
         if rank == 0:
@@ -1061,7 +1061,7 @@ class ShakerMaker:
                 dk=dk, nx=nx, kc=kc, writer=writer, writer_mode=writer_mode,
                 verbose=verbose, debugMPI=debugMPI,
                 tmin=tmin, tmax=tmax, showProgress=showProgress)
-        title = (f"¡LARGA VIDA AL LADRUNO_agents! ShakerMaker Run (Stage 2 - OP) begin. "
+        title = (f"¡LARGA VIDA AL LADRUNO_source_plots_h5! ShakerMaker Run (Stage 2 - OP) begin. "
                  f"{dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}")
 
         if rank == 0:
@@ -1150,7 +1150,10 @@ class ShakerMaker:
         #
         # Tags: 2*i_station and 2*i_station+1 — unique per station, no collision.
         # ------------------------------------------------------------------
-
+        slot_matrix = pair_to_slot.reshape(nstations, nsources)
+        # Cache all source objects once to avoid repeated get_source_by_id() calls
+        source_list_cache = [self._source.get_source_by_id(j) for j in range(nsources)]
+        
         for i_station in range(nstations):
             owner = i_station % nprocs
 
@@ -1161,12 +1164,19 @@ class ShakerMaker:
                 station    = self._receivers.get_station_by_id(i_station)
                 tstart_sta = perf_counter()
 
+                # slot_to_sources = {}
+                # for i_psource, psource in enumerate(self._source):
+                #     k = int(pair_to_slot[i_station * nsources + i_psource])
+                #     if k not in slot_to_sources:
+                #         slot_to_sources[k] = []
+                #     slot_to_sources[k].append((i_psource, psource))
+
                 slot_to_sources = {}
-                for i_psource, psource in enumerate(self._source):
-                    k = int(pair_to_slot[i_station * nsources + i_psource])
+                for i_psource, k in enumerate(slot_matrix[i_station]):
+                    k = int(k)
                     if k not in slot_to_sources:
                         slot_to_sources[k] = []
-                    slot_to_sources[k].append((i_psource, psource))
+                    slot_to_sources[k].append((i_psource, source_list_cache[i_psource]))
 
                 for k, source_list in slot_to_sources.items():
                     tdata = hfile[f"/tdata_dict/{k}_tdata"][:]
@@ -1189,9 +1199,9 @@ class ShakerMaker:
 
                         t1    = perf_counter()
                         t_arr = np.arange(0, len(z) * dt, dt) + psource.tt + t0
-                        seis = np.stack([z, e, n])
-                        z_stf, e_stf, n_stf = psource.stf.convolve_batch_with_resample(
-                            seis, t_arr, np.arange(t_arr[0], t_arr[-1], dt))
+                        z_stf = psource.stf.convolve(z, t_arr)
+                        e_stf = psource.stf.convolve(e, t_arr)
+                        n_stf = psource.stf.convolve(n, t_arr)
                         c['conv'] += perf_counter() - t1
 
                         try:
@@ -1401,7 +1411,7 @@ class ShakerMaker:
         perf_time_begin = perf_counter()
 
         if rank == 0:
-            title = (f"¡LARGA VIDA AL LADRUNO_agents! ShakerMaker run_nearest | stage={stage} | "
+            title = (f"¡LARGA VIDA AL LADRUNO_source_plots_h5! ShakerMaker run_nearest | stage={stage} | "
                      f"{dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}")
             print(f"\n\n{title}")
             print("-" * len(title))
@@ -1557,7 +1567,7 @@ class ShakerMaker:
         npairs_total = nstations * nsources
 
         if rank == 0:
-            title = (f"¡LARGA VIDA AL LADRUNO_agents! ShakerMaker build_pair_to_slot_from_legacy_h5 -- "
+            title = (f"¡LARGA VIDA AL LADRUNO_source_plots_h5! ShakerMaker build_pair_to_slot_from_legacy_h5 -- "
                      f"{h5_database_name}")
             print(f"\n\n{title}")
             print("-" * len(title))
