@@ -265,7 +265,7 @@ class ShakerMaker:
                 dk=dk, nx=nx, kc=kc, writer=writer, verbose=verbose,
                 debugMPI=debugMPI, tmin=tmin, tmax=tmax,
                 showProgress=showProgress, writer_mode=writer_mode)
-        title = f"¡LARGA VIDA AL LADRUNO_h5drm_progressive! ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+        title = f"¡LARGA VIDA AL LADRUNO_agents! ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
         
         if rank == 0:
             print(f"\n\n{title}")
@@ -606,7 +606,7 @@ class ShakerMaker:
         nstations = self._receivers.nstations
         N         = nstations * nsources          # total pairs
 
-        title = (f"¡LARGA VIDA AL LADRUNO_h5drm_progressive! ShakerMaker Gen GF database pairs begin. "
+        title = (f"¡LARGA VIDA AL LADRUNO_agents! ShakerMaker Gen GF database pairs begin. "
                  f"{delta_h=} {delta_v_rec=} {delta_v_src=}")
         if rank == 0:
             print(f"\n\n{title}")
@@ -858,7 +858,7 @@ class ShakerMaker:
                 taper=taper, wc1=wc1, wc2=wc2, pmin=pmin, pmax=pmax,
                 dk=dk, nx=nx, kc=kc, verbose=verbose,
                 debugMPI=debugMPI, showProgress=showProgress)
-        title = (f"¡LARGA VIDA AL LADRUNO_h5drm_progressive! ShakerMaker Gen Green's functions database begin. "
+        title = (f"¡LARGA VIDA AL LADRUNO_agents! ShakerMaker Gen Green's functions database begin. "
                  f"{dt=} {nfft=} {dk=} {tb=}")
 
         if rank == 0:
@@ -1061,7 +1061,7 @@ class ShakerMaker:
                 dk=dk, nx=nx, kc=kc, writer=writer, writer_mode=writer_mode,
                 verbose=verbose, debugMPI=debugMPI,
                 tmin=tmin, tmax=tmax, showProgress=showProgress)
-        title = (f"¡LARGA VIDA AL LADRUNO_h5drm_progressive! ShakerMaker Run (Stage 2 - OP) begin. "
+        title = (f"¡LARGA VIDA AL LADRUNO_agents! ShakerMaker Run (Stage 2 - OP) begin. "
                  f"{dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}")
 
         if rank == 0:
@@ -1124,6 +1124,9 @@ class ShakerMaker:
         c         = _perf_counters()
         tstart    = perf_counter()
 
+        for psource in self._source:
+            psource.stf.dt = dt
+
         # ------------------------------------------------------------------
         # Unified single-pass loop — identical pattern to compute_gf.
         #
@@ -1158,50 +1161,55 @@ class ShakerMaker:
                 station    = self._receivers.get_station_by_id(i_station)
                 tstart_sta = perf_counter()
 
+                slot_to_sources = {}
                 for i_psource, psource in enumerate(self._source):
-                    # O(1) slot lookup
-                    k     = int(pair_to_slot[i_station * nsources + i_psource])
+                    k = int(pair_to_slot[i_station * nsources + i_psource])
+                    if k not in slot_to_sources:
+                        slot_to_sources[k] = []
+                    slot_to_sources[k].append((i_psource, psource))
+
+                for k, source_list in slot_to_sources.items():
                     tdata = hfile[f"/tdata_dict/{k}_tdata"][:]
 
-                    aux_crust = copy.deepcopy(self._crust)
-                    aux_crust.split_at_depth(psource.x[2])
-                    aux_crust.split_at_depth(station.x[2])
+                    for i_psource, psource in source_list:
+                        aux_crust = copy.deepcopy(self._crust)
+                        aux_crust.split_at_depth(psource.x[2])
+                        aux_crust.split_at_depth(station.x[2])
 
-                    if verbose:
-                        print(f"  rank={rank} sta={i_station} "
-                              f"src={i_psource} slot={k}")
+                        if verbose:
+                            print(f"  rank={rank} sta={i_station} "
+                                  f"src={i_psource} slot={k}")
 
-                    t1 = perf_counter()
-                    z, e, n, t0 = self._call_core_fast(
-                        tdata, dt, nfft, tb, nx, sigma, smth,
-                        wc1, wc2, pmin, pmax, dk, kc,
-                        taper, aux_crust, psource, station, verbose)
-                    c['core'] += perf_counter() - t1
-
-                    t1    = perf_counter()
-                    t_arr = np.arange(0, len(z) * dt, dt) + psource.tt + t0
-                    psource.stf.dt = dt
-                    z_stf = psource.stf.convolve(z, t_arr)
-                    e_stf = psource.stf.convolve(e, t_arr)
-                    n_stf = psource.stf.convolve(n, t_arr)
-                    c['conv'] += perf_counter() - t1
-
-                    try:
                         t1 = perf_counter()
-                        station.add_to_response(z_stf, e_stf, n_stf,
-                                                t_arr, tmin, tmax)
-                        c['add'] += perf_counter() - t1
-                    except Exception:
-                        traceback.print_exc()
-                        if use_mpi and nprocs > 1:
-                            comm.Abort()
+                        z, e, n, t0 = self._call_core_fast(
+                            tdata, dt, nfft, tb, nx, sigma, smth,
+                            wc1, wc2, pmin, pmax, dk, kc,
+                            taper, aux_crust, psource, station, verbose)
+                        c['core'] += perf_counter() - t1
 
-                    if showProgress and i_psource % 1000 == 0:
-                        elapsed = perf_counter() - tstart_sta
-                        print(f"  rank={rank} sta={i_station} "
-                              f"src={i_psource}/{nsources} "
-                              f"({i_psource/nsources*100:.1f}%)  "
-                              f"ETA={_eta_str(elapsed, i_psource+1, nsources)}")
+                        t1    = perf_counter()
+                        t_arr = np.arange(0, len(z) * dt, dt) + psource.tt + t0
+                        seis = np.stack([z, e, n])
+                        z_stf, e_stf, n_stf = psource.stf.convolve_batch_with_resample(
+                            seis, t_arr, np.arange(t_arr[0], t_arr[-1], dt))
+                        c['conv'] += perf_counter() - t1
+
+                        try:
+                            t1 = perf_counter()
+                            station.add_to_response(z_stf, e_stf, n_stf,
+                                                    t_arr, tmin, tmax)
+                            c['add'] += perf_counter() - t1
+                        except Exception:
+                            traceback.print_exc()
+                            if use_mpi and nprocs > 1:
+                                comm.Abort()
+
+                        if showProgress and i_psource % 1000 == 0:
+                            elapsed = perf_counter() - tstart_sta
+                            print(f"  rank={rank} sta={i_station} "
+                                  f"src={i_psource}/{nsources} "
+                                  f"({i_psource/nsources*100:.1f}%)  "
+                                  f"ETA={_eta_str(elapsed, i_psource+1, nsources)}")
 
                 # All sources done for this station
                 elapsed_sta = perf_counter() - tstart_sta
@@ -1393,7 +1401,7 @@ class ShakerMaker:
         perf_time_begin = perf_counter()
 
         if rank == 0:
-            title = (f"¡LARGA VIDA AL LADRUNO_h5drm_progressive! ShakerMaker run_nearest | stage={stage} | "
+            title = (f"¡LARGA VIDA AL LADRUNO_agents! ShakerMaker run_nearest | stage={stage} | "
                      f"{dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}")
             print(f"\n\n{title}")
             print("-" * len(title))
@@ -1549,7 +1557,7 @@ class ShakerMaker:
         npairs_total = nstations * nsources
 
         if rank == 0:
-            title = (f"¡LARGA VIDA AL LADRUNO_h5drm_progressive! ShakerMaker build_pair_to_slot_from_legacy_h5 -- "
+            title = (f"¡LARGA VIDA AL LADRUNO_agents! ShakerMaker build_pair_to_slot_from_legacy_h5 -- "
                      f"{h5_database_name}")
             print(f"\n\n{title}")
             print("-" * len(title))

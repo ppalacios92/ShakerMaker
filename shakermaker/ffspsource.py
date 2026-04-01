@@ -1782,7 +1782,7 @@ class FFSPSource:
 
 
 
-    def plot_spacial_distribution(self, figsize=(10, 8), field='rise_time', 
+    def plot_spacial_distribution(self, figsize=(10, 8), field='rise_time', rotate=False,
                                   cmap='coolwarm', show_contours=True, 
                                   contour_field='rupture_time', show_hypocenter=True,
                                   contour_interval=None, contour_color='blue',
@@ -1834,7 +1834,10 @@ class FFSPSource:
         y_local = np.linspace(0, ly, ny)
 
         # Convert strike to radians
-        strike_rad = np.radians(strike)
+        if rotate:
+            strike_rad = np.radians(strike) + np.radians(90)
+        else:
+            strike_rad = np.radians(strike)
 
         # Create meshgrid centered on hypocenter
         X_local, Y_local = np.meshgrid(x_local, y_local)
@@ -1850,7 +1853,10 @@ class FFSPSource:
         # Apply coordinate transformation if provided
         if internal_ref is not None and external_coord is not None:
             ref_x, ref_y = internal_ref
-            ext_x, ext_y = external_coord
+            if rotate:
+                ext_y, ext_x = external_coord
+            else:
+                ext_x, ext_y = external_coord
             
             # Rotate the reference point
             ref_x_rot = ref_x * np.sin(strike_rad) + ref_y * np.cos(strike_rad)
@@ -1868,8 +1874,12 @@ class FFSPSource:
             hypo_x = self.params['xref_hypc'] * np.sin(strike_rad) + self.params['yref_hypc'] * np.cos(strike_rad) + offset_x
             hypo_y = self.params['xref_hypc'] * np.cos(strike_rad) - self.params['yref_hypc'] * np.sin(strike_rad) + offset_y
             
-            xlabel = 'UTM Easting, X [km]'
-            ylabel = 'UTM Northing, Y [km]'
+            if rotate:
+                ylabel = 'UTM Easting, X [km]'
+                xlabel = 'UTM Northing, Y [km]'
+            else:                
+                xlabel = 'UTM Easting, X [km]'
+                ylabel = 'UTM Northing, Y [km]'
         else:
             # No transformation, use xref/yref as offset
             X = X_rot + self.params['xref_hypc']
@@ -1878,8 +1888,12 @@ class FFSPSource:
             hypo_x = self.params['xref_hypc']
             hypo_y = self.params['yref_hypc']
             
-            xlabel = 'Along Dip [km]'
-            ylabel = 'Along Strike [km]'
+            if rotate:
+                ylabel = 'Along Dip [km]'
+                xlabel = 'Along Strike [km]'
+            else:                
+                xlabel = 'Along Dip [km]'
+                ylabel = 'Along Strike [km]'
         
         # Labels
         field_labels = {
@@ -1898,7 +1912,26 @@ class FFSPSource:
         im = ax.pcolormesh(X, Y, field_data, cmap=cmap, shading='auto',
                     vmin=vmin, vmax=vmax)
 
-        plt.colorbar(im, label=field_labels[field], shrink=1.0, ax=ax)
+        if rotate:
+            # plt.colorbar(im, label=field_labels[field], ax=ax,
+            #              orientation='horizontal', location='bottom',
+            #              shrink=0.8, pad=0.12)
+            from mpl_toolkits.axes_grid1 import make_axes_locatable
+
+            # divider = make_axes_locatable(ax)
+            # cax = divider.append_axes("bottom", size="5%", pad=0.5)
+            # cbar = fig.colorbar(im, cax=cax, orientation='horizontal')
+            # cbar.set_label(field_labels[field], fontsize=10)
+
+            divider = make_axes_locatable(ax)
+            cax = divider.append_axes("right", size="5%", pad=0.15)
+            cbar = fig.colorbar(im, cax=cax, orientation='vertical')
+            cbar.set_label(field_labels[field], fontsize=10)
+
+
+        else:
+            plt.colorbar(im, label=field_labels[field], shrink=1.0, ax=ax)
+
         
         # Contours
         if show_contours:
@@ -1918,11 +1951,11 @@ class FFSPSource:
             ax.scatter(hypo_x, hypo_y, c='red', s=300, marker='*', 
                        edgecolors='white', linewidth=2, label='Hypocenter', zorder=10)
         
-        ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.1), ncol=2, frameon=True)
+        # ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.1), ncol=2, frameon=True)
 
         ax.set_xlabel(xlabel)
         ax.set_ylabel(ylabel)
-        ax.set_title(f'{field_labels[field]} Distribution', fontsize=14, fontweight='bold')
+        ax.set_title(f'{field_labels[field]} Distribution', fontsize=11, fontweight='bold')
         ax.set_aspect('equal')
         # Add margins to the plot (10% padding)
         x_min, x_max = X.min(), X.max()
@@ -1942,8 +1975,8 @@ class FFSPSource:
         
         # Save figure if requested
         if save_fig:
-            plt.savefig(f'{model_name}_spatial_distribution.svg', 
-                        format='svg', 
+            plt.savefig(f'{model_name}_spatial_distribution.tiff', 
+                        format='tiff', 
                         dpi=600, 
                         bbox_inches='tight', 
                         transparent=True,
