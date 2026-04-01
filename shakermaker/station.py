@@ -73,9 +73,11 @@ class Station:
             self._initialized = True
             nskip = int(t[0]/self._dt)
             # print(f" --> {t[0]=} {dt=} {nskip=} {tmin=} {tmax=}")
-            self._z[nskip:(nskip+len(z))] = z
-            self._e[nskip:(nskip+len(e))] = e
-            self._n[nskip:(nskip+len(n))] = n
+            nwrite = min(len(z), len(self._z) - nskip)
+            if nwrite > 0:
+                self._z[nskip:(nskip+nwrite)] = z[:nwrite]
+                self._e[nskip:(nskip+nwrite)] = e[:nwrite]
+                self._n[nskip:(nskip+nwrite)] = n[:nwrite]
             # print(f"{self._tmin=} {self._tmax=} {self._dt=}")
         else:
             # print(f"Station {self} interpolating!")
@@ -98,9 +100,11 @@ class Station:
             # self._t = tnew
             nskip = int(t[0]/dt)
             # print(f" ++> {t[0]=} {dt=} {nskip=} ")
-            self._z[nskip:(nskip+len(z))] += z
-            self._e[nskip:(nskip+len(e))] += e
-            self._n[nskip:(nskip+len(n))] += n
+            nwrite = min(len(z), len(self._z) - nskip)
+            if nwrite > 0:
+                self._z[nskip:(nskip+nwrite)] += z[:nwrite]
+                self._e[nskip:(nskip+nwrite)] += e[:nwrite]
+                self._n[nskip:(nskip+nwrite)] += n[:nwrite]
         self._notify(t)
 
     def get_response(self):
