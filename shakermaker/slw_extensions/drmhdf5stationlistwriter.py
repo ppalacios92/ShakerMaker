@@ -18,8 +18,8 @@ class DRMHDF5StationListWriter(HDF5StationListWriter):
 
         # Variables for legacy mode (when tmin, tmax, dt are not passed)
         self._velocities = {}
-        self._tstart = np.infty
-        self._tend = -np.infty
+        self._tstart = np.inf
+        self._tend = -np.inf
         self._dt = 0.
         self._gfs = {}
         

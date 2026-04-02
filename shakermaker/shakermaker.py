@@ -1018,7 +1018,8 @@ class ShakerMaker:
                debugMPI=False,
                tmin=0.,
                tmax=100,
-               showProgress=True):
+               showProgress=True,
+               use_gpu=False):
         """Stage 2 of the OP pipeline.
 
         For each (station, source) pair retrieves the precomputed tdata via
@@ -1049,6 +1050,9 @@ class ShakerMaker:
         :type tmin: double
         :param tmax: End of output time window (s).
         :type tmax: double
+        :param use_gpu: If True, use GPU acceleration for convolution (requires CuPy).
+            If CuPy is not installed or no GPU is available, raises ImportError.
+        :type use_gpu: bool
         (remaining parameters identical to :meth:`run`)
         """
         # Windows change: relaunch in a 64 MB stack thread so the
@@ -1060,7 +1064,18 @@ class ShakerMaker:
                 taper=taper, wc1=wc1, wc2=wc2, pmin=pmin, pmax=pmax,
                 dk=dk, nx=nx, kc=kc, writer=writer, writer_mode=writer_mode,
                 verbose=verbose, debugMPI=debugMPI,
-                tmin=tmin, tmax=tmax, showProgress=showProgress)
+                tmin=tmin, tmax=tmax, showProgress=showProgress,
+                use_gpu=use_gpu)
+        
+        # GPU validation - check if GPU is requested and available
+        if use_gpu:
+            from shakermaker.sourcetimefunction import gpu_available
+            if not gpu_available():
+                raise ImportError(
+                    "use_gpu=True requires CuPy with CUDA support.\n"
+                    "Install with: pip install cupy-cuda11x (or cupy-cuda12x for CUDA 12)\n"
+                    "Make sure you have a compatible NVIDIA GPU and CUDA drivers installed.")
+        
         title = (f"¡LARGA VIDA AL LADRUNO_source_plots_h5! ShakerMaker Run (Stage 2 - OP) begin. "
                  f"{dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}")
 
@@ -1069,6 +1084,7 @@ class ShakerMaker:
             print("-" * len(title))
             print(f"  MPI processes  : {nprocs}")
             print(f"  OpenMP threads : {os.environ.get('OMP_NUM_THREADS','not set')}")
+            print(f"  GPU acceleration: {'enabled (CuPy)' if use_gpu else 'disabled'}")
             print(f"  Loading database: {h5_database_name}")
             print(f"  writer_mode     : {writer_mode}")
             hfile = h5py.File(h5_database_name, 'r+', locking=False)
@@ -1178,8 +1194,16 @@ class ShakerMaker:
                         slot_to_sources[k] = []
                     slot_to_sources[k].append((i_psource, source_list_cache[i_psource]))
 
+                # ----------------------------------------------------------
+                # Batch HDF5 reads: load all tdata for this station at once
+                # This reduces I/O overhead by reading all needed slots
+                # before processing them.
+                # ----------------------------------------------------------
+                slots_needed = list(slot_to_sources.keys())
+                tdata_cache = {k: hfile[f"/tdata_dict/{k}_tdata"][:] for k in slots_needed}
+
                 for k, source_list in slot_to_sources.items():
-                    tdata = hfile[f"/tdata_dict/{k}_tdata"][:]
+                    tdata = tdata_cache[k]  # Use cached tdata (already in RAM)
 
                     for i_psource, psource in source_list:
                         aux_crust = copy.deepcopy(self._crust)
@@ -1199,9 +1223,8 @@ class ShakerMaker:
 
                         t1    = perf_counter()
                         t_arr = np.arange(0, len(z) * dt, dt) + psource.tt + t0
-                        z_stf = psource.stf.convolve(z, t_arr)
-                        e_stf = psource.stf.convolve(e, t_arr)
-                        n_stf = psource.stf.convolve(n, t_arr)
+                        # Use batch convolution for efficiency (processes z,e,n together)
+                        z_stf, e_stf, n_stf = psource.stf.convolve_batch([z, e, n], t_arr, use_gpu=use_gpu)
                         c['conv'] += perf_counter() - t1
 
                         try:
@@ -1340,7 +1363,8 @@ class ShakerMaker:
                            # General
                            verbose=False,
                            debugMPI=False,
-                           showProgress=True):
+                           showProgress=True,
+                           use_gpu=False):
         """Orchestrator for the full OP pipeline.
 
         Runs Stage 0, 1, and/or 2 according to the ``stage`` parameter.
@@ -1402,6 +1426,9 @@ class ShakerMaker:
         :type debugMPI: bool
         :param showProgress: Print ETA.
         :type showProgress: bool
+        :param use_gpu: If True, use GPU acceleration for convolution (requires CuPy).
+            If CuPy is not installed or no GPU is available, raises ImportError.
+        :type use_gpu: bool
         """
         assert h5_database_name is not None, \
             "run_nearest: h5_database_name is required"
@@ -1464,7 +1491,8 @@ class ShakerMaker:
                 writer=writer, writer_mode=writer_mode,
                 tmin=tmin, tmax=tmax,
                 verbose=verbose, debugMPI=debugMPI,
-                showProgress=showProgress)
+                showProgress=showProgress,
+                use_gpu=use_gpu)
 
         if rank == 0 and stage == 'all':
             total = perf_counter() - perf_time_begin
