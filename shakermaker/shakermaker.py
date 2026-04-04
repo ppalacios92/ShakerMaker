@@ -312,8 +312,10 @@ class ShakerMaker:
         for i_station, station in enumerate(self._receivers):
             for i_psource, psource in enumerate(self._source):
                 aux_crust = copy.deepcopy(self._crust)
+                # aux_crust.split_at_depth(psource.x[2])
+                # aux_crust.split_at_depth(station.x[2])
                 aux_crust.split_at_depth(psource.x[2])
-                aux_crust.split_at_depth(station.x[2])
+                aux_crust.split_at_depth(max(station.x[2], 1e-6))
 
                 if ipair == next_pair:
                     if verbose:
@@ -927,11 +929,13 @@ class ShakerMaker:
             station  = self._receivers.get_station_by_id(int(i_station))
             psource  = self._source.get_source_by_id(int(i_psource))
             z_src = psource.x[2]; z_rec = station.x[2]
-            _key = (round(z_src, 8), round(z_rec, 8))
+            # _key = (round(z_src, 8), round(z_rec, 8))
+            _key = (round(z_src, 8), round(max(z_rec, 1e-6), 8))
             if _key not in _crust_cache_gf:
                 _c = copy.deepcopy(self._crust)
                 _c.split_at_depth(z_src)
-                _c.split_at_depth(z_rec)
+                # _c.split_at_depth(z_rec)
+                _c.split_at_depth(max(z_rec, 1e-6))
                 _crust_cache_gf[_key] = _c
             aux_crust = _crust_cache_gf[_key]
 
@@ -1249,11 +1253,14 @@ class ShakerMaker:
                         # All sources sharing the same depth pair reuse the
                         # same pre-split CrustModel -- zero extra deepcopies.
                         z_src = psource.x[2]
-                        crust_key = (round(z_src, 8), round(z_rec, 8))
+                        # crust_key = (round(z_src, 8), round(z_rec, 8))
+                        crust_key = (round(z_src, 8), round(max(z_rec, 1e-6), 8))
                         if crust_key not in _crust_cache:
                             aux = copy.deepcopy(self._crust)
+                            # aux.split_at_depth(z_src)
+                            # aux.split_at_depth(z_rec)     
                             aux.split_at_depth(z_src)
-                            aux.split_at_depth(z_rec)
+                            aux.split_at_depth(max(z_rec, 1e-6))  
                             _crust_cache[crust_key] = aux
                         aux_crust = _crust_cache[crust_key]
 
