@@ -86,11 +86,11 @@ class DRMBox(StationList):
         self._azimuth = azimuth
 
         self._planes = []
-        self._tstart = np.infty
-        self._tend = -np.infty
+        self._tstart = np.inf
+        self._tend = -np.inf
         self._dt = 0
-        self._xmax = [-np.infty, -np.infty, -np.infty]
-        self._xmin = [np.infty, np.infty, np.infty]
+        self._xmax = [-np.inf, -np.inf, -np.inf]
+        self._xmin = [np.inf, np.inf, np.inf]
 
         self._create_DRM_stations()
 

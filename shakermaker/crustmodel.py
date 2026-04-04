@@ -292,7 +292,7 @@ class CrustModel:
         for i in range(self.nlayers):
             if self._d[i] == 0:
                 thicknesses.append(10)
-                labels.append(f'Layer {i+1}: ∞ (Half-space)')
+                labels.append(f'Layer {i+1}: inf (Half-space)')
             else:
                 thicknesses.append(self._d[i])
                 labels.append(f'Layer {i+1}: {self._d[i]:.1f} km')
