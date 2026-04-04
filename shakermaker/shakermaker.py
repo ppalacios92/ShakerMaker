@@ -56,7 +56,7 @@ HDF5 database -- two files (separated to keep mapping light):
     /delta_v_src       scalar         float64
 
   {name}_gf.h5
-    /tdata   (n_slots, nt, 9)    float32  chunks=(1,nt,9)    gzip=4
+    /tdata   (n_slots, nt, 9)    float64  chunks=(1,nt,9)    gzip=4
     /t0      (n_slots,)          float64
     Note: nt = actual samples from core.subgreen (= nfft when smth=1,
           = smth*nfft otherwise). Dataset created lazily on first slot.
@@ -312,10 +312,8 @@ class ShakerMaker:
         for i_station, station in enumerate(self._receivers):
             for i_psource, psource in enumerate(self._source):
                 aux_crust = copy.deepcopy(self._crust)
-                # aux_crust.split_at_depth(psource.x[2])
-                # aux_crust.split_at_depth(station.x[2])
                 aux_crust.split_at_depth(psource.x[2])
-                aux_crust.split_at_depth(max(station.x[2], 1e-6))
+                aux_crust.split_at_depth(station.x[2])
 
                 if ipair == next_pair:
                     if verbose:
@@ -336,6 +334,7 @@ class ShakerMaker:
                         nt = len(z)
                         t1 = perf_counter()
                         t = np.arange(0, nt * dt, dt) + psource.tt + t0
+                        station.add_greens_function(z, e, n, t, tdata, t0, i_psource)
                         psource.stf.dt = dt
                         z_stf = psource.stf.convolve(z, t)
                         e_stf = psource.stf.convolve(e, t)
@@ -923,21 +922,22 @@ class ShakerMaker:
         tstart = perf_counter()
         ipair  = 0
         # Cache split CrustModels by (z_src, z_rec) to avoid deepcopy per slot.
-        _crust_cache_gf = {}
+        # _crust_cache_gf = {}
 
         for i_station, i_psource in pairs_to_compute:
             station  = self._receivers.get_station_by_id(int(i_station))
             psource  = self._source.get_source_by_id(int(i_psource))
             z_src = psource.x[2]; z_rec = station.x[2]
             # _key = (round(z_src, 8), round(z_rec, 8))
-            _key = (round(z_src, 8), round(max(z_rec, 1e-6), 8))
-            if _key not in _crust_cache_gf:
-                _c = copy.deepcopy(self._crust)
-                _c.split_at_depth(z_src)
-                # _c.split_at_depth(z_rec)
-                _c.split_at_depth(max(z_rec, 1e-6))
-                _crust_cache_gf[_key] = _c
-            aux_crust = _crust_cache_gf[_key]
+            # if _key not in _crust_cache_gf:
+            #     _c = copy.deepcopy(self._crust)
+            #     _c.split_at_depth(z_src)
+            #     _c.split_at_depth(z_rec)
+            #     _crust_cache_gf[_key] = _c
+            # aux_crust = _crust_cache_gf[_key]
+            aux_crust = copy.deepcopy(self._crust)
+            aux_crust.split_at_depth(z_src)
+            aux_crust.split_at_depth(z_rec)
 
             if ipair == next_pair:
                 if nprocs == 1 or (rank > 0 and nprocs > 1):
@@ -957,8 +957,8 @@ class ShakerMaker:
                     # Convert tdata from Fortran layout (1,9,nt) to C-order (nt,9).
                     # tdata[0] is (9,nt) in C; .T gives (nt,9) contiguous float32.
                     # Direct transpose avoids a Python loop over 9 components (15x faster).
-                    tdata_c = tdata[0].T   # shape (nt, 9), dtype float32 from Fortran
-
+                    # tdata_c = tdata[0].T   # shape (nt, 9), dtype float32 from Fortran
+                    tdata_c = np.ascontiguousarray(tdata[0].T, dtype=np.float64)
                     if rank > 0:
                         t1 = perf_counter()
                         # Send only nt, t0, tdata (3 tags).
@@ -1005,15 +1005,19 @@ class ShakerMaker:
                             shape=(0, nt_real, 9),
                             maxshape=(None, nt_real, 9),
                             chunks=(1, nt_real, 9),
-                            dtype=np.float32,
+                            dtype=np.float64,
                             compression='gzip',
                             compression_opts=4)
                     gf_ds = hfile_gf['/tdata']
                     t0_ds = hfile_gf['/t0']
                     gf_ds.resize(ipair + 1, axis=0)
                     t0_ds.resize(ipair + 1, axis=0)
-                    # Cast to float32 on write: halves disk usage vs float64.
-                    gf_ds[ipair] = tdata_c.astype(np.float32)
+                    # # Cast to float32 on write: halves disk usage vs float64.
+                    # gf_ds[ipair] = tdata_c.astype(np.float32)
+
+                    # Keep tdata in float64 to match JAA numerical behaviour.
+                    gf_ds[ipair] = tdata_c
+
                     t0_ds[ipair] = t0_arr[0]
                     next_pair += 1
 
@@ -1238,15 +1242,18 @@ class ShakerMaker:
                 # unique depth combinations is O(n_unique_z_src) -- typically
                 # O(100) for a fault plane -- not O(nsources).
                 z_rec = station.x[2]
-                _crust_cache = {}
+                # _crust_cache = {}
 
                 for k, source_list in slot_to_sources.items():
                     # O(1) lookup: one HDF5 chunk read per unique slot.
                     # tdata is stored as float32 and passed directly to
                     # _call_core_fast. The Fortran subgreen2 routine declares
                     # tdata as 'real' (float32), so f2py accepts float32 without
-                    # any cast. Keeping float32 avoids a full-array copy.
-                    tdata = hfile_gf['/tdata'][k]   # float32, shape (nt, 9)
+                    # # any cast. Keeping float32 avoids a full-array copy.
+                    # tdata = hfile_gf['/tdata'][k]   # float32, shape (nt, 9)
+
+                    # tdata is stored as float64 
+                    tdata = np.ascontiguousarray(hfile_gf['/tdata'][k], dtype=np.float64)   # float64, shape (nt, 9)
 
                     for i_psource, psource in source_list:
                         # Cache crustal models by (z_src, z_rec).
@@ -1254,15 +1261,16 @@ class ShakerMaker:
                         # same pre-split CrustModel -- zero extra deepcopies.
                         z_src = psource.x[2]
                         # crust_key = (round(z_src, 8), round(z_rec, 8))
-                        crust_key = (round(z_src, 8), round(max(z_rec, 1e-6), 8))
-                        if crust_key not in _crust_cache:
-                            aux = copy.deepcopy(self._crust)
-                            # aux.split_at_depth(z_src)
-                            # aux.split_at_depth(z_rec)     
-                            aux.split_at_depth(z_src)
-                            aux.split_at_depth(max(z_rec, 1e-6))  
-                            _crust_cache[crust_key] = aux
-                        aux_crust = _crust_cache[crust_key]
+                        # if crust_key not in _crust_cache:
+                        #     aux = copy.deepcopy(self._crust)
+                        #     aux.split_at_depth(z_src)
+                        #     aux.split_at_depth(z_rec)
+                        #     _crust_cache[crust_key] = aux
+                        # aux_crust = _crust_cache[crust_key]
+
+                        aux_crust = copy.deepcopy(self._crust)
+                        aux_crust.split_at_depth(z_src)
+                        aux_crust.split_at_depth(z_rec)
 
                         if verbose:
                             print(f"  rank={rank} sta={i_station} "
@@ -2001,8 +2009,9 @@ class ShakerMaker:
 
         # Reshape tdata from C-order (nt, 9) to Fortran layout (1, 9, nt).
         # This works for any nt, regardless of nfft or smth.
-        tdata_ = tdata.T.reshape((1, tdata.shape[1], tdata.shape[0]))
-
+        # tdata_ = tdata.T.reshape((1, tdata.shape[1], tdata.shape[0]))
+        tdata_ = tdata.T
+        tdata_ = tdata_.reshape((1, tdata_.shape[0], tdata_.shape[1]))
         # Execute the core subgreen2 Fortran routine
         z, e, n, t0 = core.subgreen2(
             mb, src, rcv, stype, updn, d, a, b, rho, qa, qb,
