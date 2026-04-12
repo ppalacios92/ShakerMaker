@@ -2324,3 +2324,214 @@ class FFSPSource:
         ax.set_xticks([])
         plt.tight_layout()
         plt.show()
+
+        
+    def create_animation(self,
+                             field='slip',
+                             figsize=(10, 8),
+                             cmap='cmap_white',
+                             show_contours=True,
+                             contour_field='rupture_time',
+                             show_hypocenter=True,
+                             contour_interval=None,
+                             contour_color='black',
+                             internal_ref=None,
+                             external_coord=None,
+                             rotate=False,
+                             n_frames=50,
+                             fps=10,
+                             dpi=100,
+                             output_dir='animation_frames',
+                             output_video='rupture_animation.mp4',
+                             ffmpeg_path=None):
+            """Create rupture propagation animation.
+
+            Generates one frame per time step, masking subfaults that have not
+            yet ruptured, then assembles frames into a video with ffmpeg.
+
+            Parameters
+            ----------
+            field : str, default 'slip'
+                Field to display. One of 'slip', 'rise_time', 'peak_time'.
+            figsize : tuple, default (10, 8)
+            cmap : str, default 'cmap_white'
+                Colormap. Use 'cmap_white' for white-start YlOrRd.
+            show_contours : bool, default True
+                Overlay rupture time isochrones.
+            contour_field : str, default 'rupture_time'
+            show_hypocenter : bool, default True
+            contour_interval : float, optional
+                Isochrone interval in seconds. Auto if None.
+            contour_color : str, default 'black'
+            internal_ref : list [x, y], optional
+                Reference point in FFSP local coords (km).
+            external_coord : list [x, y], optional
+                Target position in ShakerMaker coords (km).
+            rotate : bool, default False
+            n_frames : int, default 50
+            fps : int, default 10
+            dpi : int, default 100
+            output_dir : str, default 'animation_frames'
+            output_video : str, default 'rupture_animation.mp4'
+            ffmpeg_path : str, optional
+                Full path to ffmpeg binary. Uses system ffmpeg if None.
+            """
+            import os
+            import shutil
+            import subprocess
+            import matplotlib.colors as mcolors
+            import matplotlib.pyplot as plt
+
+            os.makedirs(output_dir, exist_ok=True)
+
+            # --- Colormap ---
+            cmap_base = plt.get_cmap('YlOrRd', 256)
+            colors_arr = cmap_base(np.linspace(0, 1, 256))
+            colors_arr[0] = [1, 1, 1, 1]
+            cmap_white = mcolors.ListedColormap(colors_arr)
+            cmap_plot  = cmap_white if cmap == 'cmap_white' else plt.get_cmap(cmap)
+
+            # --- Geometry ---
+            nx       = int(self.params['nsubx'])
+            ny       = int(self.params['nsuby'])
+            lx       = self.params['fault_length']
+            ly       = self.params['fault_width']
+            cxp      = self.params['x_hypc']
+            cyp      = self.params['y_hypc']
+            strike   = self.params['strike']
+
+            field_labels = {
+                'slip': 'Slip [m]',
+                'rise_time': 'Rise Time [s]',
+                'peak_time': 'Peak Time [s]',
+            }
+
+            # --- Grid data ---
+            rupture_time = np.transpose(self.subfaults['rupture_time'].reshape(nx, ny))
+            field_data   = np.transpose(self.subfaults[field].reshape(nx, ny))
+            contour_data = np.transpose(self.subfaults[contour_field].reshape(nx, ny))
+
+            vmin = field_data.min()
+            vmax = field_data.max()
+
+            # --- Coordinates (same as plot_spacial_distribution) ---
+            x_local = np.linspace(-lx/2, lx/2, nx)
+            y_local = np.linspace(0, ly, ny)
+
+            if rotate:
+                strike_rad = np.radians(strike) + np.radians(90)
+            else:
+                strike_rad = np.radians(strike)
+
+            X_local, Y_local = np.meshgrid(x_local, y_local)
+            X_centered = X_local - (cxp - lx/2)
+            Y_centered = Y_local - cyp
+            X_rot = X_centered * np.sin(strike_rad) + Y_centered * np.cos(strike_rad)
+            Y_rot = X_centered * np.cos(strike_rad) - Y_centered * np.sin(strike_rad)
+
+            if internal_ref is not None and external_coord is not None:
+                ref_x, ref_y = internal_ref
+                if rotate:
+                    ext_y, ext_x = external_coord
+                else:
+                    ext_x, ext_y = external_coord
+                ref_x_rot = ref_x * np.sin(strike_rad) + ref_y * np.cos(strike_rad)
+                ref_y_rot = ref_x * np.cos(strike_rad) - ref_y * np.sin(strike_rad)
+                offset_x  = ext_x - ref_x_rot
+                offset_y  = ext_y - ref_y_rot
+                X = X_rot + offset_x
+                Y = Y_rot + offset_y
+                hypo_x = self.params['xref_hypc'] * np.sin(strike_rad) + self.params['yref_hypc'] * np.cos(strike_rad) + offset_x
+                hypo_y = self.params['xref_hypc'] * np.cos(strike_rad) - self.params['yref_hypc'] * np.sin(strike_rad) + offset_y
+                xlabel = 'UTM Easting, X [km]' if not rotate else 'UTM Northing, Y [km]'
+                ylabel = 'UTM Northing, Y [km]' if not rotate else 'UTM Easting, X [km]'
+            else:
+                X = X_rot + self.params['xref_hypc']
+                Y = Y_rot + self.params['yref_hypc']
+                hypo_x = self.params['xref_hypc']
+                hypo_y = self.params['yref_hypc']
+                xlabel = 'Along Strike [km]' if rotate else 'Along Dip [km]'
+                ylabel = 'Along Dip [km]'    if rotate else 'Along Strike [km]'
+
+            # --- Time steps ---
+            t_max      = rupture_time.max()
+            time_steps = np.linspace(0, t_max, n_frames)
+
+            x_min, x_max = X.min(), X.max()
+            y_min, y_max = Y.min(), Y.max()
+            x_range = x_max - x_min
+            y_range = y_max - y_min
+            pad = 0.05
+
+            print(f"Rendering {n_frames} frames → {output_dir}/")
+
+            for i, t in enumerate(time_steps):
+                mask         = rupture_time <= t
+                field_masked = np.ma.masked_where(~mask, field_data)
+
+                fig, ax = plt.subplots(figsize=figsize)
+                ax.set_facecolor('#E8E8E8')
+                im = ax.pcolormesh(X, Y, field_masked, cmap=cmap_plot,
+                                   shading='auto', vmin=vmin, vmax=vmax)
+
+                from mpl_toolkits.axes_grid1 import make_axes_locatable
+                divider = make_axes_locatable(ax)
+                cax = divider.append_axes("right", size="5%", pad=0.15)
+                cbar = fig.colorbar(im, cax=cax, orientation='vertical')
+                cbar.set_label(field_labels.get(field, field), fontsize=10)
+
+                if show_contours and mask.any():
+                    try:
+                        if contour_interval is not None:
+                            levels = np.arange(0, contour_data[mask].max() + contour_interval,
+                                               contour_interval)
+                            contour_data_masked = np.where(mask, contour_data, np.nan)
+                            cs = ax.contour(X, Y, contour_data_masked, levels=levels,
+                                            colors=contour_color, linewidths=1.5)
+                        else:
+                            contour_data_masked = np.where(mask, contour_data, np.nan)
+                            cs = ax.contour(X, Y, contour_data_masked, 8,
+                                            colors=contour_color, linewidths=1.5)
+                        ax.clabel(cs, fontsize=8, fmt='%.1f', inline=True)
+                    except Exception:
+                        pass
+
+                if show_hypocenter:
+                    ax.scatter(hypo_x, hypo_y, c='white', s=300, marker='*',
+                               edgecolors='black', linewidth=2, zorder=10)
+
+                ax.set_xlabel(xlabel, fontsize=11)
+                ax.set_ylabel(ylabel, fontsize=11)
+                ax.set_title(f't = {t:.2f} s', fontsize=13, fontweight='bold')
+                ax.set_aspect('equal')
+                ax.set_xlim(x_min - pad * x_range, x_max + pad * x_range)
+                ax.set_ylim(y_min - pad * y_range, y_max + pad * y_range)
+
+                for spine in ax.spines.values():
+                    spine.set_visible(True)
+
+                plt.tight_layout()
+                plt.savefig(os.path.join(output_dir, f'frame_{i:03d}.png'), dpi=dpi)
+                plt.close(fig)
+                print(f'Frame {i+1}/{n_frames}', end='\r')
+
+            print(f'\nFrames saved to: {output_dir}')
+
+            # --- Assemble video ---
+            try:
+                ffmpeg_exe = ffmpeg_path or shutil.which('ffmpeg') or 'ffmpeg'
+                subprocess.run([
+                    ffmpeg_exe, '-y',
+                    '-framerate', str(fps),
+                    '-i', os.path.join(output_dir, 'frame_%03d.png'),
+                    '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+                    '-c:v', 'libx264',
+                    '-pix_fmt', 'yuv420p',
+                    '-crf', '18',
+                    output_video
+                ], check=True, capture_output=True)
+                print(f'Video saved: {output_video}')
+            except subprocess.CalledProcessError as e:
+                print(f'ffmpeg error: {e.stderr.decode()[-300:]}')
+            except FileNotFoundError:
+                print(f'ffmpeg not found. Frames are in: {output_dir}')
