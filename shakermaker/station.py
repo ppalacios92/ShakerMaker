@@ -49,6 +49,34 @@ class Station:
     def is_internal(self):
         return self._internal
 
+    # def add_to_response(self, z, e, n, t, tmin=0, tmax=100.):
+    #     if not self._initialized:
+    #         dt = t[1] - t[0]
+    #         self._t = np.arange(tmin, tmax, dt)
+    #         self._z = 0 * self._t
+    #         self._e = 0 * self._t
+    #         self._n = 0 * self._t
+    #         self._dt = t[1] - t[0]
+    #         self._tmin = t.min()
+    #         self._tmax = t.max()
+    #         self._initialized = True
+    #         nskip = int(t[0] / self._dt)
+    #         # Bounds-check: avoid IndexError when signal extends past array end
+    #         nwrite = min(len(z), len(self._z) - nskip)
+    #         if nwrite > 0:
+    #             self._z[nskip:(nskip + nwrite)] = z[:nwrite]
+    #             self._e[nskip:(nskip + nwrite)] = e[:nwrite]
+    #             self._n[nskip:(nskip + nwrite)] = n[:nwrite]
+    #     else:
+    #         dt = t[1] - t[0]
+    #         nskip = int(t[0] / dt)
+    #         # Bounds-check: avoid IndexError when signal extends past array end
+    #         nwrite = min(len(z), len(self._z) - nskip)
+    #         if nwrite > 0:
+    #             self._z[nskip:(nskip + nwrite)] += z[:nwrite]
+    #             self._e[nskip:(nskip + nwrite)] += e[:nwrite]
+    #             self._n[nskip:(nskip + nwrite)] += n[:nwrite]
+    #     self._notify(t)
     def add_to_response(self, z, e, n, t, tmin=0, tmax=100.):
         if not self._initialized:
             dt = t[1] - t[0]
@@ -56,26 +84,38 @@ class Station:
             self._z = 0 * self._t
             self._e = 0 * self._t
             self._n = 0 * self._t
-            self._dt = t[1] - t[0]
+            self._dt = dt
             self._tmin = t.min()
             self._tmax = t.max()
             self._initialized = True
-            nskip = int(t[0] / self._dt)
-            # Bounds-check: avoid IndexError when signal extends past array end
-            nwrite = min(len(z), len(self._z) - nskip)
+
+            if t[0] >= 0:
+                nskip_buf = int(t[0] / dt)
+                nskip_sig = 0
+            else:
+                nskip_buf = 0
+                nskip_sig = int(-t[0] / dt)
+
+            nwrite = min(len(z) - nskip_sig, len(self._t) - nskip_buf)
             if nwrite > 0:
-                self._z[nskip:(nskip + nwrite)] = z[:nwrite]
-                self._e[nskip:(nskip + nwrite)] = e[:nwrite]
-                self._n[nskip:(nskip + nwrite)] = n[:nwrite]
+                self._z[nskip_buf:(nskip_buf + nwrite)] = z[nskip_sig:(nskip_sig + nwrite)]
+                self._e[nskip_buf:(nskip_buf + nwrite)] = e[nskip_sig:(nskip_sig + nwrite)]
+                self._n[nskip_buf:(nskip_buf + nwrite)] = n[nskip_sig:(nskip_sig + nwrite)]
         else:
             dt = t[1] - t[0]
-            nskip = int(t[0] / dt)
-            # Bounds-check: avoid IndexError when signal extends past array end
-            nwrite = min(len(z), len(self._z) - nskip)
+
+            if t[0] >= 0:
+                nskip_buf = int(t[0] / dt)
+                nskip_sig = 0
+            else:
+                nskip_buf = 0
+                nskip_sig = int(-t[0] / dt)
+
+            nwrite = min(len(z) - nskip_sig, len(self._t) - nskip_buf)
             if nwrite > 0:
-                self._z[nskip:(nskip + nwrite)] += z[:nwrite]
-                self._e[nskip:(nskip + nwrite)] += e[:nwrite]
-                self._n[nskip:(nskip + nwrite)] += n[:nwrite]
+                self._z[nskip_buf:(nskip_buf + nwrite)] += z[nskip_sig:(nskip_sig + nwrite)]
+                self._e[nskip_buf:(nskip_buf + nwrite)] += e[nskip_sig:(nskip_sig + nwrite)]
+                self._n[nskip_buf:(nskip_buf + nwrite)] += n[nskip_sig:(nskip_sig + nwrite)]
         self._notify(t)
 
     def get_response(self):
