@@ -215,6 +215,7 @@ np_setup(
         "shakermaker.stf_extensions",
         "shakermaker.tools",
         "shakermaker.ffsp",
+        "shakermaker.sw4_exporter",
     ],
     package_data = {
         'shakermaker.ffsp': [

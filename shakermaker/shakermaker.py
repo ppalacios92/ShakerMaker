@@ -1895,6 +1895,112 @@ class ShakerMaker:
         print("Use in STKO to visualise grid before running simulation.")
         return filename
 
+    # =========================================================================
+    # SW4 export  --  export_sw4
+    # =========================================================================
+
+    def export_sw4(self, path=None,
+                   h=50,
+                   size_domain=None,
+                   coor_target_shaker=None,
+                   tmax=50,
+                   m0=1,
+                   fileio_path="shakermaker2sw4_fileio",
+                   supergrid_gp=30,
+                   station_prefix="sf",
+                   plot_geometry=False):
+        """Export model sources and receivers to SW4 without topography.
+
+        The export creates a SW4 input folder and ShakerMaker HDF5 summaries.
+        The implementation lives in :mod:`shakermaker.sw4_exporter`.
+
+        Parameters
+        ----------
+        path : str, optional
+            Base output directory. Defaults to the current working directory.
+        h : float, optional
+            SW4 grid spacing in meters.
+        size_domain : sequence of float, optional
+            SW4 domain size as [x, y, z] in meters.
+        coor_target_shaker : sequence of float, optional
+            SW4 local point where the ShakerMaker [0, 0, 0] coordinate is
+            shifted, in meters.
+        tmax : float, optional
+            SW4 simulation end time in seconds.
+        m0 : float, optional
+            Moment scaling written in each SW4 source command.
+
+        Returns
+        -------
+        dict
+            Paths to the generated folders and summary files.
+        """
+        from shakermaker.sw4_exporter import SW4ExportConfig, SW4Exporter
+
+        config = SW4ExportConfig(
+            path=path or os.getcwd(),
+            h=h,
+            size_domain=size_domain,
+            coor_target_shaker=coor_target_shaker,
+            tmax=tmax,
+            m0=m0,
+            fileio_path=fileio_path,
+            supergrid_gp=supergrid_gp,
+            station_prefix=station_prefix,
+            plot_geometry=plot_geometry,
+        )
+        return SW4Exporter(self, config).write()
+
+    def export_sw4_topo(self, path=None,
+                        h=50,
+                        size_domain=None,
+                        coor_target_shaker=None,
+                        coor_origin_topo=None,
+                        coor_target_topo=None,
+                        tmax=50,
+                        m0=1,
+                        fileio_path="shakermaker2sw4_fileio",
+                        supergrid_gp=30,
+                        station_prefix="sf",
+                        topo_file=None,
+                        topo_zmax=None,
+                        write_topography_stations=False,
+                        depth_from_topography=False,
+                        shakermaker_stations=True,
+                        plot_geometry=False):
+        """Export model sources and receivers to SW4 with cartesian topography.
+
+        coor_target_shaker moves the ShakerMaker [0, 0, 0] coordinate.
+        coor_origin_topo/coor_target_topo move the original topography.
+        If the topography coordinates are omitted, the topography minimum corner
+        is moved automatically to [0, 0, 0].
+        """
+        if topo_file is None:
+            raise ValueError("export_sw4_topo requires topo_file.")
+
+        from shakermaker.sw4_exporter import SW4ExportConfig, SW4Exporter
+
+        config = SW4ExportConfig(
+            path=path or os.getcwd(),
+            h=h,
+            size_domain=size_domain,
+            coor_target_shaker=coor_target_shaker,
+            coor_origin_topo=coor_origin_topo,
+            coor_target_topo=coor_target_topo,
+            tmax=tmax,
+            m0=m0,
+            fileio_path=fileio_path,
+            supergrid_gp=supergrid_gp,
+            station_prefix=station_prefix,
+            topo_file=topo_file,
+            topo_zmax=topo_zmax,
+            write_topography_stations=write_topography_stations,
+            depth_from_topography=depth_from_topography,
+            shakermaker_stations=shakermaker_stations,
+            plot_geometry=plot_geometry,
+        )
+        return SW4Exporter(self, config).write()
+
     def write(self, writer):
         writer.write(self._receivers)
 
