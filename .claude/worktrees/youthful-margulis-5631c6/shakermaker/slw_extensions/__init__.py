@@ -1,2 +1,0 @@
-from shakermaker.slw_extensions.drmhdf5stationlistwriter import DRMHDF5StationListWriter
-from shakermaker.slw_extensions.hdf5stationlistwriter import HDF5StationListWriter
