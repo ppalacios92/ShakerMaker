@@ -1,0 +1,17 @@
+# Auto-detect text files
+* text=auto
+
+# Code → always LF
+*.py text eol=lf
+*.f text eol=lf
+*.f90 text eol=lf
+*.c text eol=lf
+*.h text eol=lf
+*.sh text eol=lf eol=lf
+*.rst text eol=lf
+*.md text eol=lf
+
+# Binarios → no tocar
+*.so binary
+*.egg binary
+*.png binary

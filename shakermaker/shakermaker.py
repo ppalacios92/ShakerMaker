@@ -1908,33 +1908,11 @@ class ShakerMaker:
                    fileio_path="shakermaker2sw4_fileio",
                    supergrid_gp=30,
                    station_prefix="sf",
+                   shakermaker_stations=True,
+                   domain_sw4=False,
+                   domain_sw4_size=None,
                    plot_geometry=False):
-        """Export model sources and receivers to SW4 without topography.
-
-        The export creates a SW4 input folder and ShakerMaker HDF5 summaries.
-        The implementation lives in :mod:`shakermaker.sw4_exporter`.
-
-        Parameters
-        ----------
-        path : str, optional
-            Base output directory. Defaults to the current working directory.
-        h : float, optional
-            SW4 grid spacing in meters.
-        size_domain : sequence of float, optional
-            SW4 domain size as [x, y, z] in meters.
-        coor_target_shaker : sequence of float, optional
-            SW4 local point where the ShakerMaker [0, 0, 0] coordinate is
-            shifted, in meters.
-        tmax : float, optional
-            SW4 simulation end time in seconds.
-        m0 : float, optional
-            Moment scaling written in each SW4 source command.
-
-        Returns
-        -------
-        dict
-            Paths to the generated folders and summary files.
-        """
+        """Export model sources and receivers to SW4 without topography."""
         from shakermaker.sw4_exporter import SW4ExportConfig, SW4Exporter
 
         config = SW4ExportConfig(
@@ -1947,6 +1925,9 @@ class ShakerMaker:
             fileio_path=fileio_path,
             supergrid_gp=supergrid_gp,
             station_prefix=station_prefix,
+            shakermaker_stations=shakermaker_stations,
+            domain_sw4=domain_sw4,
+            domain_sw4_size=domain_sw4_size,
             plot_geometry=plot_geometry,
         )
         return SW4Exporter(self, config).write()
@@ -1964,16 +1945,21 @@ class ShakerMaker:
                         station_prefix="sf",
                         topo_file=None,
                         topo_zmax=None,
-                        write_topography_stations=False,
-                        depth_from_topography=False,
-                        shakermaker_stations=True,
+                        write_topography_z0_stations=False,
+                        shakermaker_stations=False,
+                        domain_sw4=False,
+                        domain_sw4_size=None,
                         plot_geometry=False):
         """Export model sources and receivers to SW4 with cartesian topography.
 
         coor_target_shaker moves the ShakerMaker [0, 0, 0] coordinate.
-        coor_origin_topo/coor_target_topo move the original topography.
-        If the topography coordinates are omitted, the topography minimum corner
-        is moved automatically to [0, 0, 0].
+        coor_origin_topo/coor_target_topo move the original topography grid.
+        Topography surface stations (depth=0) are always written.
+        write_topography_z0_stations: also write stations from the topo surface
+          down to z=0, spaced by h, using negative z coordinates in the rec lines.
+        shakermaker_stations: include the stations instanced in the ShakerMaker model.
+        domain_sw4 / domain_sw4_size: generate a regular grid of receivers inside
+          that sub-domain, spaced by h.
         """
         if topo_file is None:
             raise ValueError("export_sw4_topo requires topo_file.")
@@ -1994,9 +1980,10 @@ class ShakerMaker:
             station_prefix=station_prefix,
             topo_file=topo_file,
             topo_zmax=topo_zmax,
-            write_topography_stations=write_topography_stations,
-            depth_from_topography=depth_from_topography,
+            write_topography_z0_stations=write_topography_z0_stations,
             shakermaker_stations=shakermaker_stations,
+            domain_sw4=domain_sw4,
+            domain_sw4_size=domain_sw4_size,
             plot_geometry=plot_geometry,
         )
         return SW4Exporter(self, config).write()

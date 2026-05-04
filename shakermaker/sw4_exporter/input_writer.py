@@ -19,4 +19,17 @@ def write_sw4_input(path, grid_line, tmax, fileio_path, supergrid_gp,
         f.write("\n# Sources\n")
         f.write("\n".join(source_lines) + "\n")
         f.write("\n# Receivers\n")
-        f.write("\n".join(receiver_lines) + "\n")
+        if _is_receiver_blocks(receiver_lines):
+            for title, lines in receiver_lines:
+                f.write(f"\n# {title}\n")
+                if lines:
+                    f.write("\n".join(lines) + "\n")
+        else:
+            f.write("\n".join(receiver_lines) + "\n")
+
+
+def _is_receiver_blocks(receiver_lines):
+    if not receiver_lines:
+        return False
+    first = receiver_lines[0]
+    return isinstance(first, tuple) and len(first) == 2

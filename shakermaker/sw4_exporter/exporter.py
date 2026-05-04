@@ -12,7 +12,12 @@ from .hdf5_geometry import write_geometry_h5
 from .hdf5_summary import write_summary_h5
 from .input_writer import write_sw4_input
 from .materials import material_lines
-from .receivers import model_receiver_lines, topography_receiver_lines
+from .receivers import (
+    model_receiver_lines,
+    topography_receiver_lines,
+    topography_z0_receiver_lines,
+    domain_receiver_lines,
+)
 from .sources import source_rows, write_source_files, sw4_source_lines
 from .topography import (
     SEPARATOR,
@@ -101,23 +106,75 @@ class SW4Exporter:
         n_drm_stations = station_count - 1 if has_qa else station_count
         qa_index = n_drm_stations if has_qa else -1
 
+        # Build set of topo (x,y) positions where topo height ≈ 0 (flat ground at datum).
+        # Used to avoid duplicating z=0 stations from other groups at those positions.
+        topo_xy_z0 = set()
+        if topo_points_local is not None:
+            h_tol = 0.5 * float(self.config.h)
+            for tx, ty, tz in topo_points_local:
+                if abs(float(tz)) < h_tol:
+                    topo_xy_z0.add((round(float(tx)), round(float(ty))))
+
         receiver_lines = []
+        rec_index = 1
         active_points = [source_points]
+
+        # ShakerMaker model stations (z= absolute coordinates)
         if self.config.shakermaker_stations:
-            receiver_lines += model_receiver_lines(self.model._receivers, transform, self.config.station_prefix)
+            lines = model_receiver_lines(
+                self.model._receivers, transform, self.config.station_prefix,
+                start_index=rec_index, topo_xy_z0=topo_xy_z0,
+            )
+            if lines:
+                receiver_lines.append("# ShakerMaker stations")
+                receiver_lines += lines
+                rec_index += len(lines)
             receiver_points = np.array(
                 [transform.from_shakermaker_km_to_sw4_m(station.x) for station in self.model._receivers],
                 dtype=float,
             )
             active_points.append(receiver_points)
+
         print_active_geometry_bounds(np.vstack(active_points))
-        if self.config.write_topography_stations and topo_points_local is not None:
-            receiver_lines += topography_receiver_lines(
+
+        # Topography free-surface stations (depth=0 — the only use of depth= in the .in)
+        if topo_points_local is not None:
+            lines = topography_receiver_lines(
                 topo_points_local,
-                start_index=len(receiver_lines) + 1,
+                start_index=rec_index,
                 prefix=self.config.station_prefix,
-                depth_from_topography=self.config.depth_from_topography,
             )
+            if lines:
+                receiver_lines.append("# Topography surface stations (depth=0)")
+                receiver_lines += lines
+                rec_index += len(lines)
+
+            # Stations between topography surface and z=0 plane (z= negative values)
+            if self.config.write_topography_z0_stations:
+                lines = topography_z0_receiver_lines(
+                    topo_points_local,
+                    h=self.config.h,
+                    start_index=rec_index,
+                    prefix=self.config.station_prefix,
+                )
+                if lines:
+                    receiver_lines.append("# Between topography and z=0 (z= negative)")
+                    receiver_lines += lines
+                    rec_index += len(lines)
+
+        # Regular grid receivers inside a sub-domain (z= positive = depth below datum)
+        if self.config.domain_sw4 and self.config.domain_sw4_size is not None:
+            lines = domain_receiver_lines(
+                self.config.h,
+                [self.config.domain_sw4_x, self.config.domain_sw4_y, self.config.domain_sw4_z],
+                start_index=rec_index,
+                prefix=self.config.station_prefix,
+                topo_xy_z0=topo_xy_z0,
+            )
+            if lines:
+                receiver_lines.append("# SW4 domain grid stations (z= positive = depth)")
+                receiver_lines += lines
+                rec_index += len(lines)
 
         write_sw4_input(
             self.input_file,
