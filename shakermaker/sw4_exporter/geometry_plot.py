@@ -2,7 +2,8 @@ from pathlib import Path
 
 import numpy as np
 
-_DEPTH_ENCODE_OFFSET = 1e9   # depth=d encoded as z = -(d + 1e9); decoded in _resolve_receivers
+
+_DEPTH_ENCODE_OFFSET = 1e9
 
 
 def _token_value(tokens, key):
@@ -31,21 +32,12 @@ def _read_grid(tokens):
 
 
 def _read_point(tokens):
-    """Parse one source or rec line into (x, y, z).
-
-    Convention:
-      z > 0  → below datum (depth, inside domain box)
-      z < 0  → above datum (elevation, topo zone)
-      depth= lines encoded as z = -(depth + _DEPTH_ENCODE_OFFSET); resolved later.
-    """
     x = _token_value(tokens, "x")
     y = _token_value(tokens, "y")
     if x is None or y is None:
         return None
     depth = _token_value(tokens, "depth")
     if depth is not None:
-        # Encode depth in z: -(depth + offset) — always negative and large enough
-        # to distinguish from real z values; resolved later from the topo file.
         return x, y, -(depth + _DEPTH_ENCODE_OFFSET)
     z = _token_value(tokens, "z")
     if z is not None:
@@ -54,15 +46,6 @@ def _read_point(tokens):
 
 
 def read_sw4_geometry(path):
-    """Parse a SW4 .in file.
-
-    Returns
-    -------
-    grid : (gx, gy, gz)
-    sources : ndarray (N,3)
-    receivers : ndarray (N,3) — z=NaN means depth= (topo surface, needs resolution)
-    topo_points : ndarray (M,3) or None — raw topo file, z = positive elevation
-    """
     path = Path(path)
     grid = None
     sources = []
@@ -108,15 +91,6 @@ def read_sw4_geometry(path):
 
 
 def _resolve_receivers(receivers, topo_points):
-    """Resolve depth=-encoded z values to their actual SW4 z position.
-
-    Encoding: z = -(depth + _DEPTH_ENCODE_OFFSET)
-      depth=0  → station at the free surface        → z = -topo_z
-      depth=d  → station d metres below free surface → z = -(topo_z - d)
-
-    Topo file stores positive elevation; SW4 z-axis has z < 0 above datum.
-    Falls back to z=0 when no topo match is found.
-    """
     if len(receivers) == 0:
         return receivers.copy()
 
@@ -132,16 +106,14 @@ def _resolve_receivers(receivers, topo_points):
 
     for i in np.where(depth_mask)[0]:
         x, y = resolved[i, 0], resolved[i, 1]
-        depth = -(resolved[i, 2]) - _DEPTH_ENCODE_OFFSET   # recover depth from encoding
-        tz = topo_lookup.get((round(x), round(y)), 0.0)
-        # SW4 convention: positive topo elevation tz → SW4 z = -tz at surface
-        # depth d below surface → SW4 z = -(tz - d)
-        resolved[i, 2] = -(tz - depth)
+        depth = -(resolved[i, 2]) - _DEPTH_ENCODE_OFFSET
+        topo_z = topo_lookup.get((round(x), round(y)), 0.0)
+        resolved[i, 2] = -(topo_z - depth)
 
     return resolved
 
 
-def plot_sw4_geometry(path):
+def plot_sw4_geometry(path, origin_m=None):
     try:
         import pyvista as pv
         from pyvistaqt import QtInteractor
@@ -151,18 +123,30 @@ def plot_sw4_geometry(path):
             "plot_geometry=True requires pyvista, pyvistaqt, and PyQt5."
         ) from exc
 
+    import os
+    import sys
+
+    # PyVistaQt + PyQt5 is unstable on some Wayland sessions and may crash
+    # with a fatal X BadWindow during startup. Prefer xcb on Linux unless
+    # the user explicitly set another stable platform.
+    if sys.platform.startswith("linux"):
+        qpa = os.environ.get("QT_QPA_PLATFORM", "").strip().lower()
+        if qpa == "" or qpa.startswith("wayland"):
+            os.environ["QT_QPA_PLATFORM"] = "xcb"
+
     path = Path(path)
     (grid_x, grid_y, grid_z), sources, receivers, topo_points = read_sw4_geometry(path)
-
-    # Resolve depth=0 receivers to their actual topo elevation
     receivers = _resolve_receivers(receivers, topo_points)
+    origin_m = None if origin_m is None else np.asarray(origin_m, dtype=float)
+    georef = origin_m is not None
 
     app = QtWidgets.QApplication.instance()
     if app is None:
         app = QtWidgets.QApplication([])
 
     window = QtWidgets.QMainWindow()
-    window.setWindowTitle(f"SW4 geometry — {path.name}")
+    title = "SW4 geometry georeferenced" if georef else "SW4 geometry local"
+    window.setWindowTitle(f"{title} - {path.name}")
     window.resize(1200, 800)
 
     frame = QtWidgets.QFrame()
@@ -171,18 +155,26 @@ def plot_sw4_geometry(path):
     layout.addWidget(plotter.interactor)
     window.setCentralWidget(frame)
 
-    # Domain box: z=0 at datum, z=+grid_z at bottom
-    box = pv.Box(bounds=(0.0, grid_x, 0.0, grid_y, 0.0, grid_z))
+    if georef:
+        x0, y0, z0 = origin_m
+        box_bounds = (x0, x0 + grid_x, y0, y0 + grid_y, z0, z0 + grid_z)
+        sources = _shift_points(sources, origin_m)
+        receivers = _shift_points(receivers, origin_m)
+    else:
+        box_bounds = (0.0, grid_x, 0.0, grid_y, 0.0, grid_z)
+
+    box = pv.Box(bounds=box_bounds)
     plotter.add_mesh(box, color="lightgray", opacity=0.12, show_edges=False)
     plotter.add_mesh(box, color="gray", style="wireframe", line_width=2)
 
-    # Topo surface as background (no colorbar) — plotted at z=-tz (above datum)
     if topo_points is not None and len(topo_points):
         topo_plot = np.column_stack([
             topo_points[:, 0],
             topo_points[:, 1],
             -topo_points[:, 2],
         ]).astype(float)
+        if georef:
+            topo_plot = _shift_points(topo_plot, origin_m)
         plotter.add_points(
             pv.PolyData(topo_plot),
             color="tan",
@@ -191,10 +183,6 @@ def plot_sw4_geometry(path):
             opacity=0.4,
         )
 
-    # All receivers — ONE colorbar showing Z
-    # z < 0 : above datum (topo surface stations, z0 stations)
-    # z = 0 : at datum
-    # z > 0 : below datum (domain grid, shakermaker subsurface)
     if len(receivers):
         rec_cloud = pv.PolyData(receivers.astype(float))
         rec_cloud["Z [m]"] = receivers[:, 2].astype(float)
@@ -211,7 +199,6 @@ def plot_sw4_geometry(path):
             },
         )
 
-    # Sources — red spheres
     if len(sources):
         plotter.add_points(
             pv.PolyData(sources.astype(float)),
@@ -220,7 +207,8 @@ def plot_sw4_geometry(path):
             render_points_as_spheres=True,
         )
 
-    plotter.add_text("SW4 local Cartesian", position="upper_left", font_size=11)
+    label = "SW4 georeferenced coordinates" if georef else "SW4 local Cartesian"
+    plotter.add_text(label, position="upper_left", font_size=11)
     plotter.show_bounds(
         grid="back",
         location="outer",
@@ -234,3 +222,9 @@ def plot_sw4_geometry(path):
 
     window.show()
     app.exec_()
+
+
+def _shift_points(points, origin_m):
+    if len(points) == 0:
+        return points
+    return np.asarray(points, dtype=float) + origin_m.reshape(1, 3)

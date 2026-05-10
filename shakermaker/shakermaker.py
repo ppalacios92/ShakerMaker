@@ -1902,7 +1902,6 @@ class ShakerMaker:
     def export_sw4(self, path=None,
                    h=50,
                    size_domain=None,
-                   coor_target_shaker=None,
                    tmax=50,
                    m0=1,
                    fileio_path="shakermaker2sw4_fileio",
@@ -1911,15 +1910,20 @@ class ShakerMaker:
                    shakermaker_stations=True,
                    domain_sw4=False,
                    domain_sw4_size=None,
-                   plot_geometry=False):
-        """Export model sources and receivers to SW4 without topography."""
+                   plot_geometry=False,
+                   plot_geometry_sw4=False):
+        """Export model sources and receivers to SW4 without topography.
+
+        The SW4 domain is built from the model geometry. If size_domain has
+        None for x or y, that direction is computed automatically. The exported
+        SW4 input is written in a local box whose origin is one domain corner.
+        """
         from shakermaker.sw4_exporter import SW4ExportConfig, SW4Exporter
 
         config = SW4ExportConfig(
             path=path or os.getcwd(),
             h=h,
             size_domain=size_domain,
-            coor_target_shaker=coor_target_shaker,
             tmax=tmax,
             m0=m0,
             fileio_path=fileio_path,
@@ -1929,15 +1933,13 @@ class ShakerMaker:
             domain_sw4=domain_sw4,
             domain_sw4_size=domain_sw4_size,
             plot_geometry=plot_geometry,
+            plot_geometry_sw4=plot_geometry_sw4,
         )
         return SW4Exporter(self, config).write()
 
     def export_sw4_topo(self, path=None,
                         h=50,
                         size_domain=None,
-                        coor_target_shaker=None,
-                        coor_origin_topo=None,
-                        coor_target_topo=None,
                         tmax=50,
                         m0=1,
                         fileio_path="shakermaker2sw4_fileio",
@@ -1947,19 +1949,17 @@ class ShakerMaker:
                         topo_zmax=None,
                         write_topography_z0_stations=False,
                         shakermaker_stations=False,
+                        shakermaker_stations_to_surface=False,
                         domain_sw4=False,
                         domain_sw4_size=None,
-                        plot_geometry=False):
+                        plot_geometry=False,
+                        plot_geometry_sw4=False):
         """Export model sources and receivers to SW4 with cartesian topography.
 
-        coor_target_shaker moves the ShakerMaker [0, 0, 0] coordinate.
-        coor_origin_topo/coor_target_topo move the original topography grid.
-        Topography surface stations (depth=0) are always written.
-        write_topography_z0_stations: also write stations from the topo surface
-          down to z=0, spaced by h, using negative z coordinates in the rec lines.
-        shakermaker_stations: include the stations instanced in the ShakerMaker model.
-        domain_sw4 / domain_sw4_size: generate a regular grid of receivers inside
-          that sub-domain, spaced by h.
+        The domain is built from topography plus model geometry. If size_domain
+        has None for x or y, that direction is computed automatically. The SW4
+        input is written in local coordinates; plot_geometry shows the original
+        coordinates, and plot_geometry_sw4 shows the local SW4 box.
         """
         if topo_file is None:
             raise ValueError("export_sw4_topo requires topo_file.")
@@ -1970,9 +1970,6 @@ class ShakerMaker:
             path=path or os.getcwd(),
             h=h,
             size_domain=size_domain,
-            coor_target_shaker=coor_target_shaker,
-            coor_origin_topo=coor_origin_topo,
-            coor_target_topo=coor_target_topo,
             tmax=tmax,
             m0=m0,
             fileio_path=fileio_path,
@@ -1982,9 +1979,11 @@ class ShakerMaker:
             topo_zmax=topo_zmax,
             write_topography_z0_stations=write_topography_z0_stations,
             shakermaker_stations=shakermaker_stations,
+            shakermaker_stations_to_surface=shakermaker_stations_to_surface,
             domain_sw4=domain_sw4,
             domain_sw4_size=domain_sw4_size,
             plot_geometry=plot_geometry,
+            plot_geometry_sw4=plot_geometry_sw4,
         )
         return SW4Exporter(self, config).write()
 

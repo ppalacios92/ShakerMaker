@@ -9,34 +9,6 @@ from shakermaker.tools.plotting import ZENTPlot
 from shakermaker.core import subgreen
 import matplotlib.pyplot as plt
 import numpy as np
-#Import from pre-packaged crustal models
-# crust = SCEC_LOH_3()
-
-# #Create source
-# z = 5.0                 # Source depth (km)
-# s,d,r = 0., 45., 90.     # Fault plane angles (deg)
-# source = PointSource([0,0,z], [s,d,r])
-# fault = FaultSource([source], metadata={"name":"source"})
-
-# #Create recording station
-# x0,y0 = 0.,7.           # Station location
-# s = Station([x0,y0,0], 
-#         metadata={
-#         "name":"Your House", 
-#         "filter_results":False, 
-#         "filter_parameters":{"fmax":10.}
-#         })
-# stations = StationList([s], metadata=s.metadata)
-
-#Create model, set parameters and run
-# model = shakermaker.ShakerMaker(crust, fault, stations)
-# model.run(
-#  dt=0.005,   # Output time-step
-#  nfft=2048,  # N timesteps
-#  dk=0.05,     # wavenumber discretization
-#  tb=0,      # Initial zero-padding
-#  verbose=True
-#  )
 
 mb = 3
 src = 3
@@ -67,12 +39,10 @@ pf = 0.0
 df = 0.7853981633974483
 lf = 1.5707963267948966
 
-
 sx = 0.0
 sy = 0.0
 rx = 0.0
 ry = 7.0
-
 
 plt.figure(1)
 plt.subplot(3,3,1)
@@ -106,22 +76,17 @@ for dsx, dsy, drx, dry in dxdy:
 
 	t = np.arange(Nt)*dt + t0 
 
-
 	for i in range(9):
 		plt.subplot(3,3,1+i)
 		plt.plot(t, tdata[0,i,:])
 		plt.title(str(i))
-
 
 plt.figure(1)
 plt.subplot(3,3,1)
 
-
-
-	for i in range(9):
-		plt.subplot(3,3,1+i)
-		plt.plot(t, tdata[0,i,:])
-		plt.title(str(i))
-
+for i in range(9):
+    plt.subplot(3,3,1+i)
+    plt.plot(t, tdata[0,i,:])
+    plt.title(str(i))
 
 plt.show()

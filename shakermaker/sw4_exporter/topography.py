@@ -23,6 +23,14 @@ def read_cartesian_topography(path):
     return nx, ny, points
 
 
+def rotate_topography_to_shakermaker(points):
+    points = np.asarray(points, dtype=float)
+    rotated = points.copy()
+    rotated[:, 0] = points[:, 1]
+    rotated[:, 1] = points[:, 0]
+    return rotated
+
+
 def bounds(points):
     points = np.asarray(points, dtype=float)
     return (
@@ -143,12 +151,3 @@ def print_active_geometry_bounds(points):
     print(SEPARATOR)
     print(f"Active    x=[{xmin:.1f}, {xmax:.1f}]  y=[{ymin:.1f}, {ymax:.1f}]  z=[{zmin:.2f}, {zmax:.2f}]")
     print(f"Centroid  [{centroid[0]:.1f}, {centroid[1]:.1f}, {centroid[2]:.2f}]")
-
-
-def print_coordinate_alignment(coor_origin, coor_target, automatic=False):
-    label = "automatic" if automatic else "manual"
-    print(SEPARATOR)
-    print(f"Topography coordinate alignment ({label})")
-    print(SEPARATOR)
-    print(f"coor_origin = [{coor_origin[0]:.1f}, {coor_origin[1]:.1f}, {coor_origin[2]:.2f}]")
-    print(f"coor_target = [{coor_target[0]:.1f}, {coor_target[1]:.1f}, {coor_target[2]:.1f}]")

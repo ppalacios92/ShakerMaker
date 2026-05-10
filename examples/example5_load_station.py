@@ -8,5 +8,4 @@ s.load("mystation.npz")
 
 print(s)
 
-# Visualize results
-ZENTPlot(s, show=True)#, xlim=[0,3])
+ZENTPlot(s, show=True)

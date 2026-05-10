@@ -5,65 +5,41 @@ from typing import Optional, Sequence
 
 @dataclass
 class SW4ExportConfig:
-    """Configuration for exporting a ShakerMaker model to SW4 files."""
+    """Configuration for exporting a ShakerMaker model to SW4."""
 
     path: str | Path
     h: float = 50.0
-    x_domain: float = 0.0
-    y_domain: float = 0.0
-    z_domain: float = 0.0
+    x_domain: Optional[float] = None
+    y_domain: Optional[float] = None
+    z_domain: Optional[float] = None
     x_origin: float = 0.0
     y_origin: float = 0.0
     z_origin: float = 0.0
     tmax: float = 50.0
     m0: float = 1.0
     size_domain: Optional[Sequence[float]] = None
-    coor_target_shaker: Optional[Sequence[float]] = None
-    coor_origin_topo: Optional[Sequence[float]] = None
-    coor_target_topo: Optional[Sequence[float]] = None
-    coor_origin: Optional[Sequence[float]] = None
-    coor_target: Optional[Sequence[float]] = None
     fileio_path: str = "shakermaker2sw4_fileio"
     supergrid_gp: int = 30
     station_prefix: str = "sf"
     topo_file: Optional[str | Path] = None
-    topo_reference: Optional[Sequence[float]] = None
-    topo_target: Optional[Sequence[float]] = None
     topo_zmax: Optional[float] = None
-    # Stations between the topography surface and the z=0 plane (written with z<0 in SW4)
     write_topography_z0_stations: bool = False
-    # Include the ShakerMaker instanced stations
     shakermaker_stations: bool = True
-    # Generate a regular grid of receivers inside a sub-domain
+    shakermaker_stations_to_surface: bool = False
     domain_sw4: bool = False
     domain_sw4_size: Optional[Sequence[float]] = None
     domain_sw4_x: Optional[float] = None
     domain_sw4_y: Optional[float] = None
     domain_sw4_z: Optional[float] = None
     plot_geometry: bool = False
+    plot_geometry_sw4: bool = False
 
     def __post_init__(self):
         if self.size_domain is not None:
             self.x_domain, self.y_domain, self.z_domain = _as_xyz(self.size_domain, "size_domain")
-
-        shaker_target = self.coor_target_shaker
-        if shaker_target is None:
-            shaker_target = self.coor_target
-        if shaker_target is not None:
-            self.x_origin, self.y_origin, self.z_origin = _as_xyz(shaker_target, "coor_target_shaker")
-
-        if self.coor_origin_topo is not None:
-            self.topo_reference = self.coor_origin_topo
-        elif self.coor_origin is not None and self.topo_reference is None:
-            self.topo_reference = self.coor_origin
-
-        if self.coor_target_topo is not None:
-            self.topo_target = self.coor_target_topo
-
         if self.domain_sw4_size is not None:
             self.domain_sw4_x, self.domain_sw4_y, self.domain_sw4_z = _as_xyz(
-                self.domain_sw4_size, "domain_sw4_size"
-            )
+                self.domain_sw4_size, "domain_sw4_size")
 
 
 def _as_xyz(values, name):
