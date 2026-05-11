@@ -47,6 +47,9 @@ def _read_point(tokens):
 
 def read_sw4_geometry(path):
     path = Path(path)
+    if path.suffix.lower() in (".h5", ".hdf5"):
+        return read_sw4_geometry_h5(path)
+
     grid = None
     sources = []
     receivers = []
@@ -109,6 +112,53 @@ def read_sw4_geometry(path):
         topo_points,
         topo_original_bounds,
     )
+
+
+def read_sw4_geometry_h5(path):
+    import h5py
+
+    path = Path(path)
+    with h5py.File(path, "r") as hf:
+        config = hf["config"]
+        grid = (
+            float(config["x_domain"][()]),
+            float(config["y_domain"][()]),
+            float(config["z_domain"][()]),
+        )
+        sources = np.column_stack([
+            hf["sources/x_sw4_m"][:],
+            hf["sources/y_sw4_m"][:],
+            hf["sources/z_sw4_m"][:],
+        ]).astype(float) if "sources" in hf and len(hf["sources/id"]) else np.empty((0, 3), dtype=float)
+
+        if "receivers" in hf and "xyz_km" in hf["receivers"]:
+            receivers = np.asarray(hf["receivers/xyz_km"][:], dtype=float) * 1000.0
+            receiver_kinds = _read_h5_strings(hf["receivers/kind"])
+        else:
+            receivers = np.empty((0, 3), dtype=float)
+            receiver_kinds = np.empty((0,), dtype=object)
+
+        topo_points = None
+        topo_original_bounds = None
+        if "topography" in hf and bool(hf["topography/present"][()]):
+            topo_points = np.asarray(hf["topography/points_xyz_m"][:], dtype=float)
+            if "original_bounds" in hf["topography"]:
+                bounds = np.asarray(hf["topography/original_bounds"][:], dtype=float)
+                topo_original_bounds = {
+                    "xmin": float(bounds[0]),
+                    "xmax": float(bounds[1]),
+                    "ymin": float(bounds[2]),
+                    "ymax": float(bounds[3]),
+                }
+
+    return grid, sources, receivers, receiver_kinds, topo_points, topo_original_bounds
+
+
+def _read_h5_strings(dataset):
+    return np.asarray([
+        value.decode("utf-8") if isinstance(value, bytes) else str(value)
+        for value in dataset[:]
+    ], dtype=object)
 
 
 def _read_topography_bounds(tokens):

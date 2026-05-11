@@ -66,12 +66,11 @@ def minimum_corner(points):
     ], dtype=float)
 
 
-def write_cartesian_topography(path, nx, ny, points):
-    path = Path(path)
-    with path.open("w", encoding="ascii", newline="\n") as f:
-        f.write(f"{nx} {ny}\n")
-        for x, y, z in np.asarray(points, dtype=float):
-            f.write(f"{x:.1f} {y:.1f} {z:.6f}\n")
+def cartesian_topography_text(nx, ny, points):
+    lines = [f"{nx} {ny}"]
+    for x, y, z in np.asarray(points, dtype=float):
+        lines.append(f"{x:.1f} {y:.1f} {z:.6f}")
+    return "\n".join(lines) + "\n"
 
 
 def extend_topography_to_domain(nx, ny, points, x_domain, y_domain):

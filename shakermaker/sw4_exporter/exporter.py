@@ -1,5 +1,6 @@
 from pathlib import Path
 import csv
+import io
 import numpy as np
 
 from shakermaker.sl_extensions import DRMBox, SurfaceGrid, PointCloudDRMReceiver
@@ -8,10 +9,9 @@ from .config import SW4ExportConfig
 from .coordinates import CoordinateTransform
 from .geometry_plot import plot_sw4_geometry
 from .grid import grid_line
-from .hdf5_geometry import write_geometry_h5
-from .hdf5_summary import write_summary_h5
-from .input_writer import write_sw4_input
+from .input_writer import sw4_input_text
 from .materials import material_lines
+from .package_h5 import write_sw4_package_h5, write_unpack_script
 from .receivers import (
     domain_receiver_lines,
     model_receiver_lines,
@@ -20,7 +20,7 @@ from .receivers import (
     topography_z0_receiver_lines,
     _values_between_topography_and_z0,
 )
-from .sources import source_rows, sw4_source_lines, write_source_files
+from .sources import source_file_text, source_rows, sw4_source_lines
 from .topography import (
     SEPARATOR,
     print_active_geometry_bounds,
@@ -30,12 +30,12 @@ from .topography import (
     rebuild_cartesian_topography,
     rotate_topography_to_shakermaker,
     extend_topography_to_domain,
-    write_cartesian_topography,
+    cartesian_topography_text,
 )
 
 
 class SW4Exporter:
-    """Exporter orchestrator for SW4 files and ShakerMaker HDF5 summaries."""
+    """Exporter orchestrator for compact SW4 HDF5 transport packages."""
 
     def __init__(self, model, config: SW4ExportConfig):
         self.model = model
@@ -45,22 +45,26 @@ class SW4Exporter:
         self.sw4_path = self.base_path / "sw4"
         self.sources_path = self.sw4_path / "sources"
         self.topo_path = self.sw4_path / "topo"
-        self.geometry_h5 = self.exports_path / "model_geometry.h5"
-        self.summary_h5 = self.exports_path / "model_summary.h5"
         self.input_file = self.sw4_path / "shakermaker2sw4.in"
+        self.package_h5 = self.exports_path / self.config.h5_export_name
+        self.unpack_script = self.exports_path / "unpack_sw4_package.py"
 
     def write(self):
         self.exports_path.mkdir(parents=True, exist_ok=True)
-        self.sources_path.mkdir(parents=True, exist_ok=True)
+        stale_structure = self.exports_path / "PACKAGE_STRUCTURE.txt"
+        if stale_structure.is_file():
+            stale_structure.unlink()
 
         topo_line = None
         topo_points = None
         topo_points_local = None
         topo_points_sw4 = None
         topo_nx = topo_ny = None
+        local_topo = None
+        topo_nx_sw4 = topo_ny_sw4 = None
+        topo_original_bounds = None
 
         if self.config.topo_file is not None:
-            self.topo_path.mkdir(parents=True, exist_ok=True)
             topo_nx, topo_ny, topo_points = read_cartesian_topography(self.config.topo_file)
             topo_points = rotate_topography_to_shakermaker(topo_points)
             topo_nx, topo_ny, topo_points = rebuild_cartesian_topography(topo_points)
@@ -75,11 +79,10 @@ class SW4Exporter:
             topo_nx_sw4, topo_ny_sw4, topo_points_sw4 = extend_topography_to_domain(
                 topo_nx, topo_ny, topo_points_local, x_domain, y_domain)
             local_topo = self.topo_path / f"{Path(self.config.topo_file).stem}_local{Path(self.config.topo_file).suffix}"
-            write_cartesian_topography(local_topo, topo_nx_sw4, topo_ny_sw4, topo_points_sw4)
-            self._remove_old_topography_sidecars(local_topo)
             print_topography_diagnostics(
                 topo_points, topo_points_local, x_domain, y_domain, z_domain,
                 h=self.config.h, topo_nx=topo_nx, topo_ny=topo_ny, topo_zmax=self.config.topo_zmax)
+            topo_original_bounds = self._topography_bounds_array(topo_points_local)
             topo_line = self._topography_line(local_topo, topo_points_local)
             if self.config.topo_zmax is not None:
                 topo_line += f" zmax={float(self.config.topo_zmax):.16g}"
@@ -87,8 +90,6 @@ class SW4Exporter:
             print_domain_diagnostics(x_domain, y_domain, z_domain, h=self.config.h)
 
         rows = source_rows(self.model, transform)
-        write_source_files(rows, self.sources_path)
-        self._write_sources_summary(rows)
         source_points = np.array([[row["x_sw4_m"], row["y_sw4_m"], row["z_sw4_m"]] for row in rows], dtype=float)
 
         has_qa = isinstance(self.model._receivers, (DRMBox, SurfaceGrid, PointCloudDRMReceiver))
@@ -175,27 +176,43 @@ class SW4Exporter:
                     lines, kind="sw4_domain", start_model_index=-1)
                 rec_index += len(lines)
 
-        write_sw4_input(
-            self.input_file,
-            grid_line(self.config.h, x_domain, y_domain, z_domain),
+        grid = grid_line(self.config.h, x_domain, y_domain, z_domain)
+        materials = material_lines(self.model._crust)
+        source_lines = sw4_source_lines(rows, self.config.m0)
+        input_text = sw4_input_text(
+            grid,
             self.config.tmax,
             self.config.fileio_path,
             self.config.supergrid_gp,
-            material_lines(self.model._crust),
-            sw4_source_lines(rows, self.config.m0),
+            materials,
+            source_lines,
             receiver_lines,
             topo_line,
         )
 
         paths = self.paths()
-        write_geometry_h5(
-            self.geometry_h5, self.model, transform, rows[0]["dt"], self.config.tmax,
-            self.config, has_qa, n_drm_stations, qa_index,
-            receiver_records=receiver_records)
-        write_summary_h5(
-            self.summary_h5, self.model, self.config, paths, rows,
-            transform, has_qa, n_drm_stations, qa_index,
-            receiver_records=receiver_records)
+        file_payloads = {"sw4/shakermaker2sw4.in": input_text}
+        for row in rows:
+            file_payloads[f"sw4/sources/{Path(row['dfile']).name}"] = source_file_text(row)
+        file_payloads["sw4/sources/sources_summary.csv"] = self._sources_summary_text(rows)
+        topo_relpath = None
+        if local_topo is not None:
+            topo_relpath = f"sw4/topo/{local_topo.name}"
+            file_payloads[topo_relpath] = cartesian_topography_text(topo_nx_sw4, topo_ny_sw4, topo_points_sw4)
+        write_sw4_package_h5(
+            paths["package_h5"],
+            self.config,
+            paths,
+            rows,
+            receiver_records,
+            file_payloads,
+            input_text,
+            topography_relpath=topo_relpath,
+            topography_shape=(topo_nx_sw4, topo_ny_sw4) if local_topo is not None else None,
+            topography_points=topo_points_sw4,
+            topography_original_bounds=topo_original_bounds,
+        )
+        write_unpack_script(paths["unpack_script"])
 
         self.model.sw4_export_paths = paths
         self.model.sw4_export_config = self.config
@@ -203,16 +220,14 @@ class SW4Exporter:
         print(SEPARATOR)
         print("SW4 export files")
         print(SEPARATOR)
-        print(f"SW4 folder    : {self.sw4_path}")
-        print(f"Geometry HDF5 : {self.geometry_h5}")
-        print(f"Summary HDF5  : {self.summary_h5}")
-        print(f"SW4 input     : {self.input_file}")
+        print(f"SW4 package   : {paths['package_h5']}")
+        print(f"Unpack script : {paths['unpack_script']}")
         print(SEPARATOR)
 
         if self.config.plot_geometry:
-            plot_sw4_geometry(self.input_file, origin_m=transform.domain_origin_m)
+            plot_sw4_geometry(paths["package_h5"], origin_m=transform.domain_origin_m)
         if self.config.plot_geometry_sw4:
-            plot_sw4_geometry(self.input_file)
+            plot_sw4_geometry(paths["package_h5"])
 
     def _active_geometry_points_m(self, topo_points=None):
         points = []
@@ -273,11 +288,13 @@ class SW4Exporter:
         line = f"topography input=cartesian file=topo/{local_topo.name}"
         return bounds + "\n" + line
 
-    def _remove_old_topography_sidecars(self, local_topo):
-        for suffix in (".base.xyz", ".extended.xyz"):
-            path = local_topo.with_suffix(local_topo.suffix + suffix)
-            if path.exists():
-                path.unlink()
+    def _topography_bounds_array(self, topo_points_local):
+        return np.asarray([
+            float(topo_points_local[:, 0].min()),
+            float(topo_points_local[:, 0].max()),
+            float(topo_points_local[:, 1].min()),
+            float(topo_points_local[:, 1].max()),
+        ], dtype=float)
 
     def _topography_xy_at_z0(self, topo_points_local):
         out = set()
@@ -409,20 +426,21 @@ class SW4Exporter:
             "exports": self.exports_path,
             "sw4": self.sw4_path,
             "sources": self.sources_path,
-            "geometry_h5": self.geometry_h5,
-            "summary_h5": self.summary_h5,
+            "topo": self.topo_path,
+            "package_h5": self.package_h5,
+            "unpack_script": self.unpack_script,
             "input": self.input_file,
         }
 
-    def _write_sources_summary(self, rows):
-        path = self.sources_path / "sources_summary.csv"
+    def _sources_summary_text(self, rows):
         headers = [
             "id", "x_km", "y_km", "z_km", "x_m", "y_m", "z_m",
             "x_sw4_m", "y_sw4_m", "z_sw4_m",
             "strike_deg", "dip_deg", "rake_deg", "trigger_time_s",
             "stf_local_t0_s", "dt", "stf_type", "dfile",
         ]
-        with path.open("w", encoding="utf-8", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=headers, extrasaction="ignore")
-            writer.writeheader()
-            writer.writerows(rows)
+        f = io.StringIO()
+        writer = csv.DictWriter(f, fieldnames=headers, extrasaction="ignore", lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(rows)
+        return f.getvalue()

@@ -31,16 +31,11 @@ def source_rows(model, transform):
     return rows
 
 
-def write_source_files(rows, sources_path):
-    sources_path = Path(sources_path)
-    sources_path.mkdir(parents=True, exist_ok=True)
-    for row in rows:
-        dfile_path = sources_path / Path(row["dfile"]).name
-        data = np.asarray(row["stf"].data, dtype=float).reshape(-1)
-        with dfile_path.open("w", encoding="utf-8") as f:
-            f.write(f"{row['trigger_time_s']:.16g} {row['dt']:.16g} {len(data)}\n")
-            for value in data:
-                f.write(f"{float(value):.16g}\n")
+def source_file_text(row):
+    data = np.asarray(row["stf"].data, dtype=float).reshape(-1)
+    lines = [f"{row['trigger_time_s']:.16g} {row['dt']:.16g} {len(data)}"]
+    lines.extend(f"{float(value):.16g}" for value in data)
+    return "\n".join(lines) + "\n"
 
 
 def sw4_source_lines(rows, m0):

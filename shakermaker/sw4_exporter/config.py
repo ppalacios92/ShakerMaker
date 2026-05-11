@@ -33,6 +33,7 @@ class SW4ExportConfig:
     domain_sw4_z: Optional[float] = None
     plot_geometry: bool = False
     plot_geometry_sw4: bool = False
+    h5_export_name: str = "sw4_package.h5"
 
     def __post_init__(self):
         if self.size_domain is not None:

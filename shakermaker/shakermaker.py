@@ -1911,7 +1911,8 @@ class ShakerMaker:
                    domain_sw4=False,
                    domain_sw4_size=None,
                    plot_geometry=False,
-                   plot_geometry_sw4=False):
+                   plot_geometry_sw4=False,
+                   h5_export_name="sw4_package.h5"):
         """Export model sources and receivers to SW4 without topography.
 
         The SW4 domain is built from the model geometry. If size_domain has
@@ -1934,6 +1935,7 @@ class ShakerMaker:
             domain_sw4_size=domain_sw4_size,
             plot_geometry=plot_geometry,
             plot_geometry_sw4=plot_geometry_sw4,
+            h5_export_name=h5_export_name,
         )
         return SW4Exporter(self, config).write()
 
@@ -1953,7 +1955,8 @@ class ShakerMaker:
                         domain_sw4=False,
                         domain_sw4_size=None,
                         plot_geometry=False,
-                        plot_geometry_sw4=False):
+                        plot_geometry_sw4=False,
+                        h5_export_name="sw4_package.h5"):
         """Export model sources and receivers to SW4 with cartesian topography.
 
         The domain is built from topography plus model geometry. If size_domain
@@ -1984,6 +1987,7 @@ class ShakerMaker:
             domain_sw4_size=domain_sw4_size,
             plot_geometry=plot_geometry,
             plot_geometry_sw4=plot_geometry_sw4,
+            h5_export_name=h5_export_name,
         )
         return SW4Exporter(self, config).write()
 
