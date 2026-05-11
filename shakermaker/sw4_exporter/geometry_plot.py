@@ -50,11 +50,29 @@ def read_sw4_geometry(path):
     grid = None
     sources = []
     receivers = []
+    receiver_kinds = []
     topo_rel_file = None
+    topo_original_bounds = None
+    current_receiver_kind = "receiver"
 
     for raw in path.read_text(encoding="utf-8-sig").splitlines():
         line = raw.strip()
-        if not line or line.startswith("#"):
+        if not line:
+            continue
+        if line.startswith("#"):
+            label = line.lstrip("#").strip().lower()
+            if label.startswith("shakermaker topography_original_bounds"):
+                topo_original_bounds = _read_topography_bounds(label.split())
+            elif label == "shakermaker stations surface":
+                current_receiver_kind = "shakermaker_surface"
+            elif label == "shakermaker stations":
+                current_receiver_kind = "shakermaker"
+            elif label.startswith("topography surface"):
+                current_receiver_kind = "topography_surface"
+            elif label.startswith("between topography"):
+                current_receiver_kind = "topography_to_z0"
+            elif label.startswith("sw4 domain"):
+                current_receiver_kind = "sw4_domain"
             continue
         tokens = line.split()
         if tokens[0] == "grid":
@@ -67,6 +85,7 @@ def read_sw4_geometry(path):
             pt = _read_point(tokens)
             if pt is not None:
                 receivers.append(pt)
+                receiver_kinds.append(current_receiver_kind)
         elif tokens[0] == "topography":
             topo_rel_file = _token_str(tokens, "file")
 
@@ -86,8 +105,23 @@ def read_sw4_geometry(path):
         grid,
         np.asarray(sources, dtype=float) if sources else np.empty((0, 3)),
         np.asarray(receivers, dtype=float) if receivers else np.empty((0, 3)),
+        np.asarray(receiver_kinds, dtype=object),
         topo_points,
+        topo_original_bounds,
     )
+
+
+def _read_topography_bounds(tokens):
+    out = {}
+    for token in tokens:
+        if "=" not in token:
+            continue
+        key, value = token.split("=", 1)
+        if key in ("xmin", "xmax", "ymin", "ymax"):
+            out[key] = float(value)
+    if {"xmin", "xmax", "ymin", "ymax"} <= set(out):
+        return out
+    return None
 
 
 def _resolve_receivers(receivers, topo_points):
@@ -107,10 +141,19 @@ def _resolve_receivers(receivers, topo_points):
     for i in np.where(depth_mask)[0]:
         x, y = resolved[i, 0], resolved[i, 1]
         depth = -(resolved[i, 2]) - _DEPTH_ENCODE_OFFSET
-        topo_z = topo_lookup.get((round(x), round(y)), 0.0)
+        topo_z = topo_lookup.get((round(x), round(y)))
+        if topo_z is None:
+            topo_z = _nearest_topography_z(topo_points, x, y)
         resolved[i, 2] = -(topo_z - depth)
 
     return resolved
+
+
+def _nearest_topography_z(topo_points, x, y):
+    if topo_points is None or len(topo_points) == 0:
+        return 0.0
+    d2 = (topo_points[:, 0] - float(x)) ** 2 + (topo_points[:, 1] - float(y)) ** 2
+    return float(topo_points[int(np.argmin(d2)), 2])
 
 
 def plot_sw4_geometry(path, origin_m=None):
@@ -135,7 +178,7 @@ def plot_sw4_geometry(path, origin_m=None):
             os.environ["QT_QPA_PLATFORM"] = "xcb"
 
     path = Path(path)
-    (grid_x, grid_y, grid_z), sources, receivers, topo_points = read_sw4_geometry(path)
+    (grid_x, grid_y, grid_z), sources, receivers, receiver_kinds, topo_points, topo_original_bounds = read_sw4_geometry(path)
     receivers = _resolve_receivers(receivers, topo_points)
     origin_m = None if origin_m is None else np.asarray(origin_m, dtype=float)
     georef = origin_m is not None
@@ -168,36 +211,65 @@ def plot_sw4_geometry(path, origin_m=None):
     plotter.add_mesh(box, color="gray", style="wireframe", line_width=2)
 
     if topo_points is not None and len(topo_points):
+        topo_base_points, topo_extended_points = _split_topography_points(topo_points, topo_original_bounds)
         topo_plot = np.column_stack([
-            topo_points[:, 0],
-            topo_points[:, 1],
-            -topo_points[:, 2],
+            topo_base_points[:, 0],
+            topo_base_points[:, 1],
+            -topo_base_points[:, 2],
         ]).astype(float)
         if georef:
             topo_plot = _shift_points(topo_plot, origin_m)
+        if len(topo_plot):
+            plotter.add_points(
+                pv.PolyData(topo_plot),
+                color="tan",
+                point_size=2,
+                render_points_as_spheres=False,
+                opacity=0.4,
+            )
+
+    if topo_extended_points is not None and len(topo_extended_points):
+        extended_plot = np.column_stack([
+            topo_extended_points[:, 0],
+            topo_extended_points[:, 1],
+            -topo_extended_points[:, 2],
+        ]).astype(float)
+        if georef:
+            extended_plot = _shift_points(extended_plot, origin_m)
         plotter.add_points(
-            pv.PolyData(topo_plot),
-            color="tan",
-            point_size=2,
+            pv.PolyData(extended_plot),
+            color="gray",
+            point_size=3,
             render_points_as_spheres=False,
-            opacity=0.4,
+            opacity=0.18,
         )
 
     if len(receivers):
-        rec_cloud = pv.PolyData(receivers.astype(float))
-        rec_cloud["Z [m]"] = receivers[:, 2].astype(float)
-        plotter.add_points(
-            rec_cloud,
-            scalars="Z [m]",
-            cmap="RdYlBu_r",
-            point_size=4,
-            render_points_as_spheres=False,
-            show_scalar_bar=True,
-            scalar_bar_args={
-                "title": "Z [m]   (- above datum / + below)",
-                "vertical": True,
-            },
-        )
+        surface_mask = receiver_kinds == "shakermaker_surface"
+        other_receivers = receivers[~surface_mask]
+        if len(other_receivers):
+            rec_cloud = pv.PolyData(other_receivers.astype(float))
+            rec_cloud["Z [m]"] = other_receivers[:, 2].astype(float)
+            plotter.add_points(
+                rec_cloud,
+                scalars="Z [m]",
+                cmap="RdYlBu_r",
+                point_size=4,
+                render_points_as_spheres=False,
+                show_scalar_bar=True,
+                scalar_bar_args={
+                    "title": "Z [m]   (- above datum / + below)",
+                    "vertical": True,
+                },
+            )
+        surface_receivers = receivers[surface_mask]
+        if len(surface_receivers):
+            plotter.add_points(
+                pv.PolyData(surface_receivers.astype(float)),
+                color="black",
+                point_size=10,
+                render_points_as_spheres=True,
+            )
 
     if len(sources):
         plotter.add_points(
@@ -228,3 +300,16 @@ def _shift_points(points, origin_m):
     if len(points) == 0:
         return points
     return np.asarray(points, dtype=float) + origin_m.reshape(1, 3)
+
+
+def _split_topography_points(topo_points, bounds):
+    if bounds is None:
+        return topo_points, np.empty((0, 3), dtype=float)
+    points = np.asarray(topo_points, dtype=float)
+    inside = (
+        (points[:, 0] >= bounds["xmin"] - 1.0e-9)
+        & (points[:, 0] <= bounds["xmax"] + 1.0e-9)
+        & (points[:, 1] >= bounds["ymin"] - 1.0e-9)
+        & (points[:, 1] <= bounds["ymax"] + 1.0e-9)
+    )
+    return points[inside], points[~inside]

@@ -31,6 +31,23 @@ def rotate_topography_to_shakermaker(points):
     return rotated
 
 
+def rebuild_cartesian_topography(points):
+    points = np.asarray(points, dtype=float)
+    xs = np.unique(points[:, 0])
+    ys = np.unique(points[:, 1])
+    z_by_xy = {(float(x), float(y)): float(z) for x, y, z in points}
+
+    rebuilt = []
+    for y in ys:
+        for x in xs:
+            key = (float(x), float(y))
+            if key not in z_by_xy:
+                raise ValueError("Topography points must form a complete cartesian grid.")
+            rebuilt.append((x, y, z_by_xy[key]))
+
+    return len(xs), len(ys), np.asarray(rebuilt, dtype=float)
+
+
 def bounds(points):
     points = np.asarray(points, dtype=float)
     return (
@@ -66,17 +83,20 @@ def extend_topography_to_domain(nx, ny, points, x_domain, y_domain):
 
     dx = float(np.median(np.diff(xs))) if len(xs) > 1 else float(x_domain)
     dy = float(np.median(np.diff(ys))) if len(ys) > 1 else float(y_domain)
-    new_xs = _axis_to_domain(xs[0], x_domain, dx)
-    new_ys = _axis_to_domain(ys[0], y_domain, dy)
+    new_xs = _axis_to_domain(0.0, x_domain, dx)
+    new_ys = _axis_to_domain(0.0, y_domain, dy)
 
     z_grid = points[:, 2].reshape(ny, nx)
     extended = []
     for y in new_ys:
-        old_j = int(np.abs(ys - min(max(y, ys[0]), ys[-1])).argmin())
+        y_clamped = min(max(y, ys[0]), ys[-1])
+        old_j = int(np.abs(ys - y_clamped).argmin())
         for x in new_xs:
-            old_i = int(np.abs(xs - min(max(x, xs[0]), xs[-1])).argmin())
+            x_clamped = min(max(x, xs[0]), xs[-1])
+            old_i = int(np.abs(xs - x_clamped).argmin())
             extended.append((x, y, z_grid[old_j, old_i]))
 
+    print(f"Extended topography spacing dx={dx:.6g} dy={dy:.6g}")
     return len(new_xs), len(new_ys), np.asarray(extended, dtype=float)
 
 
