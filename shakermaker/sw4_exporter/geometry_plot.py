@@ -210,6 +210,7 @@ def plot_sw4_geometry(path, origin_m=None):
     plotter.add_mesh(box, color="lightgray", opacity=0.12, show_edges=False)
     plotter.add_mesh(box, color="gray", style="wireframe", line_width=2)
 
+    topo_extended_points = np.empty((0, 3), dtype=float)
     if topo_points is not None and len(topo_points):
         topo_base_points, topo_extended_points = _split_topography_points(topo_points, topo_original_bounds)
         topo_plot = np.column_stack([
