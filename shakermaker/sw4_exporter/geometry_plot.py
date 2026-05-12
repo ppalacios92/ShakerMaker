@@ -120,19 +120,20 @@ def read_sw4_geometry_h5(path):
     path = Path(path)
     with h5py.File(path, "r") as hf:
         config = hf["config"]
+        sw4_origin_m = _h5_sw4_origin_m(hf)
         grid = (
             float(config["x_domain"][()]),
             float(config["y_domain"][()]),
             float(config["z_domain"][()]),
         )
         sources = np.column_stack([
-            hf["sources/x_sw4_m"][:],
-            hf["sources/y_sw4_m"][:],
-            hf["sources/z_sw4_m"][:],
-        ]).astype(float) if "sources" in hf and len(hf["sources/id"]) else np.empty((0, 3), dtype=float)
+            hf["sources/x_km"][:],
+            hf["sources/y_km"][:],
+            hf["sources/z_km"][:],
+        ]).astype(float) * 1000.0 - sw4_origin_m if "sources" in hf and len(hf["sources/id"]) else np.empty((0, 3), dtype=float)
 
         if "receivers" in hf and "xyz_km" in hf["receivers"]:
-            receivers = np.asarray(hf["receivers/xyz_km"][:], dtype=float) * 1000.0
+            receivers = np.asarray(hf["receivers/xyz_km"][:], dtype=float) * 1000.0 - sw4_origin_m
             receiver_kinds = _read_h5_strings(hf["receivers/kind"])
         else:
             receivers = np.empty((0, 3), dtype=float)
@@ -141,9 +142,12 @@ def read_sw4_geometry_h5(path):
         topo_points = None
         topo_original_bounds = None
         if "topography" in hf and bool(hf["topography/present"][()]):
-            topo_points = np.asarray(hf["topography/points_xyz_m"][:], dtype=float)
+            topo_points = np.asarray(hf["topography/points_xyz_m"][:], dtype=float) - sw4_origin_m
             if "original_bounds" in hf["topography"]:
-                bounds = np.asarray(hf["topography/original_bounds"][:], dtype=float)
+                bounds = np.asarray(hf["topography/original_bounds"][:], dtype=float) - np.asarray(
+                    [sw4_origin_m[0], sw4_origin_m[0], sw4_origin_m[1], sw4_origin_m[1]],
+                    dtype=float,
+                )
                 topo_original_bounds = {
                     "xmin": float(bounds[0]),
                     "xmax": float(bounds[1]),
@@ -152,6 +156,17 @@ def read_sw4_geometry_h5(path):
                 }
 
     return grid, sources, receivers, receiver_kinds, topo_points, topo_original_bounds
+
+
+def _h5_sw4_origin_m(hf):
+    if "coordinates" in hf and "sw4_origin_in_shakermaker_m" in hf["coordinates"]:
+        return np.asarray(hf["coordinates/sw4_origin_in_shakermaker_m"][:], dtype=float)
+    config = hf["config"]
+    return -np.asarray([
+        float(config["x_origin"][()]),
+        float(config["y_origin"][()]),
+        float(config["z_origin"][()]),
+    ], dtype=float)
 
 
 def _read_h5_strings(dataset):
@@ -338,6 +353,7 @@ def plot_sw4_geometry(path, origin_m=None):
         xtitle="X [m]",
         ytitle="Y [m]",
         ztitle="Z [m]  (+ down)",
+        font_size=9,
         fmt="%.0f",
     )
     plotter.show_axes()

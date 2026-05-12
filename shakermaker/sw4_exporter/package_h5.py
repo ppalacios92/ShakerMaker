@@ -8,7 +8,7 @@ import numpy as np
 PACKAGE_VERSION = "1.0"
 
 
-def write_sw4_package_h5(path, config, paths, source_rows, receiver_records,
+def write_sw4_package_h5(path, model, config, paths, source_rows, receiver_records,
                          file_payloads, input_text, topography_relpath=None,
                          topography_shape=None, topography_points=None,
                          topography_original_bounds=None):
@@ -24,12 +24,16 @@ def write_sw4_package_h5(path, config, paths, source_rows, receiver_records,
 
         _write_manifest(hf, config, paths, file_payloads.keys(), string_dtype)
         _write_config(hf, config, string_dtype)
+        _write_coordinates(hf, config)
+        _write_crust(hf, model)
+        _write_stations(hf, model, string_dtype)
         _write_sw4_input(hf, input_text, string_dtype)
         _write_sources(hf, source_rows, string_dtype)
         _write_topography(
             hf, topography_relpath, topography_shape, topography_points,
             topography_original_bounds, string_dtype)
         _write_receivers(hf, receiver_records, string_dtype)
+        _write_drm_template(hf, config, receiver_records, string_dtype)
         _write_files(hf, file_payloads, string_dtype)
 
 
@@ -108,6 +112,48 @@ def _write_config(hf, config, string_dtype):
         grp.create_dataset(key, data=str(getattr(config, key)), dtype=string_dtype)
 
 
+def _write_coordinates(hf, config):
+    grp = hf.create_group("coordinates")
+    shakermaker_to_sw4_offset_m = np.asarray([
+        float(config.x_origin),
+        float(config.y_origin),
+        float(config.z_origin),
+    ], dtype=np.float64)
+    grp.create_dataset("shakermaker_to_sw4_offset_m", data=shakermaker_to_sw4_offset_m)
+    grp.create_dataset("sw4_origin_in_shakermaker_m", data=-shakermaker_to_sw4_offset_m)
+    grp.create_dataset("shakermaker_to_sw4_offset_km", data=shakermaker_to_sw4_offset_m / 1000.0)
+    grp.create_dataset("sw4_origin_in_shakermaker_km", data=-shakermaker_to_sw4_offset_m / 1000.0)
+
+
+def _write_crust(hf, model):
+    crust = model._crust
+    grp = hf.create_group("crust")
+    grp.create_dataset("thickness_km", data=np.asarray(crust.d, dtype=np.float64))
+    grp.create_dataset("vp_km_s", data=np.asarray(crust.a, dtype=np.float64))
+    grp.create_dataset("vs_km_s", data=np.asarray(crust.b, dtype=np.float64))
+    grp.create_dataset("rho_g_cm3", data=np.asarray(crust.rho, dtype=np.float64))
+    grp.create_dataset("qp", data=np.asarray(crust.qa, dtype=np.float64))
+    grp.create_dataset("qs", data=np.asarray(crust.qb, dtype=np.float64))
+    depth_top = np.concatenate(([0.0], np.cumsum(np.asarray(crust.d[:-1], dtype=np.float64))))
+    grp.create_dataset("depth_top_km", data=depth_top)
+
+
+def _write_stations(hf, model, string_dtype):
+    grp = hf.create_group("stations")
+    stations = list(model._receivers)
+    grp.create_dataset("id", data=np.arange(len(stations), dtype=np.int32))
+    xyz_km = np.asarray([station.x for station in stations], dtype=np.float64)
+    if xyz_km.size == 0:
+        xyz_km = np.empty((0, 3), dtype=np.float64)
+    grp.create_dataset("xyz_km", data=xyz_km)
+    grp.create_dataset("internal", data=np.asarray([station.is_internal for station in stations], dtype=bool))
+    grp.create_dataset(
+        "metadata",
+        data=np.asarray([repr(station.metadata) for station in stations], dtype=object),
+        dtype=string_dtype,
+    )
+
+
 def _write_sw4_input(hf, input_text, string_dtype):
     grp = hf.create_group("sw4_input")
     grp.create_dataset("relpath", data="sw4/shakermaker2sw4.in", dtype=string_dtype)
@@ -119,7 +165,6 @@ def _write_sources(hf, source_rows, string_dtype):
     grp.create_dataset("id", data=np.array([int(row["id"]) for row in source_rows], dtype=np.int32))
     for key in (
         "x_km", "y_km", "z_km", "x_m", "y_m", "z_m",
-        "x_sw4_m", "y_sw4_m", "z_sw4_m",
         "strike_deg", "dip_deg", "rake_deg", "trigger_time_s", "stf_local_t0_s", "dt",
     ):
         grp.create_dataset(key, data=np.array([float(row[key]) for row in source_rows], dtype=np.float64))
@@ -167,6 +212,56 @@ def _write_receivers(hf, receiver_records, string_dtype):
     grp.create_dataset("is_qa", data=np.asarray([r["is_qa"] for r in receiver_records], dtype=bool))
     grp.create_dataset("model_index", data=np.asarray([r["model_index"] for r in receiver_records], dtype=np.int32))
     grp.create_dataset("metadata", data=np.array([r["metadata"] for r in receiver_records], dtype=object), dtype=string_dtype)
+
+
+def _write_drm_template(hf, config, receiver_records, string_dtype):
+    grp = hf.create_group("drm_template")
+    non_qa = [record for record in receiver_records if not record["is_qa"]]
+    qa_index = -1
+    qa_record = None
+    for index, record in enumerate(receiver_records):
+        if record["is_qa"]:
+            qa_index = int(index)
+            qa_record = record
+            break
+    xyz_km = np.asarray([record["xyz_km"] for record in non_qa], dtype=np.float64)
+    if xyz_km.size == 0:
+        xyz_km = np.empty((0, 3), dtype=np.float64)
+    internal = np.asarray([record["internal"] for record in non_qa], dtype=bool)
+    data_location = np.arange(len(non_qa), dtype=np.int32) * 3
+
+    if qa_record is not None:
+        qa_xyz = np.asarray(qa_record["xyz_km"], dtype=np.float64).reshape(1, 3)
+        qa_defined = True
+        qa_file = str(qa_record["file"])
+    else:
+        qa_xyz = _center_xy_z0(xyz_km, config).reshape(1, 3)
+        qa_defined = False
+        qa_file = ""
+
+    grp.create_dataset("xyz_km", data=xyz_km)
+    grp.create_dataset("internal", data=internal)
+    grp.create_dataset("data_location", data=data_location)
+    grp.create_dataset("qa_xyz_km", data=qa_xyz)
+    grp.create_dataset("qa_defined", data=qa_defined)
+    grp.create_dataset("qa_index", data=qa_index)
+    grp.create_dataset("qa_file", data=qa_file, dtype=string_dtype)
+    grp.create_dataset("component_order", data="E,N,Z", dtype=string_dtype)
+    grp.create_dataset("coordinate_units", data="km", dtype=string_dtype)
+
+
+def _center_xy_z0(xyz_km, config):
+    if len(xyz_km):
+        xy = 0.5 * (xyz_km[:, :2].min(axis=0) + xyz_km[:, :2].max(axis=0))
+        return np.asarray([xy[0], xy[1], 0.0], dtype=np.float64)
+    else:
+        sw4_origin_km = -np.asarray([
+            float(config.x_origin),
+            float(config.y_origin),
+            float(config.z_origin),
+        ], dtype=float) / 1000.0
+        local_center_km = np.asarray([float(config.x_domain), float(config.y_domain), 0.0], dtype=float) / 2000.0
+        return sw4_origin_km + local_center_km
 
 
 def _write_files(hf, file_payloads, string_dtype):

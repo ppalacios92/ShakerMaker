@@ -78,15 +78,20 @@ class SW4Exporter:
             topo_points_local = np.array([transform.from_original_m_to_sw4_m(p) for p in topo_points])
             topo_nx_sw4, topo_ny_sw4, topo_points_sw4 = extend_topography_to_domain(
                 topo_nx, topo_ny, topo_points_local, x_domain, y_domain)
+            topo_points_shaker = np.asarray(
+                [transform.to_original_m(point) for point in topo_points_sw4],
+                dtype=float,
+            )
             local_topo = self.topo_path / f"{Path(self.config.topo_file).stem}_local{Path(self.config.topo_file).suffix}"
             print_topography_diagnostics(
                 topo_points, topo_points_local, x_domain, y_domain, z_domain,
                 h=self.config.h, topo_nx=topo_nx, topo_ny=topo_ny, topo_zmax=self.config.topo_zmax)
-            topo_original_bounds = self._topography_bounds_array(topo_points_local)
+            topo_original_bounds = self._topography_bounds_array(topo_points)
             topo_line = self._topography_line(local_topo, topo_points_local)
             if self.config.topo_zmax is not None:
                 topo_line += f" zmax={float(self.config.topo_zmax):.16g}"
         else:
+            topo_points_shaker = None
             print_domain_diagnostics(x_domain, y_domain, z_domain, h=self.config.h)
 
         rows = source_rows(self.model, transform)
@@ -141,7 +146,7 @@ class SW4Exporter:
                 receiver_lines.append("# Topography surface stations (depth=0)")
                 receiver_lines += lines
                 receiver_records += self._topography_surface_records(
-                    topo_points_local, start_index=rec_index)
+                    transform, topo_points_local, start_index=rec_index)
                 rec_index += len(lines)
 
             if self.config.write_topography_z0_stations:
@@ -152,7 +157,7 @@ class SW4Exporter:
                     receiver_lines.append("# Between topography and z=0")
                     receiver_lines += lines
                     receiver_records += self._topography_z0_records(
-                        topo_points_local, start_index=rec_index)
+                        transform, topo_points_local, start_index=rec_index)
                     rec_index += len(lines)
 
         if self.config.domain_sw4:
@@ -173,7 +178,7 @@ class SW4Exporter:
                 receiver_lines.append("# SW4 domain grid stations")
                 receiver_lines += lines
                 receiver_records += self._records_from_rec_lines(
-                    lines, kind="sw4_domain", start_model_index=-1)
+                    transform, lines, kind="sw4_domain", start_model_index=-1)
                 rec_index += len(lines)
 
         grid = grid_line(self.config.h, x_domain, y_domain, z_domain)
@@ -201,6 +206,7 @@ class SW4Exporter:
             file_payloads[topo_relpath] = cartesian_topography_text(topo_nx_sw4, topo_ny_sw4, topo_points_sw4)
         write_sw4_package_h5(
             paths["package_h5"],
+            self.model,
             self.config,
             paths,
             rows,
@@ -209,7 +215,7 @@ class SW4Exporter:
             input_text,
             topography_relpath=topo_relpath,
             topography_shape=(topo_nx_sw4, topo_ny_sw4) if local_topo is not None else None,
-            topography_points=topo_points_sw4,
+            topography_points=topo_points_shaker,
             topography_original_bounds=topo_original_bounds,
         )
         write_unpack_script(paths["unpack_script"])
@@ -317,7 +323,7 @@ class SW4Exporter:
             records.append({
                 "file": f"{self.config.station_prefix}{offset:05d}",
                 "kind": "shakermaker",
-                "xyz_km": xyz_m / 1000.0,
+                "xyz_km": np.asarray(station.x, dtype=float),
                 "internal": bool(station.is_internal),
                 "is_qa": bool(i_station == qa_index),
                 "model_index": int(i_station),
@@ -335,7 +341,7 @@ class SW4Exporter:
             records.append({
                 "file": f"{self.config.station_prefix}{offset:05d}",
                 "kind": "shakermaker_surface",
-                "xyz_km": np.asarray([xyz_m[0], xyz_m[1], -topo_z], dtype=float) / 1000.0,
+                "xyz_km": transform.to_original_m(np.asarray([xyz_m[0], xyz_m[1], -topo_z], dtype=float)) / 1000.0,
                 "internal": bool(station.is_internal),
                 "is_qa": bool(i_station == qa_index),
                 "model_index": int(i_station),
@@ -351,14 +357,14 @@ class SW4Exporter:
         d2 = (topo_points_local[:, 0] - float(x)) ** 2 + (topo_points_local[:, 1] - float(y)) ** 2
         return float(topo_points_local[int(np.argmin(d2)), 2])
 
-    def _topography_surface_records(self, topo_points_local, start_index):
+    def _topography_surface_records(self, transform, topo_points_local, start_index):
         records = []
         for offset, (x, y, topo_z) in enumerate(
                 np.asarray(topo_points_local, dtype=float), start=int(start_index)):
             records.append({
                 "file": f"{self.config.station_prefix}{offset:05d}",
                 "kind": "topography_surface",
-                "xyz_km": np.asarray([x, y, -topo_z], dtype=float) / 1000.0,
+                "xyz_km": transform.to_original_m(np.asarray([x, y, -topo_z], dtype=float)) / 1000.0,
                 "internal": True,
                 "is_qa": False,
                 "model_index": -1,
@@ -366,7 +372,7 @@ class SW4Exporter:
             })
         return records
 
-    def _topography_z0_records(self, topo_points_local, start_index):
+    def _topography_z0_records(self, transform, topo_points_local, start_index):
         records = []
         offset = int(start_index)
         for x, y, topo_z in np.asarray(topo_points_local, dtype=float):
@@ -374,7 +380,7 @@ class SW4Exporter:
                 records.append({
                     "file": f"{self.config.station_prefix}{offset:05d}",
                     "kind": "topography_to_z0",
-                    "xyz_km": np.asarray([x, y, z], dtype=float) / 1000.0,
+                    "xyz_km": transform.to_original_m(np.asarray([x, y, z], dtype=float)) / 1000.0,
                     "internal": True,
                     "is_qa": False,
                     "model_index": -1,
@@ -383,15 +389,18 @@ class SW4Exporter:
                 offset += 1
         return records
 
-    def _records_from_rec_lines(self, lines, kind, start_model_index):
+    def _records_from_rec_lines(self, transform, lines, kind, start_model_index):
         records = []
         for line in lines:
             values = self._parse_rec_line(line)
+            xyz_local_m = np.asarray(
+                [values["x"], values["y"], values.get("z", 0.0)],
+                dtype=float,
+            )
             records.append({
                 "file": values["file"],
                 "kind": kind,
-                "xyz_km": np.asarray(
-                    [values["x"], values["y"], values.get("z", 0.0)], dtype=float) / 1000.0,
+                "xyz_km": transform.to_original_m(xyz_local_m) / 1000.0,
                 "internal": True,
                 "is_qa": False,
                 "model_index": int(start_model_index),

@@ -1,16 +1,8 @@
 """
-build_h5drm_from_sw4_case
-=========================
-Build an .h5drm file from an SW4 case directory using only the compact
-ShakerMaker SW4 package HDF5.
+Build an .h5drm file from an SW4 case using only the compact package HDF5.
 
-The case directory must contain:
-  - shakermakerexports/<package>.h5
-  - sw4/<fileio_path>/*.txt produced by SW4
-
-The coordinate system can be either:
-  - SW4 local km (default, move_2_shakermaker_coor=False)
-  - ShakerMaker/UTM km (move_2_shakermaker_coor=True)
+All coordinates stored in the package are ShakerMaker/georeferenced. SW4 local
+coordinates are derived only when requested for the output h5drm.
 """
 
 import datetime
@@ -19,10 +11,6 @@ from pathlib import Path
 import h5py
 import numpy as np
 
-
-# ---------------------------------------------------------------------------
-# HDF5 helpers
-# ---------------------------------------------------------------------------
 
 def _read_strings(dataset):
     return [
@@ -53,24 +41,12 @@ def _find_package(exports_dir):
     return matches[0]
 
 
-def _load_package(package_h5, move_2_shakermaker_coor):
+def _load_package(package_h5):
     with h5py.File(package_h5, "r") as f:
         config = f["config"]
-        fileio_path = _read_scalar_string(config["fileio_path"])
-
-        coord_offset_km = np.zeros(3, dtype=np.float64)
-        if move_2_shakermaker_coor:
-            if "coordinates" in f and "sw4_origin_in_shakermaker_km" in f["coordinates"]:
-                coord_offset_km = f["coordinates/sw4_origin_in_shakermaker_km"][:]
-            else:
-                origin_m = np.asarray([
-                    float(config["x_origin"][()]),
-                    float(config["y_origin"][()]),
-                    float(config["z_origin"][()]),
-                ], dtype=np.float64)
-                coord_offset_km = -origin_m / 1000.0
-
         receivers = f["receivers"]
+        sw4_origin_km = f["coordinates/sw4_origin_in_shakermaker_km"][:].astype(np.float64)
+
         files = _read_strings(receivers["file"])
         kinds = _read_strings(receivers["kind"])
         xyz_km = receivers["xyz_km"][:].astype(np.float64)
@@ -78,9 +54,8 @@ def _load_package(package_h5, move_2_shakermaker_coor):
         is_qa = receivers["is_qa"][:].astype(bool)
         model_index = receivers["model_index"][:].astype(int)
 
-        drm = f["drm_template"]
-        qa_xyz = drm["qa_xyz_km"][:].astype(np.float64)
-        qa_file = _read_scalar_string(drm["qa_file"]) if "qa_file" in drm else ""
+        qa_xyz = f["drm_template/qa_xyz_km"][:].astype(np.float64)
+        qa_file = _read_scalar_string(f["drm_template/qa_file"]) if "qa_file" in f["drm_template"] else ""
 
         crust = {}
         if "crust" in f:
@@ -91,12 +66,14 @@ def _load_package(package_h5, move_2_shakermaker_coor):
             }
 
         sw4 = {
-            key: float(config[key][()])
-            for key in ("h", "x_domain", "y_domain", "z_domain", "x_origin", "y_origin", "z_origin", "tmax", "m0")
-            if key in config
+            "fileio_path": _read_scalar_string(config["fileio_path"]),
+            "h": float(config["h"][()]),
+            "x_domain": float(config["x_domain"][()]),
+            "y_domain": float(config["y_domain"][()]),
+            "z_domain": float(config["z_domain"][()]),
+            "tmax": float(config["tmax"][()]),
+            "m0": float(config["m0"][()]),
         }
-        sw4["fileio_path"] = fileio_path
-        sw4["supergrid_gp"] = int(config["supergrid_gp"][()]) if "supergrid_gp" in config else 0
 
     records = []
     for file, kind, xyz, is_internal, qa, midx in zip(files, kinds, xyz_km, internal, is_qa, model_index):
@@ -110,19 +87,14 @@ def _load_package(package_h5, move_2_shakermaker_coor):
         })
 
     return {
-        "fileio_path": fileio_path,
-        "coord_offset_km": coord_offset_km,
         "records": records,
         "qa_xyz_km": qa_xyz,
         "qa_file": qa_file,
+        "sw4_origin_km": sw4_origin_km,
         "crust": crust,
         "sw4": sw4,
     }
 
-
-# ---------------------------------------------------------------------------
-# Signal helpers
-# ---------------------------------------------------------------------------
 
 def _fast_loadtxt(path):
     with open(path, "rb") as fh:
@@ -132,10 +104,6 @@ def _fast_loadtxt(path):
 
 
 def _signals(data, t, dt, use_filter, freqmin, freqmax, corners, zerophase):
-    """
-    SW4 .txt columns: time | X=North | Y=East | Z=down+
-    h5drm component order: E, N, Z
-    """
     n_v = data[:, 1]
     e_v = data[:, 2]
     z_v = data[:, 3]
@@ -180,10 +148,6 @@ def _kind_for_h5drm(kind):
     return kind
 
 
-# ---------------------------------------------------------------------------
-# Main function
-# ---------------------------------------------------------------------------
-
 def build_h5drm_from_sw4_case(
     case_path,
     package_h5=None,
@@ -195,23 +159,6 @@ def build_h5drm_from_sw4_case(
     zerophase=True,
     move_2_shakermaker_coor=False,
 ):
-    """
-    Build an .h5drm file from an SW4 case directory using one compact HDF5.
-
-    Parameters
-    ----------
-    case_path : str or Path
-        Path to the case directory. It contains sw4/ and shakermakerexports/.
-    package_h5 : str or Path, optional
-        Compact SW4 package HDF5. If omitted, search shakermakerexports/*.h5.
-    output_name : str, optional
-        Output .h5drm file name. Relative names are written into shakermakerexports/.
-    use_filter : bool, optional
-        Apply bandpass filter to signals.
-    move_2_shakermaker_coor : bool, optional
-        If True, convert coordinates from SW4 local to ShakerMaker/UTM by
-        adding /coordinates/sw4_origin_in_shakermaker_km from the package.
-    """
     case_path = Path(case_path)
     sw4_dir = case_path / "sw4"
     exports_dir = case_path / "shakermakerexports"
@@ -228,9 +175,9 @@ def build_h5drm_from_sw4_case(
     if not output_h5drm.is_absolute():
         output_h5drm = exports_dir / output_h5drm
 
-    package = _load_package(package_h5, move_2_shakermaker_coor)
-    station_dir = (sw4_dir / package["fileio_path"]).resolve()
-    coord_offset_km = package["coord_offset_km"]
+    package = _load_package(package_h5)
+    station_dir = (sw4_dir / package["sw4"]["fileio_path"]).resolve()
+    sw4_origin_km = package["sw4_origin_km"]
 
     drm_stations = []
     qa_station = None
@@ -240,10 +187,11 @@ def build_h5drm_from_sw4_case(
         if record["is_qa"]:
             qa_station = {"fname": fname, "txt": txt}
             continue
+        xyz_km = record["xyz_km"] if move_2_shakermaker_coor else record["xyz_km"] - sw4_origin_km
         drm_stations.append({
             "fname": fname,
             "txt": txt,
-            "xyz_km": (record["xyz_km"] + coord_offset_km).tolist(),
+            "xyz_km": xyz_km.tolist(),
             "internal": bool(record["internal"]),
             "kind": _kind_for_h5drm(record["kind"]),
             "model_index": int(record["model_index"]),
@@ -258,15 +206,13 @@ def build_h5drm_from_sw4_case(
     n_total = len(drm_stations)
     n_sm = sum(1 for station in drm_stations if station["model_index"] >= 0)
     n_extra = n_total - n_sm
-    qa_xyz = package["qa_xyz_km"] + coord_offset_km.reshape(1, 3)
+    qa_xyz = package["qa_xyz_km"] if move_2_shakermaker_coor else package["qa_xyz_km"] - sw4_origin_km.reshape(1, 3)
 
     print(f"\n{'=' * 55}")
     print(f"case    : {case_path}")
     print(f"package : {package_h5}")
     print(f"output  : {output_h5drm}")
     print(f"{'=' * 55}")
-    if move_2_shakermaker_coor:
-        print(f"  Origin offset: +({coord_offset_km[0]:.2f}, {coord_offset_km[1]:.2f}, {coord_offset_km[2]:.2f}) km")
     print(f"  SM stations    : {n_sm}")
     print(f"  Extra stations : {n_extra}")
     print(f"  Total          : {n_total}")
@@ -310,17 +256,12 @@ def build_h5drm_from_sw4_case(
         meta.create_dataset("component_order", data="E,N,Z", dtype=string_dtype)
         meta.create_dataset("component_map", data="E=SW4_Y, N=SW4_X, Z=SW4_Z(down+)", dtype=string_dtype)
         meta.create_dataset("coordinate_units", data="km", dtype=string_dtype)
-        meta.create_dataset(
-            "signal_units",
-            data="velocity from SW4 txt; displacement integrated; acceleration derived",
-            dtype=string_dtype,
-        )
         meta.create_dataset("filter_enabled", data=bool(use_filter))
         meta.create_dataset("filter_freqmin", data=float(freqmin))
         meta.create_dataset("filter_freqmax", data=float(freqmax))
         meta.create_dataset("filter_corners", data=int(corners))
         meta.create_dataset("filter_zerophase", data=bool(zerophase))
-        meta.create_dataset("domain_origin_km", data=coord_offset_km, dtype=np.float64)
+        meta.create_dataset("sw4_origin_in_shakermaker_km", data=sw4_origin_km)
         meta.create_dataset(
             "coordinate_system",
             data="shakermaker_utm_km" if move_2_shakermaker_coor else "sw4_local_km",
@@ -328,20 +269,17 @@ def build_h5drm_from_sw4_case(
         )
         meta.create_dataset("source_package_h5", data=str(package_h5), dtype=string_dtype)
 
-        for key, value in package["sw4"].items():
-            if isinstance(value, str):
-                meta.create_dataset(f"sw4_{key}", data=value, dtype=string_dtype)
-            else:
-                meta.create_dataset(f"sw4_{key}", data=value)
-
         if package["crust"]:
             crust_grp = f.create_group("Crust")
             for key, value in package["crust"].items():
                 crust_grp.create_dataset(key, data=value)
 
+        rec_xyz = np.asarray([
+            record["xyz_km"] if move_2_shakermaker_coor else record["xyz_km"] - sw4_origin_km
+            for record in package["records"]
+        ], dtype=np.float64)
         sw4_rec.create_dataset("file", data=np.asarray([r["file"] for r in package["records"]], dtype=object), dtype=string_dtype)
         sw4_rec.create_dataset("kind", data=np.asarray([r["kind"] for r in package["records"]], dtype=object), dtype=string_dtype)
-        rec_xyz = np.asarray([r["xyz_km"] + coord_offset_km for r in package["records"]], dtype=np.float64)
         sw4_rec.create_dataset("xyz_km", data=rec_xyz)
         sw4_rec.create_dataset("internal", data=np.asarray([r["internal"] for r in package["records"]], dtype=bool))
         sw4_rec.create_dataset("is_qa", data=np.asarray([r["is_qa"] for r in package["records"]], dtype=bool))
@@ -382,10 +320,6 @@ def build_h5drm_from_sw4_case(
     print(f"{'=' * 55}\n")
 
 
-# ---------------------------------------------------------------------------
-# CLI entry point
-# ---------------------------------------------------------------------------
-
 if __name__ == "__main__":
     import argparse
 
@@ -400,7 +334,7 @@ if __name__ == "__main__":
     parser.add_argument("--no-zerophase", dest="zerophase", action="store_false",
                         help="Disable zero-phase filtering")
     parser.add_argument("--move-2-shakermaker-coor", action="store_true",
-                        help="Convert from SW4 local to ShakerMaker/UTM coordinates")
+                        help="Write h5drm coordinates in ShakerMaker/UTM coordinates")
     args = parser.parse_args()
 
     build_h5drm_from_sw4_case(
