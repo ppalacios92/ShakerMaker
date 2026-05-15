@@ -1,3 +1,16 @@
+"""Cartesian topography I/O and SW4 grid extension helpers.
+
+The exporter consumes cartesian topography in the SW4 file format
+(``Nx Ny`` header line followed by ``x y z`` rows). This module reads it,
+rotates it into the ShakerMaker (x = North, y = East) convention, snaps the
+grid back to a regular layout, and extends it to the SW4 local box.
+
+The diagnostic ``print_*`` helpers print bound boxes and grid estimates while
+the exporter is running. They are intentionally print-based: this is one of
+the few places where seeing values on the terminal during the export is more
+useful than a log line.
+"""
+
 from pathlib import Path
 import numpy as np
 
@@ -5,6 +18,22 @@ SEPARATOR = "-" * 50
 
 
 def read_cartesian_topography(path):
+    """Read an SW4 cartesian topography file.
+
+    Inputs
+    ------
+    path : str or Path
+        Path to a text file whose first line is ``Nx Ny`` and whose remaining
+        lines list ``x y z`` triplets, one per grid node.
+
+    Returns
+    -------
+    nx, ny : int
+        Grid sizes along the file's x and y axes.
+    points : ndarray, shape (Nx*Ny, 3)
+        Topography nodes in the file's coordinate convention. Units are
+        whatever the file uses (typically metres).
+    """
     path = Path(path)
     lines = [line.strip() for line in path.read_text(encoding="ascii").splitlines() if line.strip()]
     if not lines:
@@ -24,6 +53,21 @@ def read_cartesian_topography(path):
 
 
 def rotate_topography_to_shakermaker(points):
+    """Swap x and y so the grid is in ShakerMaker convention.
+
+    SW4 stores topography with x = East, y = North. ShakerMaker uses
+    x = North, y = East. The vertical column is left untouched.
+
+    Inputs
+    ------
+    points : ndarray, shape (N, 3)
+        Topography nodes in SW4 convention.
+
+    Returns
+    -------
+    ndarray, shape (N, 3)
+        Same nodes with the first two columns swapped.
+    """
     points = np.asarray(points, dtype=float)
     rotated = points.copy()
     rotated[:, 0] = points[:, 1]
@@ -32,6 +76,24 @@ def rotate_topography_to_shakermaker(points):
 
 
 def rebuild_cartesian_topography(points):
+    """Resort points so they form a regular cartesian grid in row-major order.
+
+    Required after a coordinate swap, which destroys the original ordering.
+    Fails if the point set is not a complete cartesian product.
+
+    Inputs
+    ------
+    points : ndarray, shape (N, 3)
+        Topography nodes after rotation.
+
+    Returns
+    -------
+    nx, ny : int
+        Recomputed grid sizes.
+    points_sorted : ndarray, shape (Nx*Ny, 3)
+        Nodes laid out as ``for y in ys: for x in xs:`` so the writer can
+        emit them in the order SW4 expects.
+    """
     points = np.asarray(points, dtype=float)
     xs = np.unique(points[:, 0])
     ys = np.unique(points[:, 1])
@@ -49,6 +111,17 @@ def rebuild_cartesian_topography(points):
 
 
 def bounds(points):
+    """Return the axis-aligned bounding box of a point set.
+
+    Inputs
+    ------
+    points : ndarray, shape (N, 3)
+
+    Returns
+    -------
+    tuple of 6 floats
+        ``(xmin, xmax, ymin, ymax, zmin, zmax)``.
+    """
     points = np.asarray(points, dtype=float)
     return (
         float(points[:, 0].min()), float(points[:, 0].max()),
@@ -57,16 +130,21 @@ def bounds(points):
     )
 
 
-def minimum_corner(points):
-    points = np.asarray(points, dtype=float)
-    return np.array([
-        float(points[:, 0].min()),
-        float(points[:, 1].min()),
-        float(points[:, 2].min()),
-    ], dtype=float)
-
-
 def cartesian_topography_text(nx, ny, points):
+    """Format a topography grid back into the SW4 text format.
+
+    Inputs
+    ------
+    nx, ny : int
+        Grid sizes.
+    points : ndarray, shape (Nx*Ny, 3)
+        Topography nodes in row-major order.
+
+    Returns
+    -------
+    str
+        Multi-line text starting with ``Nx Ny`` and one ``x y z`` row per node.
+    """
     lines = [f"{nx} {ny}"]
     for x, y, z in np.asarray(points, dtype=float):
         lines.append(f"{x:.1f} {y:.1f} {z:.6f}")
@@ -74,12 +152,36 @@ def cartesian_topography_text(nx, ny, points):
 
 
 def extend_topography_to_domain(nx, ny, points, x_domain, y_domain):
+    """Resample topography onto a regular grid that covers the SW4 box.
+
+    SW4 requires the topography to span the full ``[0, x_domain] x [0, y_domain]``
+    box. If the input grid is smaller, the nearest sample is used on every
+    new node that falls outside the original coverage.
+
+    Inputs
+    ------
+    nx, ny : int
+        Grid sizes of the input topography.
+    points : ndarray, shape (Nx*Ny, 3)
+        Input topography nodes in local SW4 coordinates (metres).
+    x_domain, y_domain : float
+        SW4 domain extents in metres.
+
+    Returns
+    -------
+    new_nx, new_ny : int
+        Grid sizes of the extended topography.
+    extended : ndarray, shape (new_nx*new_ny, 3)
+        Resampled topography covering the full domain, row-major.
+    """
     points = np.asarray(points, dtype=float)
     xs = np.unique(points[:, 0])
     ys = np.unique(points[:, 1])
     if len(xs) != nx or len(ys) != ny:
         raise ValueError("Topography points must form a regular cartesian grid.")
 
+    # Use the median sample spacing so a slightly irregular input does not
+    # confuse the extension. SW4 itself only sees the final regular grid.
     dx = float(np.median(np.diff(xs))) if len(xs) > 1 else float(x_domain)
     dy = float(np.median(np.diff(ys))) if len(ys) > 1 else float(y_domain)
     new_xs = _axis_to_domain(0.0, x_domain, dx)
@@ -100,6 +202,23 @@ def extend_topography_to_domain(nx, ny, points, x_domain, y_domain):
 
 
 def _axis_to_domain(start, end, step):
+    """Return axis samples spanning ``[start, end]`` at ``step`` spacing.
+
+    Ensures the last sample lies exactly on ``end`` even when ``step`` does
+    not divide ``end - start`` evenly.
+
+    Inputs
+    ------
+    start, end : float
+        Axis range.
+    step : float
+        Nominal sample spacing.
+
+    Returns
+    -------
+    ndarray
+        1-D array of samples.
+    """
     values = list(np.arange(float(start), float(end) + 0.5 * step, float(step)))
     if values[-1] < float(end):
         values.append(float(end))
@@ -109,11 +228,38 @@ def _axis_to_domain(start, end, step):
 
 
 def _grid_size(length, h):
+    """Number of grid nodes that fit in ``length`` with spacing ``h``.
+
+    Equivalent to ``length / h + 1`` rounded to the nearest integer, which
+    matches the way SW4 counts grid nodes (inclusive of both ends).
+    """
     return int(round(float(length) / float(h))) + 1
 
 
 def print_topography_diagnostics(original_points, local_points, x_domain, y_domain, z_domain,
                                  h=None, topo_nx=None, topo_ny=None, topo_zmax=None):
+    """Print original/local topography bounds, centroid and SW4 grid estimate.
+
+    Inputs
+    ------
+    original_points : ndarray, shape (N, 3)
+        Topography in ShakerMaker (georef) coordinates, metres.
+    local_points : ndarray, shape (N, 3)
+        Same topography in SW4 local coordinates, metres.
+    x_domain, y_domain, z_domain : float
+        SW4 box extents.
+    h : float, optional
+        Grid spacing. Triggers the grid-size estimate.
+    topo_nx, topo_ny : int, optional
+        Input topography grid sizes (only used in the printout).
+    topo_zmax : float, optional
+        Cap on topography elevation (only used in the printout).
+
+    Returns
+    -------
+    None
+        Diagnostic output goes to stdout.
+    """
     original_centroid = np.asarray(original_points, dtype=float).mean(axis=0)
     local_centroid = np.asarray(local_points, dtype=float).mean(axis=0)
     xmin, xmax, ymin, ymax, zmin, zmax = bounds(original_points)
@@ -148,6 +294,18 @@ def print_topography_diagnostics(original_points, local_points, x_domain, y_doma
 
 
 def print_domain_diagnostics(x_domain, y_domain, z_domain, h=None):
+    """Print the SW4 box extents and grid-size estimate when no topography is set.
+
+    Inputs
+    ------
+    x_domain, y_domain, z_domain : float
+    h : float, optional
+        Grid spacing. When given, the node count per axis is also printed.
+
+    Returns
+    -------
+    None
+    """
     print(SEPARATOR)
     print("SW4 grid domain")
     print(SEPARATOR)
@@ -160,6 +318,17 @@ def print_domain_diagnostics(x_domain, y_domain, z_domain, h=None):
 
 
 def print_active_geometry_bounds(points):
+    """Print the bounding box and centroid of the union of sources/stations/topo.
+
+    Inputs
+    ------
+    points : ndarray, shape (N, 3)
+        All points contributing to the SW4 domain decision, in metres.
+
+    Returns
+    -------
+    None
+    """
     points = np.asarray(points, dtype=float)
     if points.size == 0:
         return

@@ -1,12 +1,32 @@
+"""Geometry viewer for an SW4 export.
+
+Reads back either the SW4 ``.in`` file or the HDF5 transport package and
+plots sources, receivers and topography in PyVista. The viewer can show
+the geometry in SW4 local metres or shifted into ShakerMaker georef
+metres when an origin offset is supplied.
+
+A receiver in the SW4 ``.in`` can be addressed by ``z=...`` (absolute
+elevation) or by ``depth=...`` (distance below the topography). The parser
+keeps both alive: depth-addressed receivers are stored with their depth
+encoded in the z column, then resolved against the actual topography
+later. The encoding uses a very large negative offset so encoded values
+are easy to detect and impossible to confuse with real coordinates.
+"""
+
 from pathlib import Path
 
 import numpy as np
 
 
+# Receivers given as ``depth=D`` are stored with z = -(D + _DEPTH_ENCODE_OFFSET)
+# so they sit far outside any plausible coordinate range. The mask in
+# :func:`_resolve_receivers` reads back the offset and substitutes the real
+# topography elevation once it is available.
 _DEPTH_ENCODE_OFFSET = 1e9
 
 
 def _token_value(tokens, key):
+    """Return the float value of ``key=...`` in a token list, or ``None`` if absent."""
     prefix = f"{key}="
     for token in tokens:
         if token.startswith(prefix):
@@ -15,6 +35,7 @@ def _token_value(tokens, key):
 
 
 def _token_str(tokens, key):
+    """Return the string value of ``key=...`` in a token list, or ``None`` if absent."""
     prefix = f"{key}="
     for token in tokens:
         if token.startswith(prefix):
@@ -23,6 +44,7 @@ def _token_str(tokens, key):
 
 
 def _read_grid(tokens):
+    """Extract ``(x, y, z)`` from an SW4 ``grid ...`` line, in metres."""
     x = _token_value(tokens, "x")
     y = _token_value(tokens, "y")
     z = _token_value(tokens, "z")
@@ -32,6 +54,15 @@ def _read_grid(tokens):
 
 
 def _read_point(tokens):
+    """Extract a 3-D point from a ``source``/``rec`` line.
+
+    Returns
+    -------
+    tuple of 3 floats or None
+        ``(x, y, z)``. When ``depth=`` was used instead of ``z=``, the z
+        value is encoded with :data:`_DEPTH_ENCODE_OFFSET` so the depth
+        is recovered later in :func:`_resolve_receivers`.
+    """
     x = _token_value(tokens, "x")
     y = _token_value(tokens, "y")
     if x is None or y is None:
@@ -46,6 +77,33 @@ def _read_point(tokens):
 
 
 def read_sw4_geometry(path):
+    """Read SW4 geometry from either an ``.in`` file or the HDF5 package.
+
+    Inputs
+    ------
+    path : str or Path
+        Either a ``shakermaker2sw4.in`` (text) or a ``sw4_package.h5``
+        (HDF5). Dispatch is by suffix; ``.h5``/``.hdf5`` routes to
+        :func:`read_sw4_geometry_h5`.
+
+    Returns
+    -------
+    grid : tuple of 3 floats
+        SW4 box extents in metres.
+    sources : ndarray, shape (Ns, 3)
+        Source positions.
+    receivers : ndarray, shape (Nr, 3)
+        Receiver positions. May still contain depth-encoded z values when
+        the input came from a text file.
+    receiver_kinds : ndarray of object, shape (Nr,)
+        Family tag for each receiver (``shakermaker``, ``topography_surface``,
+        etc.).
+    topo_points : ndarray, shape (N, 3) or None
+        Topography nodes when present.
+    topo_original_bounds : dict or None
+        ``{"xmin", "xmax", "ymin", "ymax"}`` from the ``.in`` header
+        comment or the HDF5 ``original_bounds`` field.
+    """
     path = Path(path)
     if path.suffix.lower() in (".h5", ".hdf5"):
         return read_sw4_geometry_h5(path)
@@ -115,6 +173,12 @@ def read_sw4_geometry(path):
 
 
 def read_sw4_geometry_h5(path):
+    """Same as :func:`read_sw4_geometry`, but for the HDF5 transport package.
+
+    Coordinates stored in the package live in ShakerMaker (georef) metres;
+    this function subtracts the SW4 origin so the returned arrays are in
+    SW4 local metres, matching the text-file path.
+    """
     import h5py
 
     path = Path(path)
@@ -159,6 +223,7 @@ def read_sw4_geometry_h5(path):
 
 
 def _h5_sw4_origin_m(hf):
+    """Read the SW4 origin (in ShakerMaker metres) from the HDF5 package."""
     if "coordinates" in hf and "sw4_origin_in_shakermaker_m" in hf["coordinates"]:
         return np.asarray(hf["coordinates/sw4_origin_in_shakermaker_m"][:], dtype=float)
     config = hf["config"]
@@ -170,6 +235,7 @@ def _h5_sw4_origin_m(hf):
 
 
 def _read_h5_strings(dataset):
+    """Decode a 1-D HDF5 byte-string dataset into a Python ``object`` ndarray."""
     return np.asarray([
         value.decode("utf-8") if isinstance(value, bytes) else str(value)
         for value in dataset[:]
@@ -177,6 +243,14 @@ def _read_h5_strings(dataset):
 
 
 def _read_topography_bounds(tokens):
+    """Pull ``xmin/xmax/ymin/ymax`` from the topography-bounds comment line.
+
+    Returns
+    -------
+    dict or None
+        ``{"xmin", "xmax", "ymin", "ymax"}`` if all four keys are present,
+        otherwise ``None``.
+    """
     out = {}
     for token in tokens:
         if "=" not in token:
@@ -190,6 +264,26 @@ def _read_topography_bounds(tokens):
 
 
 def _resolve_receivers(receivers, topo_points):
+    """Replace depth-encoded receiver z values with the real topography elevation.
+
+    Receivers whose z column was set to ``-(depth + _DEPTH_ENCODE_OFFSET)``
+    by :func:`_read_point` get their real elevation back here: the
+    topography elevation is looked up (exact node first, nearest neighbour
+    otherwise) and ``depth`` is subtracted to land the receiver below the
+    free surface.
+
+    Inputs
+    ------
+    receivers : ndarray, shape (N, 3)
+        Receiver positions, possibly with encoded depths.
+    topo_points : ndarray, shape (M, 3) or None
+        Topography nodes used for the lookup.
+
+    Returns
+    -------
+    ndarray, shape (N, 3)
+        Resolved receiver positions.
+    """
     if len(receivers) == 0:
         return receivers.copy()
 
@@ -215,6 +309,7 @@ def _resolve_receivers(receivers, topo_points):
 
 
 def _nearest_topography_z(topo_points, x, y):
+    """Topography elevation at the closest (x, y) node, or 0 when no topography."""
     if topo_points is None or len(topo_points) == 0:
         return 0.0
     d2 = (topo_points[:, 0] - float(x)) ** 2 + (topo_points[:, 1] - float(y)) ** 2
@@ -222,6 +317,27 @@ def _nearest_topography_z(topo_points, x, y):
 
 
 def plot_sw4_geometry(path, origin_m=None):
+    """Open a PyVista window with the SW4 box, sources, receivers and topography.
+
+    The viewer expects ``pyvista``, ``pyvistaqt`` and ``PyQt5`` to be
+    installed. On Linux it forces the ``xcb`` Qt platform when running
+    under Wayland because PyVistaQt + PyQt5 crashes there with a fatal
+    X BadWindow error during startup.
+
+    Inputs
+    ------
+    path : str or Path
+        Either a ``shakermaker2sw4.in`` file or the HDF5 transport package.
+    origin_m : array-like, shape (3,), optional
+        SW4 origin expressed in ShakerMaker metres. When given, the scene
+        is shifted so receivers, sources and topography are shown in the
+        georef frame. When omitted, the scene stays in SW4 local metres.
+
+    Returns
+    -------
+    None
+        Blocks on the Qt event loop until the window is closed.
+    """
     try:
         import pyvista as pv
         from pyvistaqt import QtInteractor
@@ -234,9 +350,7 @@ def plot_sw4_geometry(path, origin_m=None):
     import os
     import sys
 
-    # PyVistaQt + PyQt5 is unstable on some Wayland sessions and may crash
-    # with a fatal X BadWindow during startup. Prefer xcb on Linux unless
-    # the user explicitly set another stable platform.
+    # See the docstring: force xcb on Linux when running under Wayland.
     if sys.platform.startswith("linux"):
         qpa = os.environ.get("QT_QPA_PLATFORM", "").strip().lower()
         if qpa == "" or qpa.startswith("wayland"):
@@ -364,12 +478,23 @@ def plot_sw4_geometry(path, origin_m=None):
 
 
 def _shift_points(points, origin_m):
+    """Add a per-coordinate origin offset to a point cloud (no-op when empty)."""
     if len(points) == 0:
         return points
     return np.asarray(points, dtype=float) + origin_m.reshape(1, 3)
 
 
 def _split_topography_points(topo_points, bounds):
+    """Split topography into the original-coverage subset and the extended ring.
+
+    Lets the viewer draw the user-supplied topography in one colour and
+    the extended (auto-padded) ring in another, so it is obvious which
+    region the underlying data actually constrains.
+
+    Returns
+    -------
+    inside, outside : ndarray, shape (Ni, 3) and (No, 3)
+    """
     if bounds is None:
         return topo_points, np.empty((0, 3), dtype=float)
     points = np.asarray(topo_points, dtype=float)

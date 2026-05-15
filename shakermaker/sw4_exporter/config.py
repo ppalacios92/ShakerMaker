@@ -1,3 +1,11 @@
+"""Configuration object for the SW4 exporter.
+
+:class:`SW4ExportConfig` is a thin dataclass that the user fills in and
+passes to :class:`SW4Exporter`. It owns every knob the exporter needs:
+output path, grid spacing, domain extents (optional, computed otherwise),
+topography options, station selection toggles and the HDF5 package name.
+"""
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Sequence
@@ -5,7 +13,65 @@ from typing import Optional, Sequence
 
 @dataclass
 class SW4ExportConfig:
-    """Configuration for exporting a ShakerMaker model to SW4."""
+    """Knobs for :class:`SW4Exporter`.
+
+    Inputs
+    ------
+    path : str or Path
+        Root directory for the export. The exporter creates
+        ``<path>/shakermakerexports/`` and ``<path>/sw4/`` underneath.
+    h : float
+        SW4 grid spacing in metres. Default ``50``.
+    x_domain, y_domain, z_domain : float, optional
+        SW4 box extents in metres. When ``None``, the exporter sizes the
+        box from the model and topography bounds. ``z_domain`` is required
+        either directly or via ``size_domain``.
+    x_origin, y_origin, z_origin : float
+        Position of the ShakerMaker origin in SW4 local metres. Filled in
+        by the exporter; supplying it has no effect.
+    tmax : float
+        SW4 simulation duration in seconds. Default ``50``.
+    m0 : float
+        Seismic moment scale used in every SW4 ``source`` line. Default ``1``.
+    size_domain : sequence of 3 floats, optional
+        Shortcut for ``[x_domain, y_domain, z_domain]``. When given, splits
+        into the three fields above in ``__post_init__``.
+    fileio_path : str
+        Directory (relative to the SW4 ``.in`` file) where SW4 will drop
+        ``rec`` output files. Default ``"shakermaker2sw4_fileio"``.
+    supergrid_gp : int
+        Width of the SW4 supergrid layer in grid points. Default ``30``.
+    station_prefix : str
+        Filename prefix used in every ``file=`` field. Default ``"sf"``.
+    topo_file : str or Path, optional
+        Cartesian topography file in SW4 format. When ``None``, no
+        topography is written.
+    topo_zmax : float, optional
+        Maximum topography elevation appended to the ``topography`` line.
+    write_topography_z0_stations : bool
+        Add receivers stacked from each topography node up to z=0.
+        Default ``False``.
+    shakermaker_stations : bool
+        Emit one ``rec`` per ShakerMaker station at its true z. Default ``True``.
+    shakermaker_stations_to_surface : bool
+        Emit one ``rec`` per ShakerMaker station forced to ``depth=0``.
+        Default ``False``.
+    domain_sw4 : bool
+        Emit a regular 3-D grid of receivers spanning the SW4 box.
+        Default ``False``.
+    domain_sw4_size : sequence of 3 floats, optional
+        Shortcut for ``[domain_sw4_x, domain_sw4_y, domain_sw4_z]``.
+    domain_sw4_x, domain_sw4_y, domain_sw4_z : float, optional
+        Sub-box for the SW4 receiver grid, when smaller than the full box.
+    plot_geometry : bool
+        Open a PyVista viewer in ShakerMaker (georef) coordinates after the
+        export. Default ``False``.
+    plot_geometry_sw4 : bool
+        Same viewer, but in SW4 local coordinates. Default ``False``.
+    h5_export_name : str
+        Filename of the transport HDF5 package inside
+        ``shakermakerexports/``. Default ``"sw4_package.h5"``.
+    """
 
     path: str | Path
     h: float = 50.0
@@ -36,6 +102,8 @@ class SW4ExportConfig:
     h5_export_name: str = "sw4_package.h5"
 
     def __post_init__(self):
+        # Expand the (x, y, z) shortcuts into the per-axis fields so the
+        # rest of the exporter only deals with scalars.
         if self.size_domain is not None:
             self.x_domain, self.y_domain, self.z_domain = _as_xyz(self.size_domain, "size_domain")
         if self.domain_sw4_size is not None:
@@ -44,10 +112,24 @@ class SW4ExportConfig:
 
 
 def _as_xyz(values, name):
+    """Validate a 3-element sequence and cast each entry to ``float`` or ``None``.
+
+    Inputs
+    ------
+    values : sequence
+        Must have exactly three entries.
+    name : str
+        Field name used in the error message.
+
+    Returns
+    -------
+    tuple of 3 (float or None)
+    """
     if len(values) != 3:
         raise ValueError(f"{name} must have three values: [x, y, z].")
     return _optional_float(values[0]), _optional_float(values[1]), _optional_float(values[2])
 
 
 def _optional_float(value):
+    """Return ``None`` unchanged, otherwise cast to ``float``."""
     return None if value is None else float(value)

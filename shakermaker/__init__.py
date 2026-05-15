@@ -33,15 +33,17 @@ __all__ = [
     "SRF2",
 ]
 
+
+import sys
+
 try:
     from mpi4py import MPI
     rank = MPI.COMM_WORLD.Get_rank()
 except Exception:
     rank = 0
 
-if rank == 0:
-  print("""
 
+BANNER = r"""
     ▄████████     ▄█    █▄     ▄████████     ▄█   ▄█▄    ▄████████    ▄████████
     ███    ███   ███    ███    ███    ███    ███ ▄███▀   ███    ███   ███    ███
     ███    █▀    ███    ███    ███    ███    ███▐██▀     ███    █▀    ███    ███
@@ -67,8 +69,32 @@ if rank == 0:
   Author   = Jose A. Abell, Jorge Crempien D., and Matias Recabarren
 
   Modified = Patricio Palacios B. | Nicolás Mora Bowen | José Abell | Ladruno Team - 2026
+"""
 
-  """)
+
+FALLBACK_BANNER = """
+============================================================
+                        ShakerMaker
+============================================================
+
+  Easily create physically-realistic earthquake ground motions
+  for engineering and seismology!
+
+  Author   = Jose A. Abell, Jorge Crempien D., and Matias Recabarren
+  Modified = Patricio Palacios B. | Nicolás Mora Bowen | José Abell | Ladruno Team - 2026
+"""
+
+
+if rank == 0:
+    try:
+        print(BANNER)
+    except UnicodeEncodeError:
+        print(FALLBACK_BANNER)
+
+
+
+
+
 
 
 #    ▄████████    ▄█    █▄       ▄████████    ▄█   ▄█▄    ▄████████    ▄████████   ▄▄▄▄███▄▄▄▄      ▄████████    ▄█   ▄█▄    ▄████████    ▄████████

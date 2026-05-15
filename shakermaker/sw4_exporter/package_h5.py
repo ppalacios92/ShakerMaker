@@ -1,3 +1,23 @@
+"""HDF5 transport package for SW4 exports.
+
+The transport package is a single ``.h5`` file that travels next to the
+SW4 case directory. It carries:
+
+- a structured view of the export configuration and the resolved domain;
+- the ShakerMaker stations, sources and crust used to build the run;
+- every text file the SW4 case needs (``.in``, per-source slip-rate files,
+  the local topography), embedded as gzipped byte arrays under ``/files``;
+- the standalone unpack script which recreates the disk tree from the
+  embedded files.
+
+The unpacking helpers are kept in two places on purpose: the module-level
+functions are what the rest of ShakerMaker imports, while
+:data:`_UNPACK_SCRIPT` is a verbatim copy written to disk so the user can
+unpack a package on a machine that does not have ShakerMaker installed.
+The two implementations must stay in sync; any change to the on-disk file
+layout has to be mirrored on both sides.
+"""
+
 from pathlib import Path
 import argparse
 
@@ -12,7 +32,44 @@ def write_sw4_package_h5(path, model, config, paths, source_rows, receiver_recor
                          file_payloads, input_text, topography_relpath=None,
                          topography_shape=None, topography_points=None,
                          topography_original_bounds=None):
-    """Write a serial HDF5 transport package for an SW4 export."""
+    """Write the transport HDF5 package next to the SW4 case.
+
+    Inputs
+    ------
+    path : str or Path
+        Destination ``.h5`` file. The parent directory is created if needed.
+    model : ShakerMaker
+        Source/receiver/crust container. Only ``_crust`` and ``_receivers``
+        are read.
+    config : SW4ExportConfig
+        Knob bag for the run.
+    paths : dict
+        Output of :meth:`SW4Exporter.paths`. Not currently consumed but kept
+        for forward compatibility.
+    source_rows : list of dict
+        Output of :func:`shakermaker.sw4_exporter.sources.source_rows`.
+    receiver_records : list of dict
+        Output of the ``_*_records`` helpers in :class:`SW4Exporter`.
+    file_payloads : dict[str, str or bytes]
+        Mapping ``relpath -> content`` for every file the package should
+        carry inside ``/files``.
+    input_text : str
+        SW4 ``.in`` body, also embedded under ``/sw4_input`` for
+        direct-access readers.
+    topography_relpath : str, optional
+        Relative path of the local topography file inside the package.
+    topography_shape : tuple of 2 ints, optional
+        ``(nx, ny)`` of the topography grid.
+    topography_points : ndarray, shape (N, 3), optional
+        Topography nodes in ShakerMaker metres.
+    topography_original_bounds : ndarray, shape (4,), optional
+        ``[xmin, xmax, ymin, ymax]`` of the input topography (ShakerMaker
+        metres).
+
+    Returns
+    -------
+    None
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     string_dtype = h5py.string_dtype(encoding="utf-8")
@@ -38,14 +95,37 @@ def write_sw4_package_h5(path, model, config, paths, source_rows, receiver_recor
 
 
 def write_unpack_script(path):
-    """Copy the standalone unpacker next to the exported HDF5 package."""
+    """Drop the standalone unpack script next to the HDF5 package.
+
+    Inputs
+    ------
+    path : str or Path
+        Destination ``.py`` file.
+
+    Returns
+    -------
+    None
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(_UNPACK_SCRIPT, encoding="utf-8", newline="\n")
 
 
 def unpack_sw4_package_h5(package_path, output_dir):
-    """Recreate the SW4 export tree from a transport HDF5 package."""
+    """Recreate the SW4 directory tree from a transport HDF5 package.
+
+    Inputs
+    ------
+    package_path : str or Path
+        Path to a ``.h5`` written by :func:`write_sw4_package_h5`.
+    output_dir : str or Path
+        Root directory where the files are written. Created if missing;
+        existing files are overwritten without warning.
+
+    Returns
+    -------
+    None
+    """
     package_path = Path(package_path)
     output_dir = Path(output_dir)
     with h5py.File(package_path, "r") as hf:
@@ -60,6 +140,13 @@ def unpack_sw4_package_h5(package_path, output_dir):
 
 
 def main(argv=None):
+    """CLI entry point: ``python -m shakermaker.sw4_exporter.package_h5``.
+
+    Mirrors the behaviour of the standalone unpack script: locate a
+    package in the current directory (or use the one given as argument)
+    and unpack it. Useful for quickly inspecting a package without
+    importing the rest of ShakerMaker into a REPL.
+    """
     parser = argparse.ArgumentParser(description="Unpack a ShakerMaker SW4 HDF5 transport package.")
     parser.add_argument("package", nargs="?", help="Path to sw4_package.h5. If omitted, search current directory.")
     parser.add_argument("--out", default=None, help="Output directory. Default: parent of shakermakerexports, otherwise current directory.")
@@ -80,6 +167,7 @@ def main(argv=None):
 
 
 def _write_manifest(hf, config, paths, relpaths, string_dtype):
+    """Write ``/manifest`` with the SW4 input path and the file inventory."""
     grp = hf.create_group("manifest")
     grp.create_dataset("input_relpath", data="sw4/shakermaker2sw4.in", dtype=string_dtype)
     grp.create_dataset("fileio_path", data=str(config.fileio_path), dtype=string_dtype)
@@ -91,6 +179,12 @@ def _write_manifest(hf, config, paths, relpaths, string_dtype):
 
 
 def _write_config(hf, config, string_dtype):
+    """Write ``/config`` with every knob the exporter consumed.
+
+    Numeric fields are stored as ``float64`` (with ``NaN`` standing in for
+    ``None``), integers as ``int64``, booleans as boolean, and string-like
+    fields as UTF-8 scalars.
+    """
     grp = hf.create_group("config")
     for key in (
         "h", "x_domain", "y_domain", "z_domain", "x_origin", "y_origin", "z_origin",
@@ -113,6 +207,12 @@ def _write_config(hf, config, string_dtype):
 
 
 def _write_coordinates(hf, config):
+    """Write ``/coordinates`` with both directions of the ShakerMaker<->SW4 offset.
+
+    Two forms are stored in metres and in kilometres so downstream tools
+    do not need to multiply by 1000 themselves. The two metre arrays are
+    negatives of each other by construction.
+    """
     grp = hf.create_group("coordinates")
     shakermaker_to_sw4_offset_m = np.asarray([
         float(config.x_origin),
@@ -126,6 +226,7 @@ def _write_coordinates(hf, config):
 
 
 def _write_crust(hf, model):
+    """Write ``/crust`` with thickness, Vp, Vs, rho, Q and the cumulative top-depth."""
     crust = model._crust
     grp = hf.create_group("crust")
     grp.create_dataset("thickness_km", data=np.asarray(crust.d, dtype=np.float64))
@@ -139,6 +240,7 @@ def _write_crust(hf, model):
 
 
 def _write_stations(hf, model, string_dtype):
+    """Write ``/stations`` with ShakerMaker (georef) station coordinates and metadata."""
     grp = hf.create_group("stations")
     stations = list(model._receivers)
     grp.create_dataset("id", data=np.arange(len(stations), dtype=np.int32))
@@ -155,12 +257,18 @@ def _write_stations(hf, model, string_dtype):
 
 
 def _write_sw4_input(hf, input_text, string_dtype):
+    """Write ``/sw4_input`` with the relative path and a verbatim copy of the ``.in`` text."""
     grp = hf.create_group("sw4_input")
     grp.create_dataset("relpath", data="sw4/shakermaker2sw4.in", dtype=string_dtype)
     grp.create_dataset("text", data=input_text, dtype=string_dtype)
 
 
 def _write_sources(hf, source_rows, string_dtype):
+    """Write ``/sources`` with scalar fields plus a flat slip-rate buffer.
+
+    Each source's discrete slip-rate is appended to ``data_values``; the
+    starting index lives in ``data_offsets`` and the length in ``npts``.
+    """
     grp = hf.create_group("sources")
     grp.create_dataset("id", data=np.array([int(row["id"]) for row in source_rows], dtype=np.int32))
     for key in (
@@ -187,6 +295,11 @@ def _write_sources(hf, source_rows, string_dtype):
 
 def _write_topography(hf, topography_relpath, topography_shape, topography_points,
                       topography_original_bounds, string_dtype):
+    """Write ``/topography`` with the relpath, grid sizes, nodes and original bounds.
+
+    When no topography was supplied, only ``/topography/present = False``
+    is written so downstream readers can short-circuit cleanly.
+    """
     grp = hf.create_group("topography")
     grp.create_dataset("present", data=topography_relpath is not None)
     if topography_relpath is None:
@@ -200,6 +313,12 @@ def _write_topography(hf, topography_relpath, topography_shape, topography_point
 
 
 def _write_receivers(hf, receiver_records, string_dtype):
+    """Write ``/receivers`` mirroring the SW4 ``rec`` lines.
+
+    Every receiver record is split into one dataset per field. Coordinates
+    are stored in ShakerMaker (georef) kilometres so reading the package
+    does not require knowing the SW4 box origin.
+    """
     grp = hf.create_group("receivers")
     grp.create_dataset("id", data=np.arange(len(receiver_records), dtype=np.int32))
     grp.create_dataset("file", data=np.array([r["file"] for r in receiver_records], dtype=object), dtype=string_dtype)
@@ -215,6 +334,12 @@ def _write_receivers(hf, receiver_records, string_dtype):
 
 
 def _write_drm_template(hf, config, receiver_records, string_dtype):
+    """Write ``/drm_template`` with the receiver subset that feeds an h5drm build.
+
+    The QA receiver is identified by ``is_qa == True`` when present, or
+    falls back to the centre of the bounding box at z=0 otherwise. The
+    rest of the (non-QA) receivers form the DRM cloud.
+    """
     grp = hf.create_group("drm_template")
     non_qa = [record for record in receiver_records if not record["is_qa"]]
     qa_index = -1
@@ -251,6 +376,12 @@ def _write_drm_template(hf, config, receiver_records, string_dtype):
 
 
 def _center_xy_z0(xyz_km, config):
+    """QA receiver fallback when the model does not define one.
+
+    Picks the centre of the receiver bounding box in (x, y) at z=0, or the
+    centre of the SW4 box mapped back into ShakerMaker kilometres when no
+    receivers were exported.
+    """
     if len(xyz_km):
         xy = 0.5 * (xyz_km[:, :2].min(axis=0) + xyz_km[:, :2].max(axis=0))
         return np.asarray([xy[0], xy[1], 0.0], dtype=np.float64)
@@ -265,6 +396,14 @@ def _center_xy_z0(xyz_km, config):
 
 
 def _write_files(hf, file_payloads, string_dtype):
+    """Embed every text file (``.in``, sources, topography) under ``/files``.
+
+    Each payload becomes one ``file_NNNNNN/content`` ``uint8`` dataset with
+    gzip compression. The parallel ``relpath`` dataset lists the on-disk
+    location each blob should land in once unpacked. Paths are normalised
+    to forward slashes so the same package works on Windows and POSIX
+    machines.
+    """
     grp = hf.create_group("files")
     entries = grp.create_group("entries")
     relpaths = []
@@ -279,6 +418,12 @@ def _write_files(hf, file_payloads, string_dtype):
 
 
 def _find_package(directory):
+    """Return the single SW4 transport package inside ``directory``.
+
+    Identifies a package by its ``purpose`` HDF5 attribute. Raises if no
+    package is found or if more than one matches (the user has to pass the
+    path explicitly in that case).
+    """
     candidates = sorted(Path(directory).glob("*.h5"))
     matches = []
     for candidate in candidates:
@@ -297,6 +442,7 @@ def _find_package(directory):
 
 
 def _default_output_dir(directory):
+    """Pick a sensible unpack target: parent of ``shakermakerexports``, else ``directory``."""
     directory = Path(directory)
     if directory.name.lower() == "shakermakerexports":
         return directory.parent
@@ -304,6 +450,7 @@ def _default_output_dir(directory):
 
 
 def _create_array(group, name, data, compress=False):
+    """Create an HDF5 dataset, gzip-compressed when ``compress`` is set."""
     data = np.asarray(data)
     if compress and data.size:
         return group.create_dataset(name, data=data, compression="gzip", compression_opts=4)
@@ -311,12 +458,18 @@ def _create_array(group, name, data, compress=False):
 
 
 def _read_string_array(dataset):
+    """Decode a 1-D HDF5 dataset of byte strings into a Python list of ``str``."""
     return [
         value.decode("utf-8") if isinstance(value, bytes) else str(value)
         for value in dataset[:]
     ]
 
 
+# Standalone copy of the unpack logic, written to disk by
+# :func:`write_unpack_script` so the user can recover the SW4 case on a
+# machine that does not have ShakerMaker installed. The script is a
+# verbatim mirror of the module-level helpers above: any change to the
+# /files layout has to be reflected here as well.
 _UNPACK_SCRIPT = r'''#!/usr/bin/env python3
 from pathlib import Path
 import argparse

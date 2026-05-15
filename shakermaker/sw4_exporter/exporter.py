@@ -1,3 +1,27 @@
+"""SW4 exporter orchestrator.
+
+:class:`SW4Exporter` drives the full export pipeline for a ShakerMaker
+model. The flow inside :meth:`SW4Exporter.write` is:
+
+1. Read and condition the topography (optional). The file is rotated into
+   the ShakerMaker (x = North, y = East) convention and resorted into a
+   regular cartesian grid.
+2. Collect every active point (sources, stations, topography) and decide
+   the SW4 box extents and origin. The origin lives at one corner of the
+   box, in ShakerMaker georef.
+3. Build a :class:`CoordinateTransform` from the box origin. Every later
+   step uses it to map ShakerMaker coordinates into SW4 local metres, and
+   the inverse to bring SW4-side data back into the georef on demand.
+4. Emit the SW4 ``.in`` file (grid, materials, sources, receivers, optional
+   topography) along with the per-source slip-rate ``.txt`` files and the
+   local topography file.
+5. Pack everything into a single HDF5 transport bundle next to the SW4
+   case and copy the standalone unpack script next to it.
+
+The package only depends on the model's attributes, not on the FK core, so
+it can run on a machine without the Fortran extension installed.
+"""
+
 from pathlib import Path
 import csv
 import io
@@ -34,8 +58,42 @@ from .topography import (
 )
 
 
+# Tolerance, in metres, used to compare floating-point coordinates inside
+# the exporter. Same role as :data:`shakermaker.sw4_exporter.receivers._Z_TOL_M`
+# but kept local so the two modules can drift independently if needed.
+_COORD_TOL_M = 1.0e-9
+
+
 class SW4Exporter:
-    """Exporter orchestrator for compact SW4 HDF5 transport packages."""
+    """Top-level driver for the SW4 export.
+
+    Inputs
+    ------
+    model : ShakerMaker
+        Source/receiver/crust container. Only ``_source``, ``_receivers``
+        and ``_crust`` are read.
+    config : SW4ExportConfig
+        Knob bag (see :class:`SW4ExportConfig`).
+
+    Attributes
+    ----------
+    base_path : Path
+        Absolute path of the export root (``config.path`` resolved).
+    exports_path : Path
+        ``<base_path>/shakermakerexports``. Holds the HDF5 package and the
+        unpack script.
+    sw4_path : Path
+        ``<base_path>/sw4``. Holds the ``.in`` file and the per-source/topo
+        subdirectories when the package is unpacked.
+    sources_path, topo_path : Path
+        Convenience aliases under ``sw4_path``.
+    input_file : Path
+        Where the SW4 ``.in`` lands once unpacked.
+    package_h5 : Path
+        Final transport HDF5 file.
+    unpack_script : Path
+        Standalone unpacker placed next to ``package_h5``.
+    """
 
     def __init__(self, model, config: SW4ExportConfig):
         self.model = model
@@ -50,6 +108,24 @@ class SW4Exporter:
         self.unpack_script = self.exports_path / "unpack_sw4_package.py"
 
     def write(self):
+        """Run the full export and write the HDF5 transport package.
+
+        The package contains every file the case needs to reproduce the SW4
+        run (input file, per-source slip-rate files, local topography), plus
+        a structured copy of the model metadata (crust, stations, sources,
+        receivers, DRM template, coordinate offsets). The standalone unpack
+        script is written next to it.
+
+        After this call the model is decorated with two attributes so the
+        rest of ShakerMaker can locate the produced files:
+
+        - ``model.sw4_export_paths`` -- dict returned by :meth:`paths`.
+        - ``model.sw4_export_config`` -- the same ``config`` passed in.
+
+        Returns
+        -------
+        None
+        """
         self.exports_path.mkdir(parents=True, exist_ok=True)
         stale_structure = self.exports_path / "PACKAGE_STRUCTURE.txt"
         if stale_structure.is_file():
@@ -64,11 +140,13 @@ class SW4Exporter:
         topo_nx_sw4 = topo_ny_sw4 = None
         topo_original_bounds = None
 
+        # 1) Topography conditioning (optional).
         if self.config.topo_file is not None:
             topo_nx, topo_ny, topo_points = read_cartesian_topography(self.config.topo_file)
             topo_points = rotate_topography_to_shakermaker(topo_points)
             topo_nx, topo_ny, topo_points = rebuild_cartesian_topography(topo_points)
 
+        # 2) Decide the SW4 box extents and origin from the model bounds.
         original_points = self._active_geometry_points_m(topo_points)
         x_domain, y_domain, z_domain, domain_origin = self._resolve_domain(original_points)
         transform = CoordinateTransform(domain_origin)
@@ -94,14 +172,21 @@ class SW4Exporter:
             topo_points_shaker = None
             print_domain_diagnostics(x_domain, y_domain, z_domain, h=self.config.h)
 
+        # 3) Sources: flatten model._source into tabular rows with both
+        #    ShakerMaker and SW4 coordinates.
         rows = source_rows(self.model, transform)
         source_points = np.array([[row["x_sw4_m"], row["y_sw4_m"], row["z_sw4_m"]] for row in rows], dtype=float)
 
+        # DRMBox/SurfaceGrid/PointCloud receivers carry a trailing QA station
+        # that mirrors the rest of the array. Identify its index so the HDF5
+        # package can mark it explicitly.
         has_qa = isinstance(self.model._receivers, (DRMBox, SurfaceGrid, PointCloudDRMReceiver))
         station_count = self.model._receivers.nstations
         n_drm_stations = station_count - 1 if has_qa else station_count
         qa_index = n_drm_stations if has_qa else -1
 
+        # 4) Receivers: build the SW4 ``rec`` lines per family, in the order
+        #    they should appear in the ``.in`` file.
         receiver_lines = []
         receiver_records = []
         rec_index = 1
@@ -181,6 +266,8 @@ class SW4Exporter:
                     transform, lines, kind="sw4_domain", start_model_index=-1)
                 rec_index += len(lines)
 
+        # 5) Assemble the ``.in`` text and the file payloads that travel
+        #    with the HDF5 package.
         grid = grid_line(self.config.h, x_domain, y_domain, z_domain)
         materials = material_lines(self.model._crust)
         source_lines = sw4_source_lines(rows, self.config.m0)
@@ -235,7 +322,29 @@ class SW4Exporter:
         if self.config.plot_geometry_sw4:
             plot_sw4_geometry(paths["package_h5"])
 
+    # -------------------------------------------------------------------
+    # Domain decision and coordinate book-keeping
+    # -------------------------------------------------------------------
+
     def _active_geometry_points_m(self, topo_points=None):
+        """Gather every point that constrains the SW4 box.
+
+        Inputs
+        ------
+        topo_points : ndarray, shape (N, 3), optional
+            Topography nodes already in ShakerMaker metres.
+
+        Returns
+        -------
+        ndarray, shape (M, 3)
+            Sources and stations promoted to metres, plus topography when
+            supplied. Used by :meth:`_resolve_domain`.
+
+        Raises
+        ------
+        ValueError
+            If no points end up in the list (empty model and no topography).
+        """
         points = []
         points.extend(np.asarray(psource.x, dtype=float) * 1000.0 for psource in self.model._source)
         points.extend(np.asarray(station.x, dtype=float) * 1000.0 for station in self.model._receivers)
@@ -246,6 +355,26 @@ class SW4Exporter:
         return np.asarray(points, dtype=float)
 
     def _resolve_domain(self, points):
+        """Decide the SW4 box extents and origin from the active geometry.
+
+        The horizontal extents follow the geometry bounds (rounded up to a
+        multiple of ``h`` when not explicitly set in the config). The
+        vertical extent is read straight from the config; it must be set.
+        The origin is placed so the box is centred on the geometry in x and
+        y, and starts at z=0 (SW4 convention).
+
+        Inputs
+        ------
+        points : ndarray, shape (M, 3)
+            Output of :meth:`_active_geometry_points_m`.
+
+        Returns
+        -------
+        x_domain, y_domain, z_domain : float
+            Box extents in metres.
+        origin : ndarray, shape (3,)
+            SW4 origin expressed in ShakerMaker metres.
+        """
         if self.config.z_domain is None:
             raise ValueError("size_domain must provide a z value.")
 
@@ -263,18 +392,51 @@ class SW4Exporter:
         return x_domain, y_domain, z_domain, origin
 
     def _domain_length(self, axis, mins, maxs):
+        """Length of the box along one horizontal axis.
+
+        When the config does not pin the axis, snap the geometry extent up
+        to the next multiple of ``h`` so the SW4 grid is aligned. When it
+        does, validate that the configured length fits the geometry.
+
+        Inputs
+        ------
+        axis : int
+            0 for x, 1 for y.
+        mins, maxs : ndarray, shape (3,)
+            Component-wise min/max of the active geometry.
+
+        Returns
+        -------
+        float
+            Length in metres.
+        """
         configured = self.config.x_domain if axis == 0 else self.config.y_domain
         extent = float(maxs[axis] - mins[axis])
         if configured is None:
             length = np.ceil(max(extent, float(self.config.h)) / float(self.config.h)) * float(self.config.h)
         else:
             length = float(configured)
-            if extent > length + 1.0e-9:
+            if extent > length + _COORD_TOL_M:
                 axis_name = "x" if axis == 0 else "y"
                 raise ValueError(f"size_domain {axis_name}={length} does not contain active geometry extent {extent}.")
         return float(length)
 
     def _store_domain_in_config(self, x_domain, y_domain, z_domain, transform):
+        """Copy the resolved domain/origin back onto the config object.
+
+        The config object is the single point of truth that the HDF5
+        packager and downstream readers consult, so the resolved values
+        have to land there.
+
+        Inputs
+        ------
+        x_domain, y_domain, z_domain : float
+        transform : CoordinateTransform
+
+        Returns
+        -------
+        None
+        """
         self.config.x_domain = float(x_domain)
         self.config.y_domain = float(y_domain)
         self.config.z_domain = float(z_domain)
@@ -282,7 +444,26 @@ class SW4Exporter:
         self.config.y_origin = float(transform.origin_m[1])
         self.config.z_origin = float(transform.origin_m[2])
 
+    # -------------------------------------------------------------------
+    # Topography helpers
+    # -------------------------------------------------------------------
+
     def _topography_line(self, local_topo, topo_points_local):
+        """SW4 ``topography`` line plus a comment with the original bounds.
+
+        Inputs
+        ------
+        local_topo : Path
+            Where the local topography file will live, inside ``sw4/topo``.
+        topo_points_local : ndarray, shape (N, 3)
+            Topography nodes already in SW4 local metres.
+
+        Returns
+        -------
+        str
+            Two-line text: a ``# ShakerMaker topography_original_bounds`` row
+            followed by the ``topography input=cartesian file=topo/...`` line.
+        """
         xmin = float(topo_points_local[:, 0].min())
         xmax = float(topo_points_local[:, 0].max())
         ymin = float(topo_points_local[:, 1].min())
@@ -295,6 +476,10 @@ class SW4Exporter:
         return bounds + "\n" + line
 
     def _topography_bounds_array(self, topo_points_local):
+        """``[xmin, xmax, ymin, ymax]`` of the topography, as ndarray.
+
+        Stored verbatim in the HDF5 package for later round-trip checks.
+        """
         return np.asarray([
             float(topo_points_local[:, 0].min()),
             float(topo_points_local[:, 0].max()),
@@ -303,6 +488,24 @@ class SW4Exporter:
         ], dtype=float)
 
     def _topography_xy_at_z0(self, topo_points_local):
+        """Set of (x, y) topography nodes that sit on z=0 within tolerance.
+
+        Used to skip duplicate receivers when a ShakerMaker station happens
+        to coincide with a topography surface node. The tolerance is half a
+        grid spacing -- generous enough to absorb the float64 noise that
+        the topography pipeline accumulates while still avoiding accidental
+        merges of two genuinely distinct grid nodes.
+
+        Inputs
+        ------
+        topo_points_local : ndarray, shape (N, 3) or None
+
+        Returns
+        -------
+        set of (int, int)
+            Rounded (x, y) coordinates in metres. Empty when no topography
+            is set.
+        """
         out = set()
         if topo_points_local is None:
             return out
@@ -312,12 +515,28 @@ class SW4Exporter:
                 out.add((round(float(x)), round(float(y))))
         return out
 
+    # -------------------------------------------------------------------
+    # Receiver record builders -- mirror the SW4 ``rec`` lines into the
+    # HDF5 package, with ShakerMaker (georef) coordinates for downstream
+    # tooling (h5drm).
+    # -------------------------------------------------------------------
+
     def _model_receiver_records(self, transform, start_index, topo_xy_z0, qa_index):
+        """Records for ShakerMaker stations, skipping the ones the topography
+        block already covers (same logic as :func:`receivers.model_receiver_lines`).
+
+        Returns
+        -------
+        list of dict
+            One entry per kept station, with the same keys the HDF5 packager
+            expects (``file``, ``kind``, ``xyz_km``, ``internal``, ``is_qa``,
+            ``model_index``, ``metadata``).
+        """
         records = []
         offset = int(start_index)
         for i_station, station in enumerate(self.model._receivers):
             xyz_m = transform.from_shakermaker_km_to_sw4_m(station.x)
-            if abs(float(xyz_m[2])) < 1.0e-9 and (
+            if abs(float(xyz_m[2])) < _COORD_TOL_M and (
                     round(float(xyz_m[0])), round(float(xyz_m[1]))) in topo_xy_z0:
                 continue
             records.append({
@@ -333,6 +552,12 @@ class SW4Exporter:
         return records
 
     def _model_receiver_surface_records(self, transform, topo_points_local, start_index, qa_index):
+        """Records for stations forced to ``depth=0``.
+
+        The station x/y are kept; z is set to the topography elevation at
+        that (x, y) so the stored ShakerMaker coordinate matches the SW4
+        receiver location.
+        """
         records = []
         offset = int(start_index)
         for i_station, station in enumerate(self.model._receivers):
@@ -351,6 +576,14 @@ class SW4Exporter:
         return records
 
     def _topography_z_at(self, topo_points_local, x, y):
+        """Topography elevation at the closest (x, y) node, in metres.
+
+        Nearest-neighbour lookup -- linear interpolation is unnecessary
+        because the SW4 grid is already aligned with the topography grid
+        after :func:`extend_topography_to_domain`.
+
+        Returns ``0.0`` when no topography is set.
+        """
         if topo_points_local is None or len(topo_points_local) == 0:
             return 0.0
         topo_points_local = np.asarray(topo_points_local, dtype=float)
@@ -358,6 +591,7 @@ class SW4Exporter:
         return float(topo_points_local[int(np.argmin(d2)), 2])
 
     def _topography_surface_records(self, transform, topo_points_local, start_index):
+        """Records for the ``depth=0`` receiver placed on each topography node."""
         records = []
         for offset, (x, y, topo_z) in enumerate(
                 np.asarray(topo_points_local, dtype=float), start=int(start_index)):
@@ -373,6 +607,7 @@ class SW4Exporter:
         return records
 
     def _topography_z0_records(self, transform, topo_points_local, start_index):
+        """Records for the column of receivers between topography and z=0."""
         records = []
         offset = int(start_index)
         for x, y, topo_z in np.asarray(topo_points_local, dtype=float):
@@ -390,6 +625,11 @@ class SW4Exporter:
         return records
 
     def _records_from_rec_lines(self, transform, lines, kind, start_model_index):
+        """Records for receivers built from a list of already-formatted ``rec`` lines.
+
+        Used for the SW4 domain grid where the receiver positions live in
+        the formatted strings, not in a model object.
+        """
         records = []
         for line in lines:
             values = self._parse_rec_line(line)
@@ -409,6 +649,14 @@ class SW4Exporter:
         return records
 
     def _parse_rec_line(self, line):
+        """Pull ``file=``, ``x=``, ``y=`` and ``z=``/``depth=`` from a ``rec`` line.
+
+        Returns
+        -------
+        dict
+            ``{"file": str, "x": float, "y": float, "z"/"depth": float}``
+            with the keys that were present in the line.
+        """
         values = {}
         for token in line.split():
             if "=" not in token:
@@ -421,15 +669,38 @@ class SW4Exporter:
         return values
 
     def _domain_sw4_origin_xy(self, domain_size, x_domain, y_domain):
+        """Offset that centres the SW4 receiver sub-grid inside the box.
+
+        Inputs
+        ------
+        domain_size : sequence of 3 floats
+            Requested sub-grid extents.
+        x_domain, y_domain : float
+            Outer SW4 box extents.
+
+        Returns
+        -------
+        tuple of 2 floats
+            ``(ox, oy)`` in metres.
+        """
         lx, ly, _lz = [float(value) for value in domain_size]
-        if lx > float(x_domain) + 1.0e-9 or ly > float(y_domain) + 1.0e-9:
+        if lx > float(x_domain) + _COORD_TOL_M or ly > float(y_domain) + _COORD_TOL_M:
             raise ValueError("domain_sw4_size x/y must fit inside size_domain.")
         return (
             0.5 * (float(x_domain) - lx),
             0.5 * (float(y_domain) - ly),
         )
 
+    # -------------------------------------------------------------------
+    # Output paths and sidecar summaries
+    # -------------------------------------------------------------------
+
     def paths(self):
+        """Dictionary of every path the exporter writes to.
+
+        Keys: ``base``, ``exports``, ``sw4``, ``sources``, ``topo``,
+        ``package_h5``, ``unpack_script``, ``input``.
+        """
         return {
             "base": self.base_path,
             "exports": self.exports_path,
@@ -442,6 +713,7 @@ class SW4Exporter:
         }
 
     def _sources_summary_text(self, rows):
+        """Render the source rows as a CSV string for human inspection."""
         headers = [
             "id", "x_km", "y_km", "z_km", "x_m", "y_m", "z_m",
             "x_sw4_m", "y_sw4_m", "z_sw4_m",
