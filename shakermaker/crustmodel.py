@@ -315,3 +315,62 @@ class CrustModel:
         ax.set_xticks([])
         plt.tight_layout()
         plt.show()
+
+    def plot_profile(self, figsize=(11, 5), halfspace_extra=10.0):
+        """Plot Vp, Vs and density profiles versus depth.
+
+        :param figsize: Figure size as (width, height) in inches.
+        :type figsize: tuple
+        :param halfspace_extra: Extra depth (km) used to draw the half-space layer.
+        :type halfspace_extra: float
+        """
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        d = self._d.copy()
+        d[-1] = halfspace_extra if d[-1] == 0 else d[-1]
+
+        z_top = np.concatenate(([0], np.cumsum(d)))
+        z_step = np.repeat(z_top, 2)[1:-1]
+        vp_step = np.repeat(self._a, 2)
+        vs_step = np.repeat(self._b, 2)
+        rho_step = np.repeat(self._rho, 2)
+        bottom = z_top[-1]
+        colors = plt.cm.Pastel1(np.linspace(0, 1, self.nlayers))
+
+        plt.figure(figsize=figsize)
+
+        plt.subplot(1, 3, 1)
+        for i in range(self.nlayers):
+            label = f'Layer {i+1}: inf' if self._d[i] == 0 else f'Layer {i+1}: {self._d[i]:.1f} km'
+            plt.axhspan(z_top[i], z_top[i+1], facecolor=colors[i], alpha=0.4, label=label)
+        plt.plot(vp_step, z_step, color='C0', linewidth=2)
+        plt.xlabel('Vp (km/s)', fontsize=12)
+        plt.ylabel('Depth (km)', fontsize=12)
+        plt.title('Vp', fontsize=14, fontweight='bold')
+        plt.ylim(bottom, 0)
+        plt.grid(True, alpha=0.3)
+        handles, labels = plt.gca().get_legend_handles_labels()
+
+        plt.subplot(1, 3, 2)
+        for i in range(self.nlayers):
+            plt.axhspan(z_top[i], z_top[i+1], facecolor=colors[i], alpha=0.4)
+        plt.plot(vs_step, z_step, color='C3', linewidth=2)
+        plt.xlabel('Vs (km/s)', fontsize=12)
+        plt.title('Vs', fontsize=14, fontweight='bold')
+        plt.ylim(bottom, 0)
+        plt.grid(True, alpha=0.3)
+
+        plt.subplot(1, 3, 3)
+        for i in range(self.nlayers):
+            plt.axhspan(z_top[i], z_top[i+1], facecolor=colors[i], alpha=0.4)
+        plt.plot(rho_step, z_step, color='C2', linewidth=2)
+        plt.xlabel(r'$\rho$ (gr/cm$^3$)', fontsize=12)
+        plt.title('Density', fontsize=14, fontweight='bold')
+        plt.ylim(bottom, 0)
+        plt.grid(True, alpha=0.3)
+        plt.legend(handles, labels, loc='center left', bbox_to_anchor=(1, 0.5))
+
+        plt.suptitle('Crust Model Profile', fontsize=14, fontweight='bold')
+        plt.tight_layout()
+        plt.show()
