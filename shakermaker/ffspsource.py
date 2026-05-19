@@ -1787,7 +1787,7 @@ class FFSPSource:
                                   contour_field='rupture_time', show_hypocenter=True,
                                   contour_interval=None, contour_color='blue',
                                   internal_ref=None, external_coord=None,
-                                  save_fig=False, model_name='model'):
+                                  save_fig=False, model_name='model' , image_type='png'):
         """
         Plot spatial distribution of subfault parameters with strike rotation.
         """
@@ -1975,8 +1975,8 @@ class FFSPSource:
         
         # Save figure if requested
         if save_fig:
-            plt.savefig(f'{model_name}_spatial_distribution.tiff', 
-                        format='tiff', 
+            plt.savefig(f'{model_name}_spatial_distribution.{image_type}', 
+                        format=image_type, 
                         dpi=600, 
                         bbox_inches='tight', 
                         transparent=True,
@@ -1990,7 +1990,7 @@ class FFSPSource:
                              field='slip', cmap='YlOrRd',
                              show_rupture_front=True,
                              internal_ref=None, external_coord=None,
-                             save_fig=False, model_name='model'):
+                             save_fig=False, model_name='model',  image_type='png'):
         """
         Plot rupture propagation snapshot at a specific time.
         """
@@ -2115,8 +2115,12 @@ class FFSPSource:
         plt.tight_layout()
         
         if save_fig:
-            plt.savefig(f'{model_name}_snapshot_t{time_snapshot:.2f}s.png', 
-                        dpi=300, bbox_inches='tight')
+            plt.savefig(f'{model_name}_spatial_distribution.{image_type}', 
+                        format=image_type, 
+                        dpi=600, 
+                        bbox_inches='tight', 
+                        transparent=True,
+                        facecolor='none')
         
         plt.show()
 
@@ -2254,7 +2258,7 @@ class FFSPSource:
         plt.grid(alpha=0.3)
 
     def plot_source_time_function(self, figsize=(10, 6),xlim=None,
-                                save_fig=False, model_name='source'):
+                                save_fig=False, model_name='source', image_type='png'):
         """Plot Source Time Function (STF)."""
         if self.source_stats is None:
             print("No source statistics available. Run simulation first.")
@@ -2277,14 +2281,12 @@ class FFSPSource:
 
         # Save figure if requested
         if save_fig:
-           plt.savefig(
-               f'{model_name}_source_time_function.svg',
-               format='svg',
-               dpi=600,
-               bbox_inches='tight',
-               transparent=True,
-               facecolor='none'
-           )
+            plt.savefig(f'{model_name}_spatial_distribution.{image_type}', 
+                        format=image_type, 
+                        dpi=600, 
+                        bbox_inches='tight', 
+                        transparent=True,
+                        facecolor='none')
 
         plt.show()
 
