@@ -30,7 +30,7 @@ Three-stage pipeline with O(1) Green's Function lookup via pair_to_slot:
       MPI parallel: stations distributed across ranks.
 
 Orchestrator:
-  run_nearest(stage=0|1|2|'all')
+  run_nearest(stage=0|1|2|'0_1'|'all')
 
 Debug / validation (no database):
   run()
@@ -1439,7 +1439,7 @@ class ShakerMaker:
         Stage 0 is now also MPI parallel (geometry computed across all ranks;
         rank 0 handles the unique-slot reduction and HDF5 write).
 
-        :param stage: Stages to run: ``0``, ``1``, ``2``, or ``'all'``.
+        :param stage: Stages to run: ``0``, ``1``, ``2``, ``'0_1'`` (runs 0 then 1), or ``'all'``.
         :type stage: int or str
         :param h5_database_name: HDF5 file path (full path, including .h5). Required.
         :type h5_database_name: str
@@ -1494,8 +1494,8 @@ class ShakerMaker:
         """
         assert h5_database_name is not None, \
             "run_nearest: h5_database_name is required"
-        assert stage in (0, 1, 2, 'all'), \
-            "run_nearest: stage must be 0, 1, 2, or 'all'"
+        assert stage in (0, 1, 2, '0_1', 'all'), \
+            "run_nearest: stage must be 0, 1, 2, '0_1', or 'all'"
 
         # Normalise: strip .h5 suffix so internal methods can append
         # _map.h5 and _gf.h5 consistently regardless of what the caller
@@ -1522,6 +1522,35 @@ class ShakerMaker:
                     pass
             print(f"   DB file        : {h5_database_name}")
             print("-" * len(title))
+
+        if stage == '0_1':
+            # Sequential: Stage 0 (gen_pairs) -> Stage 1 (compute_gf)
+            self.gen_pairs(
+                h5_database_name=h5_database_name,
+                delta_h=delta_h, delta_v_rec=delta_v_rec,
+                delta_v_src=delta_v_src, npairs_max=npairs_max,
+                showProgress=showProgress)
+            if rank == 0:
+                print(f"Stage 0 complete -> {h5_database_name}")
+
+            self.compute_gf(
+                h5_database_name=h5_database_name,
+                dt=dt, nfft=nfft, tb=tb, smth=smth,
+                sigma=sigma, taper=taper, wc1=wc1, wc2=wc2,
+                pmin=pmin, pmax=pmax, dk=dk, nx=nx, kc=kc,
+                verbose=verbose, debugMPI=debugMPI,
+                showProgress=showProgress)
+            if rank == 0:
+                print(f"Stage 1 complete -> {h5_database_name}")
+                total = perf_counter() - perf_time_begin
+                print("\n" + "=" * 70)
+                print("STAGES 0 + 1 COMPLETE")
+                print("=" * 70)
+                print(f"  Total time: {total:.2f} s")
+                if total > 60:
+                    print(f"  Total time: {total/60:.2f} min")
+                print("=" * 70 + "\n")
+            return
 
         if stage in (0, 'all'):
             self.gen_pairs(
