@@ -620,14 +620,16 @@ class ShakerMaker:
         my_nsta   = r_end - r_start
 
         # Pre-fetch coordinates once -- avoids repeated Python attribute access
+        # reshape(-1, 3) guarantees 2-D shape even when my_nsta == 0
+        # (happens when nprocs > nstations, e.g. 48 ranks for 1 station)
         my_sta = np.array(
             [self._receivers.get_station_by_id(i).x
              for i in range(r_start, r_end)],
-            dtype=np.float64)                        # (my_nsta, 3)
+            dtype=np.float64).reshape(-1, 3)         # (my_nsta, 3)
         src_coords = np.array(
             [self._source.get_source_by_id(j).x
              for j in range(nsources)],
-            dtype=np.float64)                        # (nsources, 3)
+            dtype=np.float64).reshape(-1, 3)         # (nsources, 3)
 
         # Tile to full (my_nsta * nsources, 3) -- broadcasting, no loop
         sta_rep  = np.repeat(my_sta,    nsources, axis=0)  # (my_n*nsrc, 3)
