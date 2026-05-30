@@ -1,0 +1,166 @@
+---
+hide:
+  - navigation
+---
+
+<div class="sm-hero" markdown>
+<img class="sm-hero__mark" src="assets/logo.svg" alt="ShakerMaker mark" />
+<div>
+  <h1 class="sm-hero__word">ShakerMaker</h1>
+  <div class="sm-hero__sub">FK Ground Motion · DRM · FFSP</div>
+</div>
+</div>
+
+ShakerMaker is a Python framework for computing earthquake ground motions
+using the **frequency-wavenumber (FK)** method. It provides a complete
+pipeline, from crustal model definition and earthquake source specification
+to ground motion computation and export in **HDF5, NumPy, and H5DRM**
+(Domain Reduction Method) formats. Computations are parallelized with **MPI**
+and scale from personal workstations to supercomputing clusters.
+
+The FK method is implemented in **Fortran** (originally from
+[L. Zhu](http://www.eas.slu.edu/People/LZhu/home.html), with several
+modifications) and interfaced with Python through `f2py` wrappers. Classes are
+built on top of this wrapper to simplify common modeling tasks: crustal model
+specification, source faults (from simple point sources to full kinematic
+rupture specifications), single recording stations, grids and DRM station
+arrays. Filtering and simple plotting tools ease model setup.
+
+ShakerMaker also includes the **Finite Fault Stochastic Process (FFSP)** tool
+(Fortran), which idealizes a fault of a given area and event magnitude with
+specific strike, dip, and rake. Graphical functions visualize the computed
+metrics and the statistics of the stochastic space used to select the best
+model.
+
+!!! info "Built on a Fortran FK core"
+    Motion traces are computed by pairing all sources with all receivers,
+    parallelized with MPI, so ShakerMaker runs on a laptop or on a large
+    cluster, unchanged.
+
+## Key features
+
+- **FK ground motion synthesis**, full-wavefield Green's functions in 1D layered viscoelastic media
+- **Domain Reduction Method (DRM)**, boundary motions for sub-domain simulations; export directly to H5DRM (see [H5DRMLoadPattern](https://github.com/OpenSees/OpenSees))
+- **Stochastic finite fault ruptures (FFSP)**, spatially-correlated slip distributions, magnitude–area scaling, configurable random seeds
+- **Source time functions**, Brune, Gaussian, Dirac, Discrete, SRF2
+- **Pre-packaged crustal models**, LOH.1 (SCEC), Southern California, AbellThesis; extendable
+- **Multiple receiver geometries**, stations, surface grids, DRM boxes, point clouds
+- **MPI parallelism**, `mpi4py` over source–receiver pairs
+- **Filtering and plotting**, low/high-pass filters, `ZENTPlot`, `StationPlot`, `SourcePlot`
+
+## How it works
+
+The FK method computes the complete seismic wavefield for a point source
+embedded in a 1D layered halfspace. ShakerMaker organises the workflow into
+three components:
+
+| Component | Role |
+|---|---|
+| **CrustModel** | 1D velocity structure: layer thickness, Vp, Vs, density, and Q factors |
+| **Source** | `PointSource` (single point, strike/dip/rake) or `FaultSource` (extended fault), optionally driven by a `SourceTimeFunction` |
+| **Receiver** | `Station` (single point), `StationList`, `DRMBox`, `SurfaceGrid`, or `PointCloudDRMReceiver` |
+
+These three combine into a `ShakerMaker` instance and dispatch via `.run()`
+(sequential) or `.gen_pairs()` → `.compute_gf()` → `.run_fast()`
+(three-stage, MPI-parallel). Results are stored in each `Station` and
+optionally written to disk.
+
+## A minimal simulation
+
+A two-layer crust, a strike-slip point source at 4 km depth, and a single
+receiver 4 km north, plotted with `ZENTPlot`.
+
+```python
+from shakermaker.shakermaker import ShakerMaker
+from shakermaker.crustmodel import CrustModel
+from shakermaker.pointsource import PointSource
+from shakermaker.faultsource import FaultSource
+from shakermaker.station import Station
+from shakermaker.stationlist import StationList
+from shakermaker.tools.plotting import ZENTPlot
+
+crust = CrustModel(2)
+crust.add_layer(1.0, 4.0, 2.0, 2.6, 10000., 10000.)
+crust.add_layer(0.0, 6.0, 3.464, 2.7, 10000., 10000.)
+
+source = PointSource([0, 0, 4], [90, 90, 0])
+fault = FaultSource([source], metadata={"name": "single-point-source"})
+
+s = Station([0, 4, 0], metadata={"name": "a station"})
+stations = StationList([s], metadata=s.metadata)
+
+model = ShakerMaker(crust, fault, stations)
+model.run()
+
+ZENTPlot(s, xlim=[0, 60], show=True)
+```
+
+![Quick example output](assets/images/example_0_quick_example.png){ width=560 }
+
+## ShakerMakerResults
+
+[**ShakerMakerResults**](https://github.com/ppalacios92/ShakerMakerResults) is a
+companion library for interactive visualisation of the HDF5 (`.h5`) files
+ShakerMaker produces, browser-based views of wave propagation, station
+responses, and spectral content.
+
+---
+
+## Where do you want to start?
+
+<div class="grid cards" markdown>
+
+-   :material-school:{ .lg .middle } &nbsp; __[Getting started](guides/first_steps.md)__
+
+    ---
+
+    *I'm new, orient me.*
+
+    The FK pipeline end to end: crust model → source → receiver → run.
+
+-   :material-rocket-launch:{ .lg .middle } &nbsp; __[Examples](examples/index.md)__
+
+    ---
+
+    *Show me a working model.*
+
+    The numbered `examples/` scripts (0–9) plus cloud-point patterns.
+
+-   :material-layers-triple:{ .lg .middle } &nbsp; __[Build a model](guides/crust_model.md)__
+
+    ---
+
+    *I'm defining crust, sources, and stations.*
+
+    Crust models, sources, STFs, receiver geometries.
+
+-   :material-grid:{ .lg .middle } &nbsp; __[DRM & FFSP](guides/ffsp.md)__
+
+    ---
+
+    *I need boundary motions or a stochastic rupture.*
+
+    DRM boxes, H5DRM export, and the FFSP stochastic finite fault.
+
+-   :material-book-open-variant:{ .lg .middle } &nbsp; __[API reference](api/index.md)__
+
+    ---
+
+    *Look up a class or method.*
+
+    `ShakerMaker`, `CrustModel`, sources, STFs, receivers, writers.
+
+-   :material-chart-line:{ .lg .middle } &nbsp; __[ShakerMakerResults](https://github.com/ppalacios92/ShakerMakerResults)__
+
+    ---
+
+    *I'm post-processing `.h5` output.*
+
+    Companion library for interactive visualisation of HDF5 results.
+
+</div>
+
+---
+
+**Authors:** Jose A. Abell · Jorge Crempien D. · Matías Recabarren
+**Modified:** Patricio Palacios B. · Nicolás Mora Bowen · José Abell · *Ladruño Team*

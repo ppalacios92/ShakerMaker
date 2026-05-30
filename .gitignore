@@ -30,3 +30,10 @@ __pycache__/
 
 # folders
 .claude
+
+# MkDocs build output
+site/
+docs/web/examples/scripts/_ffsp_scratch/
+
+# Throwaway design mockup (superseded by the real MkDocs site)
+design_preview/
