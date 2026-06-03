@@ -12,6 +12,7 @@ useful than a log line.
 """
 
 from pathlib import Path
+import warnings
 import numpy as np
 
 SEPARATOR = "-" * 50
@@ -339,3 +340,57 @@ def print_active_geometry_bounds(points):
     print(SEPARATOR)
     print(f"Active    x=[{xmin:.1f}, {xmax:.1f}]  y=[{ymin:.1f}, {ymax:.1f}]  z=[{zmin:.2f}, {zmax:.2f}]")
     print(f"Centroid  [{centroid[0]:.1f}, {centroid[1]:.1f}, {centroid[2]:.2f}]")
+
+
+def warn_active_geometry_supergrid(points, x_domain, y_domain, z_domain, h, supergrid_gp):
+    """Warn when any active point sits inside or too close to the supergrid.
+
+    The SW4 supergrid is an absorbing layer of ``supergrid_gp`` grid points
+    along the four lateral walls and the bottom (the z=0 top is a free
+    surface, not a supergrid). A source or receiver inside that layer radiates
+    or records spurious, damped motion, so it must stay at least ``gp*h``
+    metres from each of those walls.
+
+    Inputs
+    ------
+    points : ndarray, shape (N, 3)
+        Active sources/receivers in SW4 local metres.
+    x_domain, y_domain, z_domain : float
+        SW4 box extents in metres.
+    h : float
+        Grid spacing in metres.
+    supergrid_gp : int
+        Supergrid width in grid points.
+
+    Returns
+    -------
+    None
+        Emits a :class:`UserWarning` listing every wall that is too close.
+    """
+    points = np.asarray(points, dtype=float)
+    if points.size == 0:
+        return
+    sponge = float(supergrid_gp) * float(h)
+    xmin, xmax, ymin, ymax, _zmin, zmax = bounds(points)
+    checks = [
+        ("x-min wall", xmin - 0.0),
+        ("x-max wall", float(x_domain) - xmax),
+        ("y-min wall", ymin - 0.0),
+        ("y-max wall", float(y_domain) - ymax),
+        ("bottom (z-max) wall", float(z_domain) - zmax),
+    ]
+    problems = [
+        f"{label}: {clearance:.1f} m clearance"
+        for label, clearance in checks
+        if clearance < sponge
+    ]
+    if problems:
+        warnings.warn(
+            "Active geometry sits inside or too close to the SW4 supergrid "
+            "absorbing layer:\n  " + "\n  ".join(problems)
+            + f"\n(supergrid gp={int(supergrid_gp)}, h={float(h):.1f} m -> "
+            f"{sponge:.1f} m sponge per wall). Sources/receivers in the "
+            "damping layer produce spurious results; enlarge the domain or "
+            "leave the affected axis as None to size it automatically.",
+            stacklevel=2,
+        )

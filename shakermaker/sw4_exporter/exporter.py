@@ -25,6 +25,7 @@ it can run on a machine without the Fortran extension installed.
 from pathlib import Path
 import csv
 import io
+import warnings
 import numpy as np
 
 from shakermaker.sl_extensions import DRMBox, SurfaceGrid, PointCloudDRMReceiver
@@ -34,7 +35,7 @@ from .coordinates import CoordinateTransform
 from .geometry_plot import plot_sw4_geometry
 from .grid import grid_line
 from .input_writer import sw4_input_text
-from .materials import material_lines
+from .materials import deepest_interface, material_lines
 from .package_h5 import write_sw4_package_h5, write_unpack_script
 from .receivers import (
     domain_receiver_lines,
@@ -50,6 +51,7 @@ from .topography import (
     print_active_geometry_bounds,
     print_domain_diagnostics,
     print_topography_diagnostics,
+    warn_active_geometry_supergrid,
     read_cartesian_topography,
     rebuild_cartesian_topography,
     rotate_topography_to_shakermaker,
@@ -62,6 +64,16 @@ from .topography import (
 # the exporter. Same role as :data:`shakermaker.sw4_exporter.receivers._Z_TOL_M`
 # but kept local so the two modules can drift independently if needed.
 _COORD_TOL_M = 1.0e-9
+
+
+def _snap_up_to_h(value, h):
+    """Round ``value`` up to the next multiple of ``h``.
+
+    A small tolerance keeps values that are already a multiple of ``h`` from
+    being bumped to the next one by float64 noise.
+    """
+    h = float(h)
+    return float(np.ceil(float(value) / h - _COORD_TOL_M) * h)
 
 
 class SW4Exporter:
@@ -222,7 +234,11 @@ class SW4Exporter:
             dtype=float)
         active_points.append(receiver_points)
 
-        print_active_geometry_bounds(np.vstack(active_points))
+        active_all = np.vstack(active_points)
+        print_active_geometry_bounds(active_all)
+        warn_active_geometry_supergrid(
+            active_all, x_domain, y_domain, z_domain,
+            self.config.h, self.config.supergrid_gp)
 
         if topo_points_local is not None:
             lines = topography_receiver_lines(
@@ -269,7 +285,12 @@ class SW4Exporter:
         # 5) Assemble the ``.in`` text and the file payloads that travel
         #    with the HDF5 package.
         grid = grid_line(self.config.h, x_domain, y_domain, z_domain)
-        materials = material_lines(self.model._crust)
+        materials = material_lines(
+            self.model._crust,
+            h=self.config.h,
+            interface_blocks=self.config.interface_blocks,
+            interface_block_delta=self.config.interface_block_delta,
+        )
         source_lines = sw4_source_lines(rows, self.config.m0)
         input_text = sw4_input_text(
             grid,
@@ -357,11 +378,19 @@ class SW4Exporter:
     def _resolve_domain(self, points):
         """Decide the SW4 box extents and origin from the active geometry.
 
-        The horizontal extents follow the geometry bounds (rounded up to a
-        multiple of ``h`` when not explicitly set in the config). The
-        vertical extent is read straight from the config; it must be set.
-        The origin is placed so the box is centred on the geometry in x and
-        y, and starts at z=0 (SW4 convention).
+        Each axis is sized so the active geometry clears the supergrid
+        absorbing layer. An axis left ``None`` in the config is computed
+        automatically: the horizontal extents grow by
+        ``(supergrid_gp + supergrid_pad_gp) * h`` on each side, and the
+        vertical extent reaches below the deepest source *and* the deepest
+        material interface plus the bottom supergrid. An axis pinned in the
+        config is validated against the same clearance and rejected with a
+        descriptive error when it does not fit. Every returned extent is a
+        multiple of ``h``.
+
+        The origin centres the geometry in x and y and starts at z=0 (SW4
+        free-surface convention; only the lateral walls and the bottom carry
+        a supergrid, never the top).
 
         Inputs
         ------
@@ -371,19 +400,24 @@ class SW4Exporter:
         Returns
         -------
         x_domain, y_domain, z_domain : float
-            Box extents in metres.
+            Box extents in metres, each a multiple of ``h``.
         origin : ndarray, shape (3,)
             SW4 origin expressed in ShakerMaker metres.
         """
-        if self.config.z_domain is None:
-            raise ValueError("size_domain must provide a z value.")
+        h = float(self.config.h)
+        gp = int(self.config.supergrid_gp)
+        pad_gp = int(self.config.supergrid_pad_gp)
+        sponge = gp * h
+        clearance = (gp + pad_gp) * h
 
         mins = points.min(axis=0)
         maxs = points.max(axis=0)
         center = 0.5 * (mins + maxs)
-        x_domain = self._domain_length(0, mins, maxs)
-        y_domain = self._domain_length(1, mins, maxs)
-        z_domain = float(self.config.z_domain)
+
+        x_domain = self._domain_length(0, mins, maxs, clearance, sponge)
+        y_domain = self._domain_length(1, mins, maxs, clearance, sponge)
+        z_domain = self._resolve_z_domain(float(maxs[2]), clearance, sponge)
+
         origin = np.array([
             center[0] - 0.5 * x_domain,
             center[1] - 0.5 * y_domain,
@@ -391,12 +425,14 @@ class SW4Exporter:
         ], dtype=float)
         return x_domain, y_domain, z_domain, origin
 
-    def _domain_length(self, axis, mins, maxs):
-        """Length of the box along one horizontal axis.
+    def _domain_length(self, axis, mins, maxs, clearance, sponge):
+        """Length of the box along one horizontal axis, supergrid-aware.
 
-        When the config does not pin the axis, snap the geometry extent up
-        to the next multiple of ``h`` so the SW4 grid is aligned. When it
-        does, validate that the configured length fits the geometry.
+        When the config does not pin the axis, grow the geometry extent by
+        ``clearance`` on each side and snap up to a multiple of ``h``. When it
+        does, snap the value up to a multiple of ``h`` (warning if it changed)
+        and require the geometry to clear the supergrid (``sponge`` per side),
+        raising otherwise.
 
         Inputs
         ------
@@ -404,22 +440,90 @@ class SW4Exporter:
             0 for x, 1 for y.
         mins, maxs : ndarray, shape (3,)
             Component-wise min/max of the active geometry.
+        clearance : float
+            Auto padding per side (``(gp + pad_gp) * h``).
+        sponge : float
+            Hard supergrid width per side (``gp * h``).
 
         Returns
         -------
         float
-            Length in metres.
+            Length in metres, a multiple of ``h``.
         """
+        h = float(self.config.h)
+        name = "x" if axis == 0 else "y"
         configured = self.config.x_domain if axis == 0 else self.config.y_domain
         extent = float(maxs[axis] - mins[axis])
         if configured is None:
-            length = np.ceil(max(extent, float(self.config.h)) / float(self.config.h)) * float(self.config.h)
-        else:
-            length = float(configured)
-            if extent > length + _COORD_TOL_M:
-                axis_name = "x" if axis == 0 else "y"
-                raise ValueError(f"size_domain {axis_name}={length} does not contain active geometry extent {extent}.")
-        return float(length)
+            return _snap_up_to_h(max(extent, h) + 2.0 * clearance, h)
+
+        length = float(configured)
+        snapped = _snap_up_to_h(length, h)
+        if snapped > length + _COORD_TOL_M:
+            warnings.warn(
+                f"{name}_domain={length:g} is not a multiple of h={h:g}; "
+                f"snapped up to {snapped:g}.",
+                stacklevel=3,
+            )
+            length = snapped
+        if extent + 2.0 * sponge > length + _COORD_TOL_M:
+            raise ValueError(
+                f"{name}_domain={length:g} m does not leave room for the "
+                f"supergrid: the active geometry spans {extent:g} m and needs "
+                f"at least {extent + 2.0 * sponge:g} m "
+                f"({sponge:g} m clearance per side, supergrid_gp="
+                f"{int(self.config.supergrid_gp)}, h={h:g}). "
+                f"Pass {name}=None to size it automatically."
+            )
+        return length
+
+    def _resolve_z_domain(self, deepest_source_m, clearance, sponge):
+        """Vertical box extent, supergrid- and half-space-aware.
+
+        The box must reach below both the deepest source and the deepest
+        material interface, leaving the bottom supergrid clear. ``z=None``
+        sizes it automatically (snapped up to a multiple of ``h``); a pinned
+        value is validated and rejected when too shallow. The free surface at
+        z=0 carries no supergrid, so only the bottom is padded.
+
+        Inputs
+        ------
+        deepest_source_m : float
+            Deepest active point in z (m).
+        clearance : float
+            Auto padding below the deepest feature (``(gp + pad_gp) * h``).
+        sponge : float
+            Hard bottom supergrid width (``gp * h``).
+
+        Returns
+        -------
+        float
+            z extent in metres, a multiple of ``h``.
+        """
+        h = float(self.config.h)
+        deepest_feature = max(float(deepest_source_m), deepest_interface(self.model._crust))
+        if self.config.z_domain is None:
+            return _snap_up_to_h(deepest_feature + clearance, h)
+
+        z_domain = float(self.config.z_domain)
+        snapped = _snap_up_to_h(z_domain, h)
+        if snapped > z_domain + _COORD_TOL_M:
+            warnings.warn(
+                f"z_domain={z_domain:g} is not a multiple of h={h:g}; "
+                f"snapped up to {snapped:g}.",
+                stacklevel=3,
+            )
+            z_domain = snapped
+        z_min_required = deepest_feature + sponge
+        if z_domain + _COORD_TOL_M < z_min_required:
+            raise ValueError(
+                f"z_domain={z_domain:g} m is too shallow: the deepest feature "
+                f"(source/interface) is at {deepest_feature:g} m and the bottom "
+                f"supergrid needs {sponge:g} m below it (>= {z_min_required:g} m "
+                f"total, supergrid_gp={int(self.config.supergrid_gp)}, h={h:g}). "
+                f"Pass z=None to size it automatically."
+            )
+        return z_domain
 
     def _store_domain_in_config(self, x_domain, y_domain, z_domain, transform):
         """Copy the resolved domain/origin back onto the config object.
