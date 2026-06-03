@@ -23,9 +23,12 @@ class SW4ExportConfig:
     h : float
         SW4 grid spacing in metres. Default ``50``.
     x_domain, y_domain, z_domain : float, optional
-        SW4 box extents in metres. When ``None``, the exporter sizes the
-        box from the model and topography bounds. ``z_domain`` is required
-        either directly or via ``size_domain``.
+        SW4 box extents in metres. When ``None`` (per axis), the exporter
+        sizes that axis automatically so the geometry clears the supergrid
+        (laterally) and the box reaches below the deepest source and material
+        interface (vertically). When given, the value is validated against the
+        same clearance and rejected if it does not fit. All three may be
+        ``None``.
     x_origin, y_origin, z_origin : float
         Position of the ShakerMaker origin in SW4 local metres. Filled in
         by the exporter; supplying it has no effect.
@@ -41,6 +44,18 @@ class SW4ExportConfig:
         ``rec`` output files. Default ``"shakermaker2sw4_fileio"``.
     supergrid_gp : int
         Width of the SW4 supergrid layer in grid points. Default ``30``.
+    supergrid_pad_gp : int
+        Extra clearance, in grid points, kept between the active geometry and
+        the inner edge of the supergrid when an axis is sized automatically
+        (axis value left ``None``). The total auto clearance per side is
+        ``(supergrid_gp + supergrid_pad_gp) * h``. Default ``10``.
+    interface_blocks : bool
+        Emit one thin effective-medium ``block`` per internal material
+        interface (harmonic average of mu/lambda, arithmetic average of rho).
+        Default ``True``.
+    interface_block_delta : float
+        Half-thickness in metres of each interface block (``z1=z_k-delta``,
+        ``z2=z_k+delta``). Must be ``< h/2``. Default ``1.0``.
     station_prefix : str
         Filename prefix used in every ``file=`` field. Default ``"sf"``.
     topo_file : str or Path, optional
@@ -86,6 +101,9 @@ class SW4ExportConfig:
     size_domain: Optional[Sequence[float]] = None
     fileio_path: str = "shakermaker2sw4_fileio"
     supergrid_gp: int = 30
+    supergrid_pad_gp: int = 10
+    interface_blocks: bool = True
+    interface_block_delta: float = 1.0
     station_prefix: str = "sf"
     topo_file: Optional[str | Path] = None
     topo_zmax: Optional[float] = None
