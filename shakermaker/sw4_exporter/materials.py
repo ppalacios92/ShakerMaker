@@ -13,6 +13,9 @@ grid the node sitting exactly on a material discontinuity must carry a single
 value; the effective medium centres the interface instead of staircasing it,
 which markedly improves accuracy at no extra cost. See the SW4 User's Guide
 (LOH.1 test case) for the recipe.
+
+The emitted lines carry inline comments (section headers and per-block
+labels) so the resulting ``.in`` file is self-describing.
 """
 
 import warnings
@@ -49,7 +52,7 @@ def deepest_interface(crust):
 
 
 def material_lines(crust, h=None, interface_blocks=False, interface_block_delta=1.0):
-    """Convert a ShakerMaker crust into SW4 ``block`` lines.
+    """Convert a ShakerMaker crust into commented SW4 ``block`` lines.
 
     The crust is iterated bottom-up so the SW4 input lists the deepest layer
     first. The bottommost layer is left without ``z1``/``z2`` so SW4 treats
@@ -59,6 +62,10 @@ def material_lines(crust, h=None, interface_blocks=False, interface_block_delta=
     interface is appended *after* the layer blocks (SW4 applies materials in
     order, last one wins, so the interface node correctly overrides the single
     grid plane at the discontinuity).
+
+    Each emitted block carries an aligned inline comment, and the two groups
+    are separated by a commented section header, so the ``.in`` file reads
+    cleanly.
 
     Inputs
     ------
@@ -79,13 +86,44 @@ def material_lines(crust, h=None, interface_blocks=False, interface_block_delta=
     Returns
     -------
     list of str
-        One ``block vp=... vs=... rho=... [z1=... z2=...]`` line per layer,
-        optionally followed by one interface ``block`` per internal interface.
-        Values are in SI units (m/s and kg/m^3) as SW4 expects.
+        Commented header(s) and one ``block`` line per layer, optionally
+        followed by an interface section. Values are in SI units (m/s and
+        kg/m^3) as SW4 expects.
     """
-    lines = []
     depth_tops = np.concatenate(([0.0], np.cumsum(crust.d[:-1])))
-    for i in range(crust.nlayers - 1, -1, -1):
+    layer_entries = _layer_block_entries(crust, depth_tops)
+    interface_entries = (
+        _interface_block_entries(crust, depth_tops, h, interface_block_delta)
+        if interface_blocks else []
+    )
+
+    lines = ["# --- actual layers (applied in order, the last one wins) ---"]
+    lines += _format_section(layer_entries)
+    if interface_entries:
+        lines.append("")
+        lines.append(
+            "# --- interface nodes (harmonic avg for mu,lambda ; arithmetic avg for rho) ---"
+        )
+        lines += _format_section(interface_entries)
+    return lines
+
+
+def _layer_block_entries(crust, depth_tops):
+    """``(block_line, comment)`` pairs for the crust layers, deepest first.
+
+    Inputs
+    ------
+    crust : CrustModel
+    depth_tops : ndarray
+        Per-layer top depths in km (``[0, d0, d0+d1, ...]``).
+
+    Returns
+    -------
+    list of (str, str)
+    """
+    n = crust.nlayers
+    entries = []
+    for i in range(n - 1, -1, -1):
         vp = crust.a[i] * 1000.0
         vs = crust.b[i] * 1000.0
         rho = crust.rho[i] * 1000.0
@@ -96,15 +134,22 @@ def material_lines(crust, h=None, interface_blocks=False, interface_block_delta=
             if z1 > 0:
                 line += f" z1={z1:.16g}"
             line += f" z2={z2:.16g}"
-        lines.append(line)
 
-    if interface_blocks:
-        lines += _interface_block_lines(crust, depth_tops, h, interface_block_delta)
-    return lines
+        if i == n - 1:
+            comment = (
+                f"base / half-space (z > {deepest_interface(crust):.16g})"
+                if n > 1 else "half-space"
+            )
+        elif i == 0:
+            comment = "layer 1 (top)"
+        else:
+            comment = f"layer {i + 1}"
+        entries.append((line, comment))
+    return entries
 
 
-def _interface_block_lines(crust, depth_tops, h, delta):
-    """Effective-medium ``block`` lines, one per internal interface.
+def _interface_block_entries(crust, depth_tops, h, delta):
+    """``(block_line, comment)`` pairs for the effective-medium interface nodes.
 
     Harmonic average for the Lame parameters (mu, lambda), arithmetic average
     for density. Interfaces that do not coincide with a grid node are skipped
@@ -123,7 +168,7 @@ def _interface_block_lines(crust, depth_tops, h, delta):
 
     Returns
     -------
-    list of str
+    list of (str, str)
     """
     if h is None:
         warnings.warn(
@@ -143,8 +188,9 @@ def _interface_block_lines(crust, depth_tops, h, delta):
             stacklevel=3,
         )
 
-    out = []
-    for i in range(1, crust.nlayers):
+    n = crust.nlayers
+    entries = []
+    for i in range(1, n):
         # Interface between layer i-1 (above) and layer i (below).
         z_k = float(depth_tops[i]) * 1000.0
 
@@ -179,10 +225,29 @@ def _interface_block_lines(crust, depth_tops, h, delta):
         vs_i = np.sqrt(mu_i / rho_i)
         vp_i = np.sqrt((lam_i + 2.0 * mu_i) / rho_i)
 
-        z1 = z_k - delta
-        z2 = z_k + delta
-        out.append(
+        line = (
             f"block vp={vp_i:.16g} vs={vs_i:.16g} rho={rho_i:.16g} "
-            f"z1={z1:.16g} z2={z2:.16g}"
+            f"z1={z_k - delta:.16g} z2={z_k + delta:.16g}"
         )
-    return out
+        below = "base" if i == n - 1 else f"layer{i + 1}"
+        comment = f"interface layer{i}/{below} @ z={z_k:.16g}"
+        entries.append((line, comment))
+    return entries
+
+
+def _format_section(entries):
+    """Render ``(line, comment)`` pairs with the comments aligned in a column.
+
+    Inputs
+    ------
+    entries : list of (str, str)
+
+    Returns
+    -------
+    list of str
+        ``"<block padded to the section width>  # <comment>"``.
+    """
+    if not entries:
+        return []
+    width = max(len(line) for line, _ in entries)
+    return [f"{line.ljust(width)}  # {comment}" for line, comment in entries]
