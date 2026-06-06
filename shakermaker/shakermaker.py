@@ -199,6 +199,167 @@ class ShakerMaker:
     # run()  --  direct pair-by-pair, no database  (debug / legacy method)
     # =========================================================================
 
+    def check_parameters(self, dt, nfft, dk, tb, tmax=100., tmin=0.,
+                         kc=15.0, taper=0.9, smth=1,
+                         fem_fmax=5.0, n_per_wavelength=10, coda=10.0):
+        """Quick pre-run sanity check of the numerical parameters against the
+        model geometry. Prints a report with recommended values and returns
+        them. Pure arithmetic (no FK run), so call it right after building the
+        model::
+
+            model = ShakerMaker(crust, fault, stations)
+            model.check_parameters(dt=dt, nfft=nfft, dk=dk, tb=tb, tmax=tmax)
+
+        These are sanity checks, not hard gates. The report is COHERENT: every
+        condition that lowers ``passed`` is printed in the RESULT block, and no
+        printed number is misleading. Geometry mirrors what the FK core actually
+        uses (``subgreen.f`` / ``subfk.f``): the crust thickness ``hs_total`` and
+        ``xmax = max(hs_total, r)`` for the wavenumber step, and the taper
+        cosine low-pass for the usable band.
+
+        :param taper: low-pass taper (same default as run()); sets the band.
+        :param smth: output up-sampling factor (dt_out = dt/smth).
+        :param fem_fmax: target max frequency (Hz) for the FEM mesh advice.
+        """
+        # --- geometry (km), read straight from the model --------------------
+        ns = self._source.nsources
+        nr = self._receivers.nstations
+        src = np.array([self._source.get_source_by_id(j).x for j in range(ns)], dtype=float)
+        rec = np.array([self._receivers.get_station_by_id(i).x for i in range(nr)], dtype=float)
+        tt  = np.array([self._source.get_source_by_id(j).tt for j in range(ns)], dtype=float)
+
+        r     = np.sqrt((src[:, None, 0] - rec[None, :, 0]) ** 2 +
+                        (src[:, None, 1] - rec[None, :, 1]) ** 2)         # horizontal (km)
+        dz    = np.abs(src[:, None, 2] - rec[None, :, 2])                 # vertical (km)
+        slant = np.sqrt(r ** 2 + dz ** 2)                                # 3D (km)
+
+        r_max    = float(r.max())
+        t0_max   = float(tt.max())
+        hs_total = float(self._crust.d.sum())        # crust thickness = FK 'hs'
+        Vp_max   = float(self._crust.a.max())        # km/s
+        Vs_min   = float(self._crust.b.min())        # km/s
+        Vray     = 0.92 * Vs_min                     # Rayleigh-ish slow tail
+
+        # per-pair arrival proxies (sizing only, not ray-traced)
+        tP_pair = slant / Vp_max                          # earliest first arrival
+        surf    = tt[:, None] + r / Vray                  # slow surface-wave tail
+        first_arrival = float((tt[:, None] + tP_pair).min())
+        last_arrival  = float(surf.max()) + coda          # end of useful signal
+
+        # hypocenter S-P, for the header context only (NOT a gate)
+        ih = int(np.argmin(tt))
+        d_hyp = float(slant[ih].min())
+        cum = np.cumsum(self._crust.d)
+        k = min(int(np.searchsorted(cum, src[ih, 2], side='right')), self._crust.nlayers - 1)
+        Vp_h, Vs_h = float(self._crust.a[k]), float(self._crust.b[k])
+        sp_hyp = d_hyp / Vs_h - d_hyp / Vp_h
+
+        def _pow2(n):  return (n & (n - 1)) == 0 and n > 0
+        def _next2(x): return 1 << int(np.ceil(np.log2(max(x, 1.0))))
+
+        # --- dt / usable band (informational; taper sets the real band) -----
+        f_nyq  = 1.0 / (2.0 * dt)
+        f_pass = (1.0 - taper) * f_nyq            # flat passband edge
+        f_half = (1.0 - taper / 2.0) * f_nyq      # half-amplitude (usable band)
+        lam_util = Vs_min * 1000.0 / f_half
+        dt_out = dt / smth
+
+        # --- dk : geometry as the Fortran uses it ---------------------------
+        xmax   = np.maximum(r, hs_total)                       # subgreen.f floor = hs_total
+        Nstat  = kc * xmax / (np.pi * hs_total * dk)           # pts to evanescent cutoff
+        N_min  = float(Nstat.min())
+        dk_ok  = (dk < 0.5) and (N_min >= 10)
+        dk_reco = min(0.40, kc * float(xmax.min()) / (np.pi * hs_total * 15.0))
+        L_per   = 2.0 * xmax / dk                              # spatial period (km)
+        t_img   = float(((L_per - r) / Vray).min())            # nearest image arrival (s, info)
+
+        # --- nfft : record must hold the per-pair signal; must be power of 2 -
+        T_rec  = nfft * dt
+        pad    = tb * dt
+        T_sig  = (last_arrival - first_arrival) + pad          # needed record length
+        T_need = max(T_sig, (tmax - first_arrival) + pad)
+        nfft_reco = _next2(T_need / dt)
+        p2_ok  = _pow2(int(nfft))
+        len_ok = T_rec >= T_sig
+        nfft_ok = p2_ok and len_ok
+
+        # --- tb : pre-arrival pad; judged against a VALID record ------------
+        tb_min  = max(1, int(np.ceil(1.0 / dt)))               # >= 1 s pre-roll
+        Lwin    = float((surf - (tt[:, None] + tP_pair)).max()) + coda
+        T_valid = max(T_rec, nfft_reco * dt)
+        tb_max  = int((T_valid - Lwin) / dt)
+        tb_ok   = (tb >= tb_min) and (tb <= tb_max)
+        tb_reco = int(np.clip(round(2.0 / dt), tb_min, max(tb_min, tb_max)))
+
+        # --- tmax / tmin : coherent with the record window ------------------
+        end_rec   = first_arrival - pad + T_rec
+        tmax_fits = tmax <= end_rec
+        tmin_ok   = 0.0 <= tmin < tmax
+        tmax_ok   = tmax_fits and tmin_ok
+
+        # --- FEM mesh advice (downstream SW4/FEM; advisory only) ------------
+        lam_fem = Vs_min * 1000.0 / fem_fmax
+        dx_fem  = lam_fem / n_per_wavelength
+        dt_fem  = dx_fem / (Vp_max * 1000.0)
+
+        # --- report (rank 0 only) -------------------------------------------
+        T = lambda ok: "[OK]" if ok else "[WARN]"
+        if rank == 0:
+            print("=" * 60)
+            print("[ShakerMaker] PRE-RUN PARAMETER CHECK")
+            print(f"  geometry: {ns} sources, {nr} receiver(s) | r_max = {r_max:.1f} km")
+            print(f"            source depth {src[:,2].min():.1f}-{src[:,2].max():.1f} km | "
+                  f"t0_max = {t0_max:.2f} s | hypocenter S-P = {sp_hyp:.2f} s")
+            print(f"            crust hs_total = {hs_total:.1f} km | "
+                  f"Vs_min = {Vs_min*1000:.0f} m/s | Vp_max = {Vp_max*1000:.0f} m/s | V_Ray = {Vray:.2f} km/s")
+            print(f"            signal window ~ [{first_arrival:.1f}, {last_arrival:.1f}] s")
+            print("-" * 60)
+            print(f" dt   = {dt} s   [info]")
+            print(f"   f_Nyq = 1/(2*dt)             ;  {f_nyq:.0f} Hz   (dt_out = dt/smth = {dt_out*1000:.2f} ms)")
+            print(f"   usable band (taper={taper})   ;  flat <= {f_pass:.0f} Hz, half-amp ~ {f_half:.0f} Hz")
+            print(f"   lambda_util = Vs_min/f_half  ;  {Vs_min*1000:.0f}/{f_half:.0f} = {lam_util:.2f} m")
+            print("")
+            print(f" dk   = {dk}   {T(dk_ok)}")
+            print(f"   N = kc*xmax/(pi*hs_total*dk) ;  min over pairs = {N_min:.0f}   (need >= 10)")
+            print(f"   >> recommend dk = {dk_reco:.3f}")
+            print(f"   [info] spatial period L=2*xmax/dk -> nearest image at ~{t_img:.0f} s (keep > tmax)")
+            print("")
+            print(f" tb   = {tb} samp   {T(tb_ok)}")
+            print(f"   pad = tb*dt = {pad:.2f} s   ;  sane window tb in [{tb_min}, {tb_max}]")
+            print(f"   >> recommend tb = {tb_reco}")
+            print("")
+            print(f" nfft = {nfft}   {T(nfft_ok)}")
+            print(f"   T_rec = nfft*dt = {T_rec:.1f} s   ;  needs >= signal {T_sig:.1f} s   (pow2: {p2_ok})")
+            print(f"   >> recommend nfft = {nfft_reco}  (T_rec = {nfft_reco*dt:.1f} s); or raise dt if band allows")
+            print("")
+            print(f" tmax = {tmax} s   {T(tmax_ok)}")
+            print(f"   tmax <= end_of_record       ;  {tmax} <= {end_rec:.1f}   (tmin = {tmin}, need 0<=tmin<tmax)")
+            print("")
+            print(f" FEM mesh (advisory, for SW4/FEM)                f_max = {fem_fmax} Hz")
+            print(f"   lambda = (Vs)_min/f_max      ;  {Vs_min*1000:.0f}/{fem_fmax:.0f} = {lam_fem:.0f} m")
+            print(f"   dx <= lambda/n               ;  {lam_fem:.0f}/{n_per_wavelength} = {dx_fem:.1f} m")
+            print(f"   dt <= dx/(Vp)_max            ;  {dx_fem:.1f}/{Vp_max*1000:.0f} = {dt_fem:.4f} s")
+            print("-" * 60)
+            warns = []
+            if not dk_ok:
+                warns.append(f"dk   {dk} -> use {dk_reco:.3f}  (N_min={N_min:.0f})")
+            if not tb_ok:
+                if tb < tb_min: warns.append(f"tb   {tb} -> use {tb_reco}  (pad too small)")
+                else:           warns.append(f"tb   {tb} -> use <= {tb_max}  (pushes tail out of record)")
+            if not nfft_ok:
+                why = "not power of 2" if not p2_ok else f"record {T_rec:.1f}s < signal {T_sig:.1f}s"
+                warns.append(f"nfft {nfft} -> use {nfft_reco}  ({why})")
+            if not tmax_ok:
+                if not tmin_ok: warns.append(f"tmin {tmin} -> need 0 <= tmin < tmax")
+                else:           warns.append(f"tmax {tmax} -> end of record is {end_rec:.1f}s (raise nfft or lower tmax)")
+            print(f" RESULT: {len(warns)} warning(s)" if warns else " RESULT: all checks passed")
+            for w in warns:
+                print("   " + w)
+            print("=" * 60)
+
+        return {"passed": bool(dk_ok and tb_ok and nfft_ok and tmax_ok),
+                "recommended": {"dk": round(dk_reco, 3), "tb": tb_reco, "nfft": nfft_reco}}
+
     def run(self,
             dt=0.05,
             nfft=4096,
