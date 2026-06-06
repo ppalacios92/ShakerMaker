@@ -17,7 +17,9 @@ model.run(dt=0.005, nfft=2048, dk=0.1, tb=500)
 
 These come straight from the FK sampling theory, each one has a physical
 meaning, not just a knob. Defaults cover the standard case ($f_\text{max}
-\approx 10$ Hz, $r \le 50$ km).
+\approx 10$ Hz, $r \le 50$ km). For the full derivation of every parameter,
+the source-line citations, and the `check_parameters` pre-flight, see the
+[**FK parameters reference**](parameters.md).
 
 | Param | Default | Units | Meaning | Turn it ↑ when… |
 |---|---|---|---|---|

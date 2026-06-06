@@ -115,6 +115,7 @@ nav:
       - Source time functions: guides/source_time_functions.md
       - Receivers: guides/receivers.md
       - Running a simulation: guides/running.md
+      - FK parameters reference: guides/parameters.md
       - Domain Reduction Method: guides/drm.md
       - FFSP stochastic rupture: guides/ffsp.md
       - Outputs & writers: guides/outputs.md
