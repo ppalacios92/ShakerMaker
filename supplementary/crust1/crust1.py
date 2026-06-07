@@ -12,6 +12,13 @@ import matplotlib.patches as mpatches
 from matplotlib.colors import ListedColormap
 
 
+CRUST1_CITATION = (
+    "CRUST 1.0 crustal model - Laske, G., Masters, G., Ma, Z. & Pasyanos, M. "
+    "(2013), Update on CRUST1.0. Data: https://igppweb.ucsd.edu/~gabi/crust1.html "
+    "(obtained there and adapted for use within ShakerMaker; please cite the source)."
+)
+
+
 LAYER_NAMES = ['water', 'ice', 'upper sed', 'middle sed', 'lower sed',
                'upper crust', 'middle crust', 'lower crust', 'mantle']
 
@@ -80,6 +87,7 @@ class Crust1:
     # Construction / loading
     # ------------------------------------------------------------
     def __init__(self, data_dir=None):
+        print(CRUST1_CITATION)
         self.data_dir = (Path(data_dir) if data_dir else
                          Path(__file__).parent / "crust1.0")
         self.nlat, self.nlon, self.nlayers = 180, 360, 9

@@ -5,7 +5,7 @@ cls
 :MENU
 echo.
 echo  +==========================================================+
-echo  ^| LARGA VIDA AL LADRUNO ShakerMaker - Windows Setup Menu  ^|
+echo  ^|             ShakerMaker - Windows Setup Menu            ^|
 echo  +==========================================================+
 echo  ^|                                                          ^|
 echo  ^|   [1]  Step 1 - Install Prerequisites                   ^|
@@ -71,7 +71,7 @@ echo  --- Step 3 ---
 PowerShell -ExecutionPolicy Bypass -File "%~dp003_shakermaker_build.ps1" -NonInteractive
 if errorlevel 1 ( echo  [!!] Step 3 failed. Stopping. & pause & goto MENU )
 echo.
-echo  All steps complete. LARGA VIDA AL LADRUNO
+echo  All steps complete.
 pause
 goto MENU
 
