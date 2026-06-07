@@ -225,32 +225,43 @@ The three-stage pipeline (`gen_pairs()` → `compute_gf()` → `run_fast()`) sep
 
 ## Examples
 
-The `examples/` folder contains a sequentially numbered set of scripts (0–9)
-plus supplementary demos in `cloud_points/` and `other_utils/`.
+The [`examples/`](examples) folder is organised by **topic**, one folder per
+concept. Each script is a small, self-contained input → result; most end in
+`print("PASS")` so they double as smoke tests. A full walkthrough lives in the
+[documentation site](https://ppalacios92.github.io/ShakerMaker/examples/).
 
-| # | Script | What it shows |
-|---|--------|--------------|
-| 0 | `example0_readme_example.py` | Two-layer crust, strike-slip point source, single station, `ZENTPlot` |
-| 1 | `example1_simple.py` | Pre-packaged LOH.1 crust, shallow source, filter parameters |
-| 2 | `example2_LOH1.py` | Gaussian STF, LOH.1-style source, 3 stations, saves `.npz` per station |
-| 3 | `example3_drm.py` | DRM box with `DRMHDF5StationListWriter`, writes `motions.h5drm` |
-| 4 | `example4_save_station.py` | Custom crust, thrust mechanism, saves station to `mystation.npz` |
-| 5 | `example5_load_station.py` | Loads `.npz` back into a `Station`, interactive plot |
-| 6 | `example6_explore_green.py` | Direct `subgreen()` call — explore Green's functions with multi-offset |
-| 7 | `example7_drm_vs_direct.py` | Toggle `do_DRM` to compare DRM vs direct at a single point |
-| 8 | `example8_ffsp.py` | FFSP stochastic finite fault rupture (Mw 6.5), writes `.h5` + ASCII |
-| 9 | `example9_stf.py` | Gallery of all 5 STF types; saves figures to `docs/source/images/` |
-| — | `cloud_points/cp01`–`cp06` | Station-array pattern demos (DRM box, surface grid, cross, line, circle, random) |
-| — | `other_utils/build_h5drm_from_sw4_case.py` | Build `.h5drm` from an SW4 case directory |
+| Folder | Topic | Highlights |
+|--------|-------|-----------|
+| `01_crustmodel/` | Layered velocity models | `crustmodel_build.py`, `crust1_sites.py` (CRUST1.0) |
+| `02_sources/` | Moment-tensor sources | `pointsource.py`, `faultsource_srf2.py` |
+| `03_stf/` | Source time functions | `stf_gallery.py` (Dirac, Discrete, Brune, Gaussian, SRF2) |
+| `04_receivers/` | Receiver layouts | `single_station.py`, `drmbox.py`, `surface_grid.py`, `pointcloud_drm.py` |
+| `05_engine_direct/` | Classic FK pipeline | `run_simple.py`, `check_parameters.py`, `core_subgreen.py` |
+| `06_nearest_method/` | Green's-function reuse | `nearest_all.py`, `stage_by_stage.py`, `legacy_migration.py` |
+| `07_writers/` | Persisting results | `hdf5_writer.py`, `drm_writer.py`, `save_load_station.py`, `explore_h5_output.py` |
+| `08_drm/` | Domain Reduction Method | `drm_vs_direct.py`, `export_drm_geometry.py` |
+| `09_sw4_export/` | SW4 finite-difference export | `export_sw4.py`, `export_sw4_topo.py`, `package_h5_roundtrip.py`, `build_h5drm_from_sw4.py` |
+| `10_ffsp/` | Stochastic finite faults | `ffsp_run.py`, `ffsp_io.py` |
+| `11_plotting/` | Plotting helpers | `plotting_tools.py` |
+| `12_validation/` | SCEC LOH.1 benchmark | `LOH1.py`, `LOH1_check.py` |
+| `legacy_examples/` | José Abell's original upstream examples (kept unmodified for regression) |
 
-> A detailed reference is maintained in [`examples/readme_pxp.md`](examples/readme_pxp.md).
+Every folder ships a `notebooks/` subdirectory whose `.ipynb` files re-run the
+same recipes interactively and save `.png` previews next to them.
 
-### Example 0: Quick Start
+Run everything at once with the smoke runner:
+
+```bash
+cd examples
+python run_all_smoke.py          # fast subset (reports PASS / SKIP / FAIL)
+python run_all_smoke.py --full   # also run the slow 12_validation cases
+```
+
+### Quick start
 
 A two-layer crustal model with a strike-slip point source at 4 km depth
-and a single receiver 5 km north. Results plotted with `ZENTPlot`.
-
-[`examples/example0_readme_example.py`](examples/example0_readme_example.py)
+and a single receiver, plotted with `ZENTPlot`
+(see `examples/legacy_examples/example0_readme_example.py`):
 
 ```python
 from shakermaker.shakermaker import ShakerMaker
@@ -276,247 +287,6 @@ model.run()
 
 ZENTPlot(s, xlim=[0, 60], show=True)
 ```
-
----
-
-### Example 1: Simple LOH.1 Model
-
-Uses the pre-packaged SCEC LOH.1 crustal model with a shallow source at
-1 km depth. Demonstrates filter parameters and custom output settings
-(`dt`, `nfft`, `dk`, `tb`).
-
-[`examples/example1_simple.py`](examples/example1_simple.py)
-
-```python
-from shakermaker import shakermaker
-from shakermaker.cm_library.LOH import SCEC_LOH_1
-from shakermaker.pointsource import PointSource
-from shakermaker.faultsource import FaultSource
-from shakermaker.station import Station
-from shakermaker.stationlist import StationList
-from shakermaker.tools.plotting import ZENTPlot
-
-crust = SCEC_LOH_1()
-source = PointSource([0, 0, 1.0], [0., 45., 0.])
-fault = FaultSource([source], metadata={"name": "source"})
-s = Station([1., 1., 0.],
-    metadata={"name": "Your House", "filter_results": True,
-              "filter_parameters": {"fmax": 10.}})
-stations = StationList([s], metadata=s.metadata)
-
-model = shakermaker.ShakerMaker(crust, fault, stations)
-model.run(dt=0.005, nfft=2048, dk=0.1, tb=500)
-ZENTPlot(s, show=True, xlim=[0, 3])
-```
-
----
-
-### Example 2: LOH.1 with Gaussian STF
-
-Three stations at varying distances and depths from a strike-slip source
-with a Gaussian source time function. Stations saved individually to `.npz`.
-
-[`examples/example2_LOH1.py`](examples/example2_LOH1.py)
-
-```python
-from shakermaker.stf_extensions.gaussian import Gaussian
-
-stf = Gaussian(t0=0.36, freq=1/0.06, M0=1e18/5e14/2, derivative=False)
-source = PointSource([0, 0, 2.0], [0., 90., 0.], stf=stf)
-
-s1 = Station([8.0, 8.0, 0.0], metadata={"name": "sta01", "save_gf": True})
-s2 = Station([6.0, 8.0, 0.0], metadata={"name": "sta02", "save_gf": True})
-s3 = Station([4.0, 4.0, 0.5], metadata={"name": "sta03", "save_gf": True})
-stations = StationList([s1, s2, s3], {})
-
-model = shakermaker.ShakerMaker(crust, fault, stations)
-model.run(dt=0.005, nfft=4096, tb=20, smth=1, dk=0.025, verbose=True)
-
-s1.save("sta01.npz")
-```
-
----
-
-### Example 3: DRM Box with Brune STF
-
-Defines a DRM box with 10×10×4 stations around a strike-slip source at
-1 km depth. Uses a Brune STF at 2 Hz and writes results directly to
-`motions.h5drm`.
-
-[`examples/example3_drm.py`](examples/example3_drm.py)
-
-```python
-from shakermaker.slw_extensions import DRMHDF5StationListWriter
-from shakermaker.sl_extensions import DRMBox
-
-stf = Brune(f0=2., t0=0.)
-source = PointSource([0, 0, 1.0], [0., 90., 0.], tt=0, stf=stf)
-fault = FaultSource([source], metadata={"name": "fault"})
-
-crust = CrustModel(1)
-crust.add_layer(0., 6.0, 3.5, 2.7, 10000., 10000.)
-
-fmax = 10.
-drm = DRMBox([10., 10., 0.], [10, 10, 4],
-             [3.5/fmax/15]*3,
-             metadata={"name": "example3"})
-
-writer = DRMHDF5StationListWriter("motions.h5drm")
-model = shakermaker.ShakerMaker(crust, fault, drm)
-model.run(dt=1/(2*fmax), nfft=2048, tb=500, dk=0.1, writer=writer)
-```
-
----
-
-### Example 4: Save Stations to NPZ
-
-Builds a custom crust, runs a thrust-fault source at 1 km depth, and
-saves the computed ground motion to a `.npz` file.
-
-[`examples/example4_save_station.py`](examples/example4_save_station.py)
-
-```python
-model.run(dt=0.05, nfft=4096//8, dk=0.02, tb=100)
-s.save("mystation.npz")
-ZENTPlot(s, show=True)
-```
-
----
-
-### Example 5: Load Stations from NPZ
-
-Loads a previously saved `.npz` file back into a `Station` and
-visualises the three-component seismogram.
-
-[`examples/example5_load_station.py`](examples/example5_load_station.py)
-
-```python
-from shakermaker.station import Station
-from shakermaker.tools.plotting import ZENTPlot
-
-s = Station()
-s.load("mystation.npz")
-ZENTPlot(s, show=True)
-```
-
----
-
-### Example 6: Direct Green's Function Exploration
-
-Calls `shakermaker.core.subgreen` directly to explore how Green's
-functions vary with small source–receiver offset perturbations.
-Useful for understanding the FK engine internals.
-
-[`examples/example6_explore_green.py`](examples/example6_explore_green.py)
-
-```python
-from shakermaker.core import subgreen
-
-tdata, z, e, n, t0 = subgreen(
-    mb, src, rcv, stype, updn,
-    d, a, b, rho, qa, qb,
-    dt, nfft, tb, nx, sigma, smth,
-    wc1, wc2, pmin, pmax, dk, kc, taper,
-    x, pf, df, lf,
-    sx, sy, rx, ry
-)
-```
-
----
-
-### Example 7: DRM vs Direct Comparison
-
-Toggle the `do_DRM` flag to compare boundary-method (DRM) vs direct
-computation at a single station. A 30×30×12 DRM box with a Brune STF
-at 20 Hz corner frequency; also plots FFT spectra.
-
-[`examples/example7_drm_vs_direct.py`](examples/example7_drm_vs_direct.py)
-
-```python
-ZENTPlot(station, show=False, integrate=1)
-ZENTPlot(station, show=False, differentiate=1)
-```
-
----
-
-### Example 8: FFSP Stochastic Source
-
-Generates a Mw 6.5 stochastic finite fault rupture (256×128 subfaults
-on a 30×16 km fault). Exports results to HDF5 and legacy FFSP text
-format.
-
-[`examples/example8_ffsp.py`](examples/example8_ffsp.py)
-
-```python
-from shakermaker.ffspsource import FFSPSource
-
-source = FFSPSource(
-    id_sf_type=8, freq_min=0.01, freq_max=24.0,
-    fault_length=30.0, fault_width=16.0,
-    magnitude=6.5, ...
-)
-source.run()
-source.write_hdf5("results.h5")
-source.write_ffsp_format("FFSP_OUTPUT")
-```
-
----
-
-### Example 9: STF Gallery
-
-Plots all five ShakerMaker source time functions (Brune, Gaussian,
-SRF2, Dirac, Discrete) and saves the figures to `docs/source/images/`.
-The images are embedded earlier in this readme under the STF section.
-
-[`examples/example9_stf.py`](examples/example9_stf.py)
-
-```python
-from shakermaker.stf_extensions.brune import Brune
-from shakermaker.stf_extensions.gaussian import Gaussian
-# ... five independent figure blocks, each writing to docs/source/images/
-```
-
----
-
-### Supplementary: `view-dk.py`
-
-Batch-loads multiple `.npz` files and overlays their seismograms
-in a single figure.
-
-[`examples/view-dk.py`](examples/view-dk.py)
-
-```python
-files = glob.glob("dk*.npz")
-fig = plt.figure(1)
-for f in files:
-    s = Station()
-    s.load(f)
-    ZENTPlot(s, show=False, xlim=[0, 15], fig=fig, label=f)
-plt.legend()
-plt.show()
-```
-
----
-
-### Cloud Points (`examples/cloud_points/`)
-
-Six minimal scripts demonstrating station-array patterns used with
-ShakerMaker (no model run — each prints the station count):
-
-| File | Pattern |
-|------|---------|
-| `cp01_drmbox.py` | Regular 3D DRM box grid (`DRMBox`) |
-| `cp02_surface_grid.py` | Regular 2D grid on the free surface |
-| `cp03_cross_array.py` | Cross-shaped surface array (two perpendicular lines) |
-| `cp04_line_array.py` | Linear surface array |
-| `cp05_circular_array.py` | Ring / circular array |
-| `cp06_pointcloud.py` | Random irregular station distribution |
-
-### Other Utilities (`other_utils/`)
-
-| File | Purpose |
-|------|---------|
-| `build_h5drm_from_sw4_case.py` | Build an `.h5drm` file from an SW4 case directory; supports coordinate conversion from SW4-local km to ShakerMaker/UTM km |
 
 ---
 

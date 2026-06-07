@@ -1,3 +1,7 @@
+# NOTE: the Fortran/C extensions are built with f2py via numpy.distutils,
+# which was removed from Python's packaging tooling in Python 3.12. This
+# setup.py therefore only works on Python 3.8-3.11; building on Python >= 3.12
+# requires migrating to meson-python / scikit-build.
 from setuptools import setup
 from numpy.distutils.core import Extension, setup as np_setup
 import importlib.util
@@ -11,7 +15,13 @@ from setuptools.command.install import install as _install
 on_rtd = os.environ.get('READTHEDOCS') == 'True'
 
 name    = "shakermaker"
-version = "1.5"
+
+# Single source of truth for the package version: shakermaker/version.py
+_version_globals = {}
+with open(os.path.join(os.path.dirname(__file__), "shakermaker", "version.py")) as _vf:
+    exec(_vf.read(), _version_globals)
+version = _version_globals["shakermaker_version"]
+
 release = "0.01"
 author  = "Jose A. Abell, Jorge Crempien D., and Matias Recabarren"
 
@@ -184,8 +194,7 @@ np_setup(
     author  = author,
     author_email  = "info@joseabell.com",
     url           = "http://www.joseabell.com",
-    download_url  = "tbd",
-    description   = "README.md",
+    description   = "Physics-based earthquake ground motion synthesis (FK Green's functions + DRM).",
     long_description = """\
         shakermaker
         -------------------------------------
@@ -198,14 +207,14 @@ np_setup(
         "Programming Language :: Python",
         "Programming Language :: Python :: 3",
         "Programming Language :: Fortran",
-        "Development Status :: Released",
-        "Environment :: Other Environment",
-        "Intended Audience :: Savvy Earthquake Engineers",
+        "Development Status :: 5 - Production/Stable",
+        "Environment :: Console",
+        "Intended Audience :: Science/Research",
         "License :: GPL",
         "Operating System :: OS Independent",
-        "Topic :: TBD",
-        "Topic :: TBD2",
+        "Topic :: Scientific/Engineering :: Physics",
     ],
+    python_requires = ">=3.8,<3.12",
     package_dir = {'shakermaker': 'shakermaker'},
     packages = [
         "shakermaker",

@@ -493,7 +493,7 @@ class ShakerMaker:
                 debugMPI=debugMPI, tmin=tmin, tmax=tmax,
                 showProgress=showProgress, writer_mode=writer_mode)
 
-        title = f"ShakerMaker LADRUNO_numpy2 Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
+        title = f"ShakerMaker Run begin. {dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}"
         if rank == 0:
             print(f"\n\n{title}")
             print("-" * len(title))
@@ -823,7 +823,7 @@ class ShakerMaker:
         nstations = self._receivers.nstations
         N         = nstations * nsources          # total pairs
 
-        title = (f"¡LARGA VIDA AL LADRUNO_source_plots_h5! ShakerMaker Gen GF database pairs begin. "
+        title = (f"ShakerMaker Gen GF database pairs begin. "
                  f"{delta_h=} {delta_v_rec=} {delta_v_src=}")
         if rank == 0:
             print(f"\n\n{title}")
@@ -1080,7 +1080,7 @@ class ShakerMaker:
                 taper=taper, wc1=wc1, wc2=wc2, pmin=pmin, pmax=pmax,
                 dk=dk, nx=nx, kc=kc, verbose=verbose,
                 debugMPI=debugMPI, showProgress=showProgress)
-        title = (f"¡LARGA VIDA AL LADRUNO_source_plots_h5! ShakerMaker Gen Green's functions database begin. "
+        title = (f"ShakerMaker Gen Green's functions database begin. "
                  f"{dt=} {nfft=} {dk=} {tb=}")
 
         if rank == 0:
@@ -1339,7 +1339,7 @@ class ShakerMaker:
                 dk=dk, nx=nx, kc=kc, writer=writer, writer_mode=writer_mode,
                 verbose=verbose, debugMPI=debugMPI,
                 tmin=tmin, tmax=tmax, showProgress=showProgress)
-        title = (f"¡LARGA VIDA AL LADRUNO_source_plots_h5! ShakerMaker Run (Stage 2 - OP) begin. "
+        title = (f"ShakerMaker Run (Stage 2 - OP) begin. "
                  f"{dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}")
 
         if rank == 0:
@@ -1734,7 +1734,7 @@ class ShakerMaker:
         perf_time_begin = perf_counter()
 
         if rank == 0:
-            title = (f"¡LARGA VIDA AL LADRUNO_source_plots_h5! ShakerMaker run_nearest | stage={stage} | "
+            title = (f"ShakerMaker run_nearest | stage={stage} | "
                      f"{dt=} {nfft=} {dk=} {tb=} {tmin=} {tmax=}")
             print(f"\n\n{title}")
             print("-" * len(title))
@@ -1926,7 +1926,7 @@ class ShakerMaker:
         npairs_total = nstations * nsources
 
         if rank == 0:
-            title = (f"¡LARGA VIDA AL LADRUNO_source_plots_h5! ShakerMaker build_pair_to_slot_from_legacy_h5 -- "
+            title = (f"ShakerMaker build_pair_to_slot_from_legacy_h5 -- "
                      f"{h5_database_name}")
             print(f"\n\n{title}")
             print("-" * len(title))
@@ -2071,7 +2071,8 @@ class ShakerMaker:
 
         Creates an HDF5 file with station coordinates and minimal synthetic
         data (2 samples, linear ramp 0 -> 10) for geometry inspection only.
-        Works with DRMBox and SurfaceGrid receiver lists.
+        Works with DRMBox, SurfaceGrid and PointCloudDRMReceiver receiver
+        lists.
 
         Parameters
         ----------
@@ -2089,8 +2090,8 @@ class ShakerMaker:
 
         if not isinstance(self._receivers, (DRMBox, SurfaceGrid, PointCloudDRMReceiver)):
             raise TypeError(
-                f"export_drm_geometry() requires DRMBox or SurfaceGrid. "
-                f"Got: {type(self._receivers).__name__}")
+                f"export_drm_geometry() requires DRMBox, SurfaceGrid or "
+                f"PointCloudDRMReceiver. Got: {type(self._receivers).__name__}")
 
         if rank != 0:
             return filename

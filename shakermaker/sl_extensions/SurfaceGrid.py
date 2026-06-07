@@ -42,7 +42,9 @@ class SurfaceGrid(StationList):
 
     def __init__(self, x0, nelems, h, mode='plane',
                  plane_x=None, plane_y=None, plane_z=None,
-                 metadata={}):
+                 metadata=None):
+        if metadata is None:
+            metadata = {}
         StationList.__init__(self, [], metadata)
 
         self._x0     = np.array(x0, dtype=float)
@@ -189,17 +191,25 @@ class SurfaceGrid(StationList):
                     self._new_station(origin + np.array([lx, j * hy, z]), False, f".right.{j}.{k}")
 
     def _save_metadata(self):
-        """Save metadata compatible with DRMBox."""
+        """Save metadata compatible with DRMBox.
+
+        The bounding-box keys use the ``drmbox_*`` prefix (not
+        ``surfacegrid_*``) so that consumers such as
+        :meth:`ShakerMaker.export_drm_geometry`, which look up ``drmbox_*``
+        keys, capture the SurfaceGrid geometry the same way they do for a
+        DRMBox. The grid-specific ``nelems`` and ``mode`` keep the
+        ``surfacegrid_*`` prefix because they have no DRMBox counterpart.
+        """
         self.metadata["h"]                    = self._h
-        self.metadata["surfacegrid_x0"]       = self._x0
+        self.metadata["drmbox_x0"]            = self._x0
         self.metadata["surfacegrid_nelems"]   = self._nelems
         self.metadata["surfacegrid_mode"]     = self._mode
-        self.metadata["surfacegrid_xmax"]     = self._xmax[0]
-        self.metadata["surfacegrid_ymax"]     = self._xmax[1]
-        self.metadata["surfacegrid_zmax"]     = self._xmax[2]
-        self.metadata["surfacegrid_xmin"]     = self._xmin[0]
-        self.metadata["surfacegrid_ymin"]     = self._xmin[1]
-        self.metadata["surfacegrid_zmin"]     = self._xmin[2]
+        self.metadata["drmbox_xmax"]          = self._xmax[0]
+        self.metadata["drmbox_ymax"]          = self._xmax[1]
+        self.metadata["drmbox_zmax"]          = self._xmax[2]
+        self.metadata["drmbox_xmin"]          = self._xmin[0]
+        self.metadata["drmbox_ymin"]          = self._xmin[1]
+        self.metadata["drmbox_zmin"]          = self._xmin[2]
 
 
 StationList.register(SurfaceGrid)

@@ -3,7 +3,7 @@ from shakermaker.shakermaker import ShakerMaker
 from shakermaker.crustmodel import CrustModel
 from shakermaker.pointsource import PointSource
 from shakermaker.faultsource import FaultSource
-from shakermaker.station import Station
+from shakermaker.station import Station, StationObserver
 from shakermaker.stationlist import StationList
 from shakermaker.stationlistwriter import StationListWriter
 from shakermaker.sourcetimefunction import SourceTimeFunction
@@ -11,6 +11,9 @@ from shakermaker.ffspsource import FFSPSource
 
 # Source time function extensions (lightweight, no heavy external dependencies)
 from shakermaker.stf_extensions import Dirac, Discrete, Brune, Gaussian, SRF2
+
+# Single source of truth for the package version (see shakermaker/version.py).
+from shakermaker.version import shakermaker_version as __version__
 
 __all__ = [
     "__version__",
@@ -69,6 +72,10 @@ BANNER = r"""
   Author   = Jose A. Abell, Jorge Crempien D., and Matias Recabarren
 
   Modified = Patricio Palacios B. | Nicolás Mora Bowen | José Abell | Ladruno Team - 2026
+
+  FK core: Lupei Zhu & Rivera - https://www.eas.slu.edu/People/LZhu/home.html
+  FFSP source: (c) 2005 Pengcheng Liu, modifications by Chen Ji (2020)
+  Code obtained from the original authors and adapted within ShakerMaker.
 """
 
 
@@ -82,6 +89,10 @@ FALLBACK_BANNER = """
 
   Author   = Jose A. Abell, Jorge Crempien D., and Matias Recabarren
   Modified = Patricio Palacios B. | Nicolás Mora Bowen | José Abell | Ladruno Team - 2026
+
+  FK core: Lupei Zhu & Rivera - https://www.eas.slu.edu/People/LZhu/home.html
+  FFSP source: (c) 2005 Pengcheng Liu, modifications by Chen Ji (2020)
+  Code obtained from the original authors and adapted within ShakerMaker.
 """
 
 

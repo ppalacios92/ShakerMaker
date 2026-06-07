@@ -2,11 +2,18 @@ import os
 import numpy as np
 from typing import Optional, Dict, List
 from .crustmodel import CrustModel
-import matplotlib.pyplot as plt
+
+FFSP_CITATION = (
+    "FFSP finite-fault source - (c) 2005 Pengcheng Liu; modifications by Chen Ji "
+    "(2020); based on Liu et al. (2006). Code obtained from the original authors "
+    "and adapted for use within ShakerMaker."
+)
+
 
 # Finite Fault Stochastic Process (FFSP) source model
 class FFSPSource:
-    """Finite Fault Stochastic Process source model (Liu & Archuleta)"""
+    """Finite Fault Stochastic Process source model (Pengcheng Liu, 2005;
+    modifications by Chen Ji, 2020)."""
     
     def __init__(self,
                  id_sf_type: int, freq_min: float, freq_max: float,
@@ -73,6 +80,8 @@ class FFSPSource:
         verbose : bool, optional
             Print progress messages
         """
+        if verbose:
+            print(FFSP_CITATION)
         
         if not isinstance(crust_model, CrustModel):
             raise TypeError("crust_model must be a CrustModel instance")
@@ -1017,12 +1026,12 @@ class FFSPSource:
         for filename in os.listdir(input_dir):
             if filename.endswith('.vel'):
                 vel_file = os.path.join(input_dir, filename)
-                if verbose:
+                if self.verbose:
                     print(f"  Found velocity file: {filename}")
                 break
 
         if vel_file is None:
-            raise FileNotFoundError(...)
+            raise FileNotFoundError(f"No .vel velocity file found in {input_dir}")
         from .crustmodel import CrustModel
         with open(vel_file, 'r') as f:
             line = f.readline().strip().split()
@@ -1261,7 +1270,7 @@ class FFSPSource:
                         params[key] = [int(x) for x in parts[1:5]]
                     elif key == 'seeds':
                         params[key] = [int(x) for x in parts[1:4]]
-                    elif key == 'output_name':  # ← AÑADE ESTO
+                    elif key == 'output_name':
                         params[key] = parts[1]
                     else:
                         params[key] = float(parts[1])
@@ -1276,7 +1285,7 @@ class FFSPSource:
                 break
 
          if vel_file is None:
-            raise FileNotFoundError(...)
+            raise FileNotFoundError(f"No .vel velocity file found in {input_dir}")
 
          with open(vel_file, 'r') as f:
             line = f.readline().strip().split()
@@ -1371,7 +1380,7 @@ class FFSPSource:
                 break
 
          if vel_file is None:
-            raise FileNotFoundError(...)
+            raise FileNotFoundError(f"No .vel velocity file found in {input_dir}")
          with open(vel_file, 'r') as f:
             line = f.readline().strip().split()
             nlayers = int(line[0])
@@ -1479,7 +1488,7 @@ class FFSPSource:
          params['pdip_max'] = float(parts[0])
          params['prake_max'] = float(parts[1])
          
-         # Line 9: nsubx nsuby (también en .list, pero leemos de ambos)
+         # Line 9: nsubx nsuby (also in .list, but read from both)
          parts = lines[8].strip().split()
          params['nsubx'] = int(parts[0])
          params['nsuby'] = int(parts[1])
@@ -1492,7 +1501,7 @@ class FFSPSource:
          parts = lines[10].strip().split()
          params['seeds'] = [int(x) for x in parts]
          
-         # Line 12: id_ran1 id_ran2 (lo contaremos de archivos)
+         # Line 12: id_ran1 id_ran2 (counted from output files)
          parts = lines[11].strip().split()
          params['id_ran1'] = int(parts[0])
          params['id_ran2'] = int(parts[1])
@@ -1747,7 +1756,8 @@ class FFSPSource:
     
     def plot_histogram(self, field='slip', bins=50, figsize=(7, 5)):
         """Plot histogram of field across all realizations."""
-        valid_fields = ['x', 'y', 'z', 'slip', 'rupture_time', 'rise_time', 
+        import matplotlib.pyplot as plt
+        valid_fields = ['x', 'y', 'z', 'slip', 'rupture_time', 'rise_time',
                        'peak_time', 'strike', 'dip', 'rake']
         if field not in valid_fields:
             raise ValueError(f"field must be one of {valid_fields}, got '{field}'")
@@ -1913,15 +1923,7 @@ class FFSPSource:
                     vmin=vmin, vmax=vmax)
 
         if rotate:
-            # plt.colorbar(im, label=field_labels[field], ax=ax,
-            #              orientation='horizontal', location='bottom',
-            #              shrink=0.8, pad=0.12)
             from mpl_toolkits.axes_grid1 import make_axes_locatable
-
-            # divider = make_axes_locatable(ax)
-            # cax = divider.append_axes("bottom", size="5%", pad=0.5)
-            # cbar = fig.colorbar(im, cax=cax, orientation='horizontal')
-            # cbar.set_label(field_labels[field], fontsize=10)
 
             divider = make_axes_locatable(ax)
             cax = divider.append_axes("right", size="5%", pad=0.15)
@@ -1951,8 +1953,6 @@ class FFSPSource:
             ax.scatter(hypo_x, hypo_y, c='red', s=300, marker='*', 
                        edgecolors='white', linewidth=2, label='Hypocenter', zorder=10)
         
-        # ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.1), ncol=2, frameon=True)
-
         ax.set_xlabel(xlabel)
         ax.set_ylabel(ylabel)
         ax.set_title(f'{field_labels[field]} Distribution', fontsize=11, fontweight='bold')
@@ -2113,21 +2113,22 @@ class FFSPSource:
             spine.set_visible(True)
         
         plt.tight_layout()
-        
+
         if save_fig:
-            plt.savefig(f'{model_name}_spatial_distribution.{image_type}', 
-                        format=image_type, 
-                        dpi=600, 
-                        bbox_inches='tight', 
+            plt.savefig(f'{model_name}_rupture_snapshot.{image_type}',
+                        format=image_type,
+                        dpi=600,
+                        bbox_inches='tight',
                         transparent=True,
                         facecolor='none')
-        
+
         plt.show()
 
 
 
     def plot_quality_metrics(self, figsize=(14, 5)):
         """Plot PDF and Spectral Error side by side."""
+        import matplotlib.pyplot as plt
         if self.source_stats is None:
             print("No source statistics available. Run simulation first.")
             return
@@ -2168,6 +2169,7 @@ class FFSPSource:
 
     def plot_temporal_metrics(self, figsize=(15, 5)):
         """Plot Rise Time, Peak Time, and Rupture Velocity."""
+        import matplotlib.pyplot as plt
         if self.source_stats is None:
             print("No source statistics available. Run simulation first.")
             return
@@ -2217,6 +2219,7 @@ class FFSPSource:
 
     def plot_spectral_comparison(self, figsize=(14, 6)):
         """Plot Moment Rate Spectrum and Octave-Averaged Spectrum side by side."""
+        import matplotlib.pyplot as plt
         if self.source_stats is None:
             print("No source statistics available. Run simulation first.")
             return
@@ -2260,6 +2263,7 @@ class FFSPSource:
     def plot_source_time_function(self, figsize=(10, 6),xlim=None,
                                 save_fig=False, model_name='source', image_type='png'):
         """Plot Source Time Function (STF)."""
+        import matplotlib.pyplot as plt
         if self.source_stats is None:
             print("No source statistics available. Run simulation first.")
             return
@@ -2281,7 +2285,7 @@ class FFSPSource:
 
         # Save figure if requested
         if save_fig:
-            plt.savefig(f'{model_name}_spatial_distribution.{image_type}', 
+            plt.savefig(f'{model_name}_source_time_function.{image_type}',
                         format=image_type, 
                         dpi=600, 
                         bbox_inches='tight', 

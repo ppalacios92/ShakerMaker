@@ -29,9 +29,9 @@ class Station:
     :type dict: python dictionary
     """
 
-    def __init__(self, x=None, internal=False, metadata={}):
+    def __init__(self, x=None, internal=False, metadata=None):
         self._x = x
-        self._metadata = metadata
+        self._metadata = metadata if metadata is not None else {}
         self._observers = []
         self._internal = internal
         self._initialized = False

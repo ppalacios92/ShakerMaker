@@ -3,20 +3,32 @@ from shakermaker.sourcetimefunction import SourceTimeFunction
 
 class SRF2(SourceTimeFunction):
     """
-    The SRF2 Source Time Function
+    SRF2 slip-rate source time function.
 
-    Implements the provided srf2 functional form as a slip rate function.
-    
-    Parameters:
-        Tr, Tp, Te : float
-            The parameter from the srf2 function.
-        dt : float
-            Time step for the source time function.
+    Builds a slip-rate (slip-velocity) function on ``[0, Tr)`` from three
+    phases: a rising sine branch for ``t < Tp``, a ``sqrt(a + b/t**2)``
+    plateau for ``Tp <= t < Te``, and a decaying sine tail for ``t >= Te``.
+    The function is normalised to unit area and then scaled by ``slip``.
+
+    :param Tr: Total rise time / duration of the function (s); ``t`` spans ``[0, Tr)``.
+    :type Tr: float
+    :param Tp: Peak time of the initial rising branch (s).
+    :type Tp: float
+    :param Te: Time at which the decaying tail begins (s).
+    :type Te: float
+    :param dt: Time step of the generated function (s).
+    :type dt: float
+    :param slip: Final slip used to scale the unit-area slip-rate.
+    :type slip: float
+    :param a: Constant term of the ``sqrt(a + b/t**2)`` envelope.
+    :type a: float
+    :param b: ``1/t**2`` coefficient of the ``sqrt(a + b/t**2)`` envelope.
+    :type b: float
     """
     def __init__(self, Tr, Tp, Te, dt, slip , a, b):
         SourceTimeFunction.__init__(self)
-        self._Tp = Tp
         self._Tr = Tr
+        self._Tp = Tp
         self._Te = Te
         self._dt = dt
         self._slip = slip

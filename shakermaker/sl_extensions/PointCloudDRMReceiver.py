@@ -50,7 +50,9 @@ class PointCloudDRMReceiver(StationList):
     """
 
     def __init__(self, point_cloud_file, crd_scale, x0_fem, drmbox_x0,
-                 metadata={}):
+                 metadata=None):
+        if metadata is None:
+            metadata = {}
         StationList.__init__(self, [], metadata)
 
         self._x0   = np.array(drmbox_x0, dtype=float)

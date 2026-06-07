@@ -85,11 +85,11 @@ class CrustModel:
 
         self._current_layer += 1
 
-    def modify_layer(self, layer_idx, d=None, vp=None, vs=None, rho=None, gp=None, gs=None):
-        """ Modify the properties of layer number ``k``.
+    def modify_layer(self, layer_idx, d=None, vp=None, vs=None, rho=None, qp=None, qs=None):
+        """ Modify the properties of layer number ``layer_idx``.
 
-        :param k: Layer to modify.
-        :type k: int
+        :param layer_idx: Index of the layer to modify (0-based).
+        :type layer_idx: int
         :param d: New thickness of layer-``k``. ``d=0`` defines an infinite half-space layer.
         :type d: double >= 0
         :param vp: New compression-wave speed (:math:`V_p`) of layer-``k``. 
@@ -115,30 +115,30 @@ class CrustModel:
             **Must** use the units of ``km`` for length, ``km/s`` for speed, and ``gr/cm^3`` for density.
 
         """
-        assert layer_idx >= self._current_layer, \
-            "CrustModel.modify_layer - Exceeds number of initialized layers (nlayers={}). ".format(self._current_layer)
+        assert layer_idx < self._current_layer, \
+            "CrustModel.modify_layer - layer_idx exceeds number of initialized layers (nlayers={}). ".format(self._current_layer)
 
         if d is not None:
             self._d[layer_idx] = d
         if vp is not None:
-            self._vp[layer_idx] = vp
+            self._a[layer_idx] = vp
         if vs is not None:
-            self._vs[layer_idx] = vs
+            self._b[layer_idx] = vs
         if rho is not None:
             self._rho[layer_idx] = rho
-        if gp is not None:
-            self._gp[layer_idx] = gp
-        if gs is not None:
-            self._gs[layer_idx] = gs
+        if qp is not None:
+            self._qa[layer_idx] = qp
+        if qs is not None:
+            self._qb[layer_idx] = qs
 
     def properties_at_depths(self, z, kind="previous"):
-        """ Return (interpolated) properties at depths specified by vector ``zz``. 
+        """ Return (interpolated) properties at depths specified by vector ``z``.
 
         Internally uses ``scipy.interpolate.interp1d`` to do interpolation with
-        ``kind='previous'``. 
+        ``kind='previous'``.
 
-        :param zz: Positions at which to interpolate.
-        :type zz: double or np.array of shape (N,)
+        :param z: Positions at which to interpolate.
+        :type z: double or np.array of shape (N,)
         :param kind: Kind of interpolation to use. See options in :class:`scipy.interpolate.interp1d`.
         :type kind: string
 
@@ -215,20 +215,19 @@ class CrustModel:
             self._nlayers += 1
 
     def get_layer(self, z, tol=0.01):
-        """ Split the layer at depth ``z``. 
+        """ Return the index of the layer interface located at depth ``z``.
 
         :param z: Depth for which layer number is needed
         :type z: double
         :param tol: Tolerance for detection
         :type tol: double
 
-        :returns: Index of layer 
+        :returns: Index of layer
         :rtype: int
 
         """
         current_z = 0.
         for i in range(self.nlayers):
-            # print(f"i = {i:04} z = {z} current_z = {current_z} < tol = {tol} ?")
             if abs(z-current_z) < tol:
                 return i
             current_z += self._d[i]
@@ -283,6 +282,9 @@ class CrustModel:
 
         :param figsize: Figure size as (width, height) in inches.
         :type figsize: tuple
+        :returns: The created matplotlib Figure (call ``fig.savefig(...)`` or
+            ``plt.show()`` to display it).
+        :rtype: matplotlib.figure.Figure
         """
         import matplotlib.pyplot as plt
         import numpy as np
@@ -314,7 +316,7 @@ class CrustModel:
         ax.legend(loc='center left', bbox_to_anchor=(1, 0.5))
         ax.set_xticks([])
         plt.tight_layout()
-        plt.show()
+        return fig
 
     def plot_profile(self, figsize=(11, 5), halfspace_extra=10.0):
         """Plot Vp, Vs and density profiles versus depth.
@@ -323,6 +325,9 @@ class CrustModel:
         :type figsize: tuple
         :param halfspace_extra: Extra depth (km) used to draw the half-space layer.
         :type halfspace_extra: float
+        :returns: The created matplotlib Figure (call ``fig.savefig(...)`` or
+            ``plt.show()`` to display it).
+        :rtype: matplotlib.figure.Figure
         """
         import matplotlib.pyplot as plt
         import numpy as np
@@ -338,7 +343,7 @@ class CrustModel:
         bottom = z_top[-1]
         colors = plt.cm.Pastel1(np.linspace(0, 1, self.nlayers))
 
-        plt.figure(figsize=figsize)
+        fig = plt.figure(figsize=figsize)
 
         plt.subplot(1, 3, 1)
         for i in range(self.nlayers):
@@ -373,4 +378,4 @@ class CrustModel:
 
         plt.suptitle('Crust Model Profile', fontsize=14, fontweight='bold')
         plt.tight_layout()
-        plt.show()
+        return fig
