@@ -16,6 +16,54 @@ model, with the local model adding only the *scattered* field.
 
 ![DRM box geometry](../assets/images/drmbox.png){ width=460 }
 
+## The theory in brief: Bielak's two-step reduction
+
+The DRM (Bielak et al., 2003) is a **two-step domain decomposition**. Split the
+medium at a closed surface $\Gamma$ — the DRM box — into an **interior**
+$\Omega$ (the small, possibly nonlinear, finite-element model of the site) and
+an **exterior** $\Omega^+$ (the regional half-space containing the source). The
+single layer of elements straddling $\Gamma$ couples the two.
+
+**Step 1 — free field.** With the source active but the interior replaced by the
+*same* background medium, solve the cheap **free-field** (background) problem
+$u^0$ over the exterior. This is exactly the regional FK simulation: ShakerMaker
+evaluates $u^0$ — displacement, velocity, acceleration — at every node on $\Gamma$
+and its adjacent ring. Because the interior is identical to the background in
+this step, the expensive local model plays no part; only the regional 1-D model
+and the source matter.
+
+**Step 2 — effective forces.** The total motion is decomposed as the free field
+plus a **scattered field** $w$,
+
+$$
+u = u^0 + w \quad\text{outside } \Gamma, \qquad u = u^0 \text{ on the interior boundary,}
+$$
+
+where $w$ is the *only* part the local model must compute — the perturbation the
+site (basin, topography, nonlinearity) adds to the incoming wave. Substituting
+this split into the equation of motion shows that the free field can be removed
+everywhere except on the single boundary layer, where it survives as a set of
+**effective nodal forces** acting only on $\Gamma$:
+
+$$
+P^\text{eff}_b = -\,M_{be}\,\ddot u^0_e - K_{be}\,u^0_e, \qquad
+P^\text{eff}_e = \ \ \ M_{eb}\,\ddot u^0_b + K_{eb}\,u^0_b,
+$$
+
+with $b$ the boundary-layer nodes and $e$ the exterior nodes just outside, and
+$M$, $K$ the mass and stiffness of *only* the boundary-layer elements. The
+interior degrees of freedom carry **no** effective load: the source enters the
+local model purely through these boundary forces.
+
+**Why this works.** A finite-element model large enough to contain both a
+regional fault and a metre-scale site mesh is intractable. The DRM lets a
+**small** local domain "see" a **regional** source by injecting the
+free-field motion as boundary forces on a thin layer, and lets the interior add
+only the scattered field, with non-reflecting / absorbing conditions on the
+outer face soaking up $w$ as it radiates back out. The free field is computed
+once, cheaply, with FK; the local model is solved once, at full resolution,
+driven by the box.
+
 ## Defining the box: `DRMBox`
 
 ```python
@@ -70,16 +118,17 @@ Inspect with `h5ls -r motions.h5drm` or `h5dump -H motions.h5drm`.
 
 - **OpenSees**, the `H5DRMLoadPattern` reads the file directly and applies
   the DRM boundary forces. This is the de-facto FK→FE coupling standard.
-- **From an SW4 case**, `other_utils/build_h5drm_from_sw4_case.py` builds an
-  `.h5drm` from an SW4 run, with SW4-local-km ↔ ShakerMaker/UTM-km conversion.
+- **From an SW4 case**, `examples/09_sw4_export/build_h5drm_from_sw4_case.py`
+  builds an `.h5drm` from an SW4 run, with SW4-local-km ↔ ShakerMaker/UTM-km
+  conversion.
 - **Geometry only**, `model.export_drm_geometry("drm_geometry.h5drm")` writes
   the box geometry without running the simulation.
 
 ## Validation
 
-`example7_drm_vs_direct.py` toggles `do_DRM` to confirm that the DRM-injected
-motion matches a direct FK computation at the same point, within the tolerance
-set by `sigma` and `dk`.
+`examples/08_drm/drm_vs_direct.py` toggles `do_DRM` to confirm that the
+DRM-injected motion matches a direct FK computation at the same point, within
+the tolerance set by `sigma` and `dk`.
 
 ## Reference
 

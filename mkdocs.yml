@@ -115,7 +115,7 @@ nav:
       - Source time functions: guides/source_time_functions.md
       - Receivers: guides/receivers.md
       - Running a simulation: guides/running.md
-      - FK parameters reference: guides/parameters.md
+      - FK parameters: guides/parameters.md
       - Domain Reduction Method: guides/drm.md
       - FFSP stochastic rupture: guides/ffsp.md
       - Outputs & writers: guides/outputs.md
@@ -130,6 +130,12 @@ nav:
       - "5 · DRM box → H5DRM": exercises/05_drm.md
       - "6 · FFSP stochastic rupture": exercises/06_ffsp.md
       - "7 · Receiver geometries & the fast pipeline": exercises/07_receivers_pipeline.md
+      - "8 · Sources: point & finite faults": exercises/08_sources.md
+      - "9 · Saving results & writers": exercises/09_writers.md
+      - "10 · Exporting to SW4": exercises/10_sw4_export.md
+      - "11 · Plotting & visualisation": exercises/11_plotting.md
+      - "12 · Validation: SCEC LOH.1": exercises/12_validation.md
+      - "13 · ShakerMaker vs SW4": exercises/13_shakermaker_sw4.md
   - Examples: examples/index.md
   - API Reference:
       - Overview: api/index.md
@@ -138,6 +144,7 @@ nav:
       - Sources: api/sources.md
       - Source time functions: api/stf.md
       - Receivers: api/receivers.md
+      - Writers: api/writers.md
       - FFSP: api/ffsp.md
       - SW4 export: api/sw4.md
       - Plotting: api/plotting.md

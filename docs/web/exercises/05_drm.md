@@ -83,7 +83,7 @@ h5dump -H motions.h5drm      # header only (shapes + attrs)
 
 1. **Export the geometry alone** without running:
    `model.export_drm_geometry("drm_geometry.h5drm")`.
-2. **Validate** with [`example7_drm_vs_direct.py`](../examples/index.md):
+2. **Validate** with [`examples/08_drm/drm_vs_direct.py`](../examples/index.md):
    the DRM-injected motion must match a direct FK computation at the same
    point within the numerical tolerance.
 

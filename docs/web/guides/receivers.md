@@ -98,6 +98,31 @@ The three layouts, drawn with `StationPlot`:
 
 *Reproduce with [`gen_station_geometry.py`](../examples/index.md#generating-the-figures).*
 
+### The point clouds, side by side
+
+Every receiver geometry is, in the end, a cloud of stations. For the DRM-style
+geometries each station also carries an **`internal`** flag — interior nodes
+the FEM solver drives directly (**red**) versus the outer boundary ring that
+feeds the DRM load (**blue**). The plain `SurfaceGrid` layouts are pure
+recording arrays, so every node is external (blue).
+
+![Receiver point clouds, internal vs external](../assets/images/receiver_clouds.png){ width=820 }
+
+- **`SurfaceGrid · plane / hollow / filled`** — a sheet, a boundary shell, or a
+  filled volume; all external. The sheet can be horizontal (`plane_z=0`, a
+  free-surface map) **or** vertical (`plane_y`/`plane_x`, a depth
+  cross-section) — both shown.
+- **`DRMBox`** — two nested shells: the inner (red) and outer (blue) DRM
+  boundaries.
+- **`PointCloudDRMReceiver`** — arbitrary FEM nodes whose `Type` column
+  (`internal` / `external`) sets the colour; here a red core inside a blue cage.
+
+These are drawn denser than the runnable
+[`examples/04_receivers/`](../examples/index.md#04-receivers) scripts on purpose
+— just so the clouds read clearly.
+
+*Reproduce with [`gen_receiver_clouds.py`](../examples/index.md#generating-the-figures).*
+
 ### Coordinate convention
 
 ShakerMaker uses **`x` = North, `y` = East, `z` = down (depth)**, all in km,
@@ -117,9 +142,9 @@ Array helpers: `StationList.nstations`, `get_station_by_id(i)`,
 
 ## Station-array patterns
 
-The `examples/cloud_points/` scripts show ready-made layouts: `cp01` DRM box,
-`cp02` surface grid, `cp03` cross, `cp04` line, `cp05` circle, `cp06` random
-cloud.
+The `examples/04_receivers/` scripts show ready-made layouts:
+`drmbox.py` (DRM box), `surface_grid.py` (plane / hollow / filled surface
+grids), and `pointcloud_drm.py` (an arbitrary FEM node cloud).
 
 ## Reference
 

@@ -14,16 +14,16 @@ in [Installation & compilation](installation.md).
 Quick version once the toolchain is in place:
 
 ```bash
-pip install "setuptools<60.0" "numpy<1.24" wheel scipy h5py mpi4py matplotlib
+pip install "setuptools<60.0" "numpy<2.0" wheel scipy h5py mpi4py matplotlib  # numpy 1.x: build-from-source only
 pip install . --no-build-isolation
 python -c "import shakermaker; print('ok')"   # Fortran core loaded
 ```
 
 | Package | Required | For |
 |---|---|---|
-| `numpy` (<1.24 / 1.26.x) | yes | arrays + the `f2py` runtime |
+| `numpy` | yes | arrays (runs on 2.x; only the build-from-source needs 1.x) |
 | `scipy` | yes | signal processing, interpolation |
-| `h5py` | yes | HDF5 / H5DRM output |
+| `h5py` | yes | HDF5 output (incl. the DRM layout) |
 | `matplotlib` | no | plotting |
 | `mpi4py` | no | MPI parallelism (large runs) |
 
@@ -40,8 +40,9 @@ Station    ─┘
 - **`Station` / `StationList` / `DRMBox`**, where motion is recorded.
 - **`ShakerMaker(crust, source, receivers).run(...)`**, computes the traces.
 
-Run it sequentially with `run()`, or in parallel with the three-stage
-pipeline (`gen_pairs` → `compute_gf` → `run_fast`) under MPI, see
+Run it sequentially with `run()`, or scale up with the optimised MPI
+pipeline `run_nearest()`, which computes each unique pair-geometry once and
+reuses it across thousands of receivers. See
 [Running a simulation](running.md).
 
 ## Your first simulation
@@ -86,7 +87,7 @@ in full.
 | Density | g/cm³ |
 | Angles (strike, dip, rake) | degrees (Aki–Richards) |
 | Time | s |
-| Output motion | velocity (cm/s) |
+| Output motion | velocity — units follow the STF source |
 
 Coordinates are right-handed with `x`, `y` horizontal and `z` downward; the
 free surface is `z = 0`.

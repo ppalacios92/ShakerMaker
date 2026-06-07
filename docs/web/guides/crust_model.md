@@ -15,14 +15,14 @@ crust.add_layer(0.0, 6.0, 3.464, 2.7, 10000., 10000.) # half-space (d = 0)
 
 `add_layer(d, vp, vs, rho, qp, qs)`, positional, in this exact order:
 
-| Arg | Symbol | Units | Meaning | Typical |
-|---|---|---|---|---|
-| `d` | $d$ | km | layer thickness (**0 = half-space**) | 0.1 – 10 |
-| `vp` | $V_P$ | km/s | P-wave velocity | 1.5 – 8 |
-| `vs` | $V_S$ | km/s | S-wave velocity (must be `< vp`) | 0.5 – 4.5 |
-| `rho` | $\rho$ | g/cm³ | density | 1.8 – 3.3 |
-| `qp` | $Q_P$ | – | P quality factor (↑ = less damping) | 50 – 10000 |
-| `qs` | $Q_S$ | – | S quality factor | 50 – 10000 |
+| Arg | Symbol | Units | Meaning |
+|---|---|---|---|
+| `d` | $d$ | km | layer thickness (**0 = half-space**) |
+| `vp` | $V_P$ | km/s | P-wave velocity |
+| `vs` | $V_S$ | km/s | S-wave velocity (must be `< vp`) |
+| `rho` | $\rho$ | g/cm³ | density |
+| `qp` | $Q_P$ | – | P quality factor (↑ = less damping) |
+| `qs` | $Q_S$ | – | S quality factor |
 
 `add_layer` validates the physics (positive speeds/density/Q, $V_P > V_S$).
 Use a large `Q` (e.g. `10000`) for a near-elastic medium.
@@ -38,8 +38,30 @@ crust = SCEC_LOH_1()        # 1 km soft layer over a half-space
 
 | Constructor | Model |
 |---|---|
-| `SCEC_LOH_1()` | SCEC LOH.1 benchmark |
-| `AbellThesis()` | regional Chilean subduction crust |
+| `SCEC_LOH_1()` | SCEC LOH.1 benchmark — soft layer over a half-space, near-elastic |
+| `SCEC_LOH_3()` | SCEC LOH.3 benchmark — same geometry as LOH.1 but **with attenuation** |
+| `AbellThesis(split=1)` | crust from J. A. Abell's PhD thesis / paper |
+| `SOCal_LF()` | Southern California low-frequency crust (SCEC BBP) |
+
+```python
+from shakermaker.cm_library.LOH import SCEC_LOH_1, SCEC_LOH_3
+from shakermaker.cm_library.AbellThesis import AbellThesis
+from shakermaker.cm_library.SOCal_LF import SOCal_LF
+```
+
+!!! note "LOH.1 vs LOH.3"
+    `SCEC_LOH_1()` approximates a purely elastic medium with very high
+    quality factors (`Q = 10000`). `SCEC_LOH_3()` uses the same two-layer
+    geometry (a 1 km slow layer over a half-space) but with realistic,
+    finite quality factors ($Q_S \approx 55$ in the soft layer), so it
+    exercises the anelastic attenuation path.
+
+!!! tip "`AbellThesis(split=...)`"
+    The `split` argument subdivides each tabulated layer into `split`
+    equal-thickness sub-layers (default `split=1`, the layering as
+    published). Increasing it refines the depth discretisation without
+    changing the velocity/density profile — useful when you need more
+    interfaces for sampling or for the OP pipeline's depth clustering.
 
 `plot_profile()` draws the velocity and density structure versus depth:
 

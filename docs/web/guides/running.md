@@ -1,8 +1,9 @@
 # Running a simulation
 
 `ShakerMaker(crust, source, receivers)` pairs every source with every
-receiver and computes the motion. Two ways to run it: a single `run()` call,
-or the three-stage MPI pipeline.
+receiver and computes the motion. Two ways to run it: a single `run()` call
+for small problems, or the optimised MPI pipeline `run_nearest()` for large
+receiver sets and finite faults.
 
 ## Input: `run()`
 
@@ -56,17 +57,34 @@ pair, you compute every *unique geometry* once and reuse it. That is the
 
 ### The three stages
 
-`run_nearest(stage='all', ...)` runs them in sequence; you can also call them
-individually (`stage=0/1/2`) to extend a run incrementally.
+`run_nearest` is the **single canonical entry point** for the optimised
+pipeline. Internally it orchestrates three stages, selected with the `stage`
+argument:
 
-| Stage | What it does | Writes |
-|---|---|---|
-| **0**, pair clustering | groups all pairs into *unique-geometry slots* | `<db>_map.h5` |
-| **1**, Green's functions | runs the FK kernel **once per slot** | `<db>_gf.h5` |
-| **2**, assembly | per pair: recombine mechanism + azimuth, convolve the STF, accumulate | the `writer` output |
+| `stage` | Stage(s) run | What it does | Writes |
+|---|---|---|---|
+| `0` | pair clustering | groups all pairs into *unique-geometry slots* | `<db>_map.h5` |
+| `1` | Green's functions | runs the FK kernel **once per slot** | `<db>_gf.h5` |
+| `2` | assembly | per pair: recombine mechanism + azimuth, convolve the STF, accumulate | the `writer` output |
+| `'0_1'` | clustering + GFs | stage 0 then 1 (build the GF database) | `<db>_map.h5`, `<db>_gf.h5` |
+| `'all'` | everything | the whole pipeline end-to-end (default) | all of the above |
 
 You pass a single database root via `h5_database_name`; the pipeline appends
 `_map.h5` and `_gf.h5` itself.
+
+`stage='all'` runs the three in sequence and is what you want most of the
+time. Running stages individually (`stage=0`, then `stage=1`, then `stage=2`,
+or `stage='0_1'` followed by `stage=2`) is for **staged HPC workflows**: build
+the GF database once on one job, then reuse it across many stage-2 assembly
+runs with different writers or time windows.
+
+!!! note "Lower-level stage methods"
+    The three stages are also exposed as standalone methods —
+    `gen_pairs(...)` (stage 0), `compute_gf(...)` (stage 1), and
+    `run_fast(...)` (stage 2). These are the building blocks that
+    `run_nearest` orchestrates for you; call them directly only if you need
+    fine-grained control over an individual stage. For everything else,
+    prefer `run_nearest`.
 
 ### Stage-0 clustering tolerances
 
@@ -85,6 +103,24 @@ calls); larger tolerances collapse near-identical geometries together (fewer
 kernel calls, faster). For a flat surface grid at a single depth, even a small
 `delta_h` already collapses thousands of receivers into a handful of distance
 rings.
+
+### Full signature
+
+```python
+ShakerMaker.run_nearest(
+    stage='all',                # 0 | 1 | 2 | '0_1' | 'all'
+    h5_database_name=None,      # required: full path incl. .h5
+    # Stage 0 — clustering tolerances
+    delta_h=0.04, delta_v_rec=0.002, delta_v_src=0.2, npairs_max=200000,
+    # Stages 1–2 — FK numerical parameters (same meaning as run())
+    dt=0.05, nfft=4096, tb=1000, smth=1, sigma=2, taper=0.9,
+    wc1=1, wc2=2, pmin=0, pmax=1, dk=0.3, nx=1, kc=15.0,
+    # Stage 2 — output
+    writer=None, writer_mode='progressive', tmin=0., tmax=100,
+    # General
+    verbose=False, debugMPI=False, showProgress=True,
+)
+```
 
 ### Calling it
 

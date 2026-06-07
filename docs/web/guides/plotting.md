@@ -26,7 +26,8 @@ ZENTPlot(sta, xlim=[0, 60], show=True)
 
 ### Overlaying stations or runs
 
-Pass the same `fig` to stack traces, the pattern in `examples/view-dk.py`:
+Pass the same `fig` to stack traces, the pattern shown in
+`examples/11_plotting/plotting_tools.py`:
 
 ```python
 import matplotlib.pyplot as plt

@@ -3,12 +3,12 @@ import runpy
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = [
+    "gen_quick_example.py",
     "gen_crust_profiles.py",
     "gen_stf_gallery.py",
     "gen_station_geometry.py",
+    "gen_receiver_clouds.py",
     "gen_seismogram.py",
-    "gen_green_functions.py",
-    "gen_convolution.py",
     "gen_ffsp.py",
 ]
 

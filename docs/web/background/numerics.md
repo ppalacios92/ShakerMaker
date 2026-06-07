@@ -51,7 +51,7 @@ $k_c$. Too small a cutoff and high-frequency, high-wavenumber S energy is lost.
 | Parameter | Meaning |
 |---|---|
 | `kc` | wavenumber cutoff $k_c$ (in $1/h_s$); needs $k_c \gtrsim 10$ |
-| `pmin`, `pmax` | the slowness window $p = k/\omega$ to integrate (in $1/V_S$) |
+| `pmin`, `pmax` | the slowness window $p = k/\omega$ to integrate (in $1/V_{s,\text{src}}$, the source-layer shear velocity) |
 
 ## Sigma damping: the complex frequency
 
@@ -91,6 +91,21 @@ A smooth spectral taper near the high-frequency end suppresses Gibbs ringing
 from the hard FFT cutoff. Set by `taper` (0–1); raise it if high-frequency
 content looks lost.
 
+## Low-frequency high-pass: `wc1`, `wc2`
+
+At the other end of the band, a raised-cosine window over the lowest frequency
+bins controls how the **DC / near-static** component is handled: it tapers the
+spectrum to zero across the first few bins so that an unconstrained zero-frequency
+term does not leak into the trace as a spurious baseline offset. `wc1` and `wc2`
+are the start and end bins of that low-frequency taper; the defaults (1, 2) leave
+the physical low-frequency content intact and only need raising if you are
+deliberately **removing a static offset**.
+
+| Parameter | `wc1`, `wc2` (low-frequency bins) |
+|---|---|
+| Default | 1, 2 (keep the low-frequency content) |
+| Raise | to suppress a near-static baseline / DC offset |
+
 ## The map: theory → parameter
 
 | `run` parameter | Theory quantity | Governs |
@@ -103,10 +118,15 @@ content looks lost.
 | `sigma` | $\sigma$ in $\omega - i\sigma$ | pole regularisation + wrap-around |
 | `pmin`, `pmax` | slowness window | which phases are integrated |
 | `taper` | spectral taper | high-frequency Gibbs ringing |
+| `wc1`, `wc2` | low-frequency window | high-pass / DC handling |
 | `smth` | interpolation factor | output densification |
 
 Every entry in the [diagnostic checklist](../guides/running.md#diagnostic-checklist)
 is a symptom of one of these being mis-set, now you know *why*.
+
+For the operational detail — exact defaults, the source line behind each knob,
+and the `check_parameters` pre-flight that derives them for you — see the
+[FK parameters reference](../guides/parameters.md).
 
 ## References
 

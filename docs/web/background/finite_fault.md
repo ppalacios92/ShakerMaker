@@ -27,6 +27,28 @@ The resolution rule: subfaults must be small versus the shortest wavelength,
 $\Delta\xi,\Delta\eta \lesssim V_S^\text{min} / (N_p\,f_\text{max})$ with
 $N_p \approx 5$ subfaults per wavelength.
 
+## How big is the fault? Magnitude–area scaling
+
+Before you can lay out subfaults you need the fault dimensions $L\times W$, and
+those follow from the target magnitude through an empirical **scaling law**. The
+classic regressions relate the rupture area $A = L\,W$ (km²) to the moment
+magnitude $M_w$ as a log-linear fit:
+
+$$
+M_w = a + b\,\log_{10} A.
+$$
+
+| Relation | Form | Notes |
+|---|---|---|
+| **Wells & Coppersmith (1994)** | $M_w = 4.07 + 0.98\,\log_{10} A$ | the canonical global fit (all rupture types) |
+| **Leonard (2010)** | $\log_{10} A = M_w - 4.0$ (i.e. $M_w = 4.0 + \log_{10}A$) | self-consistent moment / area / slip scaling |
+
+These let you turn a scenario magnitude into a physically plausible
+$L\times W$, the aspect ratio (and hence individual $L$, $W$) coming from the
+same regressions or from a fixed $W$ once the seismogenic depth is reached. The
+scalar moment closes the loop, $M_0 = 10^{1.5\,M_w + 9.1}$ N·m, and the average
+slip then follows from $M_0 = \mu\,A\,\bar D$.
+
 ## Why stochastic? (FFSP)
 
 The slip distribution of a *future* earthquake is unknowable, even the
@@ -42,9 +64,27 @@ splits the rupture into:
 - **Constrained (deterministic):** moment / magnitude, fault dimensions
   $L\times W$, orientation (strike, dip, rake), hypocentre, target corner
   frequencies.
-- **Random fields:** slip, rise time, peak time, rupture velocity, and
-  dip/rake perturbations, drawn with magnitude-scaled correlation lengths
-  and prescribed cross-correlations.
+- **Random fields:** roughly **eight coupled stochastic fields** laid down on
+  the fault plane, each with magnitude-scaled correlation lengths and
+  prescribed cross-correlations to slip.
+
+Following Liu–Archuleta–Hartzell (with Ji's refinements), the eight fields are:
+
+| Field | What it controls |
+|---|---|
+| **Slip** $D(\xi,\eta)$ | where and how much the fault moves — the asperities |
+| **Rupture time** $t_0$ | front arrival, from the eikonal solution + perturbations |
+| **Rise time** $\tau_r$ | how long each point keeps slipping |
+| **Peak time** $\tau_p$ | when the slip-rate peaks |
+| **Rupture velocity** $v_r$ | how fast the front propagates (bounded, depth-dependent) |
+| **Strike perturbation** | local along-strike mechanism scatter |
+| **Dip perturbation** | local dip scatter (`pdip_max`) |
+| **Rake perturbation** | local rake scatter (`prake_max`) |
+
+The slip-rate *shape* (the `id_sf_type` slip-rate function) and the seeds round
+out the controls: everything in the [`FFSPSource`](../guides/ffsp.md)
+constructor either **fixes** one of these (the constrained inputs) or **shapes
+its randomness** (the stochastic controls).
 
 Each realisation is scored against the targets (a PDF score); you keep either
 the single **best** realisation (deterministic analysis) or the **full
@@ -57,10 +97,15 @@ argument.
 ## The efficiency payoff
 
 For an FFSP ensemble over a fixed geometry, the **FK Green's functions are
-shared across all realisations**, only the slip and rupture times change.
-ShakerMaker computes the Green's functions once and re-runs only the cheap
-recombination per realisation, so the amortised cost of an extra realisation
-is small.
+shared across all realisations** — only the slip distribution and rupture times
+change between realisations, while the source–receiver geometry (and hence the
+nine elementary Green's functions of every slot) stays identical. ShakerMaker
+exploits this by computing the Green's functions **once** (the geometry-mapping
+and kernel stages) and re-running only the cheap per-pair recombination +
+convolution per realisation. The amortised cost of an extra realisation is
+therefore dominated by the recombination, not the kernel, which is what makes a
+50–500-member probabilistic study tractable — see the
+[OP pipeline](../guides/running.md#the-op-pipeline-run_nearest).
 
 ## References
 

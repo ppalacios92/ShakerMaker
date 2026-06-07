@@ -115,7 +115,7 @@ DRM-aware receiver lists also carry a QA station (`is_qa=True`) for validation.
 
 The reverse direction closes the loop with [DRM](drm.md): after an SW4 run, the
 motions on a box can be turned back into an `.h5drm` for a local OpenSees
-model. The helper is `examples/build_h5drm_from_sw4_case.py`
+model. The helper is `examples/09_sw4_export/build_h5drm_from_sw4_case.py`
 (`build_h5drm_from_sw4_case(...)`), which handles the SW4-local-m ↔
 ShakerMaker/UTM-km conversion.
 

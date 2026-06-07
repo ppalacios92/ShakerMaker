@@ -99,7 +99,7 @@ is just matrix multiplication. The full algorithm:
 !!! warning "Why ShakerMaker uses the *compound*-matrix form"
     The naïve Haskell product loses precision catastrophically at large $k$ or
     large depth (growing and decaying exponentials cancel). The **compound /
-    Zhu–Rivera** reformulation, which ShakerMaker's Fortran kernel uses, 
+    Zhu–Rivera** reformulation, which ShakerMaker's Fortran kernel uses,
     propagates $2\times2$ sub-determinants instead, staying numerically bounded,
     and unifies the static ($\omega\to 0$) and dynamic limits in one code path.
 
@@ -126,7 +126,7 @@ the seismogram:
 
 In a purely elastic medium these poles sit *on* the real $k$-axis and the
 integral diverges. Operational FK codes regularise with **both** a finite $Q$
-(in the velocity model) and a small imaginary part $\sigma$ added to $\omega$, 
+(in the velocity model) and a small imaginary part $\sigma$ added to $\omega$ —
 this is the `sigma` parameter you set at run time (see
 [Numerics](numerics.md#sigma-damping-the-complex-frequency)).
 
@@ -139,39 +139,157 @@ $m = 0, 1, 2$, which Helmberger (1983) labels **DD, DS, SS**. Three components
 $(Z, R, T)$ × three modes gives **nine elementary Green's functions**, the raw
 output of the Fortran `subgreen`:
 
-![The nine elementary Green's functions](../assets/images/green_functions_9.png){ width=640 }
+![The nine elementary Green's functions](../assets/images/loh1_gf_tensor.png){ width=720 }
 
-*Nine elementary Green's functions for a single geometry ($r = 7$ km). The
-`ZDS` panel is identically zero by symmetry. Reproduce with
-[`gen_green_functions.py`](../examples/index.md#generating-the-figures).*
+*Nine elementary Green's functions for a single geometry, from the validated
+**SCEC LOH.1** case (receiver at $(6, 8, 0)$ km, $r = 10$ km). One panel
+(`Gf_13`) is identically zero by symmetry. From
+[`examples/12_validation`](../examples/index.md#12-validation).*
 
 Crucially, these nine depend **only on the geometry** $(\Delta h, z_{\text{src}},
 z_{\text{rec}})$, not on the source mechanism or azimuth. That is why
 ShakerMaker stores them in geometry "slots" and reuses them, the foundation of
 the [OP pipeline](../guides/running.md#the-op-pipeline-run_nearest).
 
-## From kernels to a seismogram
-
-Three operations turn the nine geometric functions into the recorded motion:
-
-1. **Recombine** with the moment tensor and azimuth $\phi$. The coefficients are
-   algebraic, e.g. the vertical down-dip term
-   $c^Z_{DD} = \tfrac16(M_{xx} + M_{yy} - 2M_{zz})$, giving the radial/transverse
-   frame $(u_Z, u_R, u_T)$.
-2. **Rotate** from radial–transverse to geographic:
+Each of the three azimuthal modes is excited by one **canonical faulting
+mechanism**, and the corresponding source enters the depth ODE as a *jump* of
+the displacement–stress vector across the source horizon $z_s$,
 
 $$
-u_E = u_R\sin\phi - u_T\cos\phi, \qquad u_R\cos\phi + u_T\sin\phi = u_N
+\mathbf{b}(z_s^-) - \mathbf{b}(z_s^+) = -\,\mathbf{s},
+$$
+
+with the three frequency-independent **source-jump vectors** of Takeuchi–Saito /
+Zhu (the components ordered as in
+[$\mathbf{b}$ above](#the-depth-ode), $\xi = V_S^2/V_P^2$):
+
+$$
+\mathbf{s}^{(0)}_\text{dc} = \big(0,\ 2\xi/\mu,\ 0,\ 4\xi - 3,\ 0,\ 0\big)^\top
+\quad\text{(DD: }45^\circ\text{ down-dip slip)},
+$$
+
+$$
+\mathbf{s}^{(1)}_\text{dc} = \big(1/\mu,\ 0,\ 0,\ 0,\ -1/\mu,\ 0\big)^\top
+\quad\text{(DS: vertical dip slip)},
+$$
+
+$$
+\mathbf{s}^{(2)}_\text{dc} = \big(0,\ 0,\ 0,\ 1,\ 0,\ -1\big)^\top
+\quad\text{(SS: vertical strike slip)}.
+$$
+
+(For reference, an **explosion** excites only $m=0$ with
+$\mathbf{s}^{(0)}_\text{ex} = (0,\ \xi/\mu,\ 0,\ 2\xi,\ 0,\ 0)^\top$, and a
+**single point force** excites $m=0,1$ with
+$\mathbf{s}^{(0)}_\text{sf} = \tfrac1k(0,0,-1,0,0,0)^\top$ and
+$\mathbf{s}^{(1)}_\text{sf} = \tfrac1k(0,0,0,-1,0,1)^\top$.)
+
+## The moment tensor and the recombination coefficients
+
+A general double couple is set by the **scalar moment** $M_0$ and the
+Aki–Richards triple **strike** $\phi$, **dip** $\delta$, **rake** $\lambda$. The
+symmetric **moment tensor** in the $(N, E, \text{down})$ frame follows from
+
+$$
+\begin{aligned}
+M_{xx}/M_0 &= -(\sin\delta\cos\lambda\sin 2\phi + \sin 2\delta\sin\lambda\sin^2\phi),\\
+M_{yy}/M_0 &= \ \ \sin\delta\cos\lambda\sin 2\phi - \sin 2\delta\sin\lambda\cos^2\phi,\\
+M_{zz}/M_0 &= \ \ \sin 2\delta\sin\lambda,\\
+M_{xy}/M_0 &= \ \ \sin\delta\cos\lambda\cos 2\phi + \tfrac12\sin 2\delta\sin\lambda\sin 2\phi,\\
+M_{xz}/M_0 &= -(\cos\delta\cos\lambda\cos\phi + \cos 2\delta\sin\lambda\sin\phi),\\
+M_{yz}/M_0 &= -(\cos\delta\cos\lambda\sin\phi - \cos 2\delta\sin\lambda\cos\phi).
+\end{aligned}
+$$
+
+Either form recombines the nine elementary functions into the
+radial–transverse trace. With $\Theta \equiv \theta_0 - \phi$ the **station
+azimuth measured clockwise from the fault strike**, the strike/dip/rake form is
+the most compact (Aki & Richards eq. 4.94; Zhu 2011):
+
+$$
+\begin{aligned}
+u_Z =\ & \tfrac12\sin 2\delta\,\sin\lambda\;G^{ZDD} \\
+&-\big(\sin\Theta\,\cos 2\delta\,\sin\lambda - \cos\Theta\,\cos\delta\,\cos\lambda\big)\;G^{ZDS} \\
+&-\big(\sin 2\Theta\,\sin\delta\,\cos\lambda + \tfrac12\cos 2\Theta\,\sin 2\delta\,\sin\lambda\big)\;G^{ZSS},
+\end{aligned}
+$$
+
+with $u_R$ carrying the **same** trigonometric coefficients (on $G^{RDD},
+G^{RDS}, G^{RSS}$), and $u_T$ obtained from the last two terms with
+$\sin\Theta \to -\cos\Theta$ and $\sin 2\Theta \to -\sin 2\Theta$ (on
+$G^{TDS}, G^{TSS}$; the $m=0$ term does not radiate to the transverse). These
+trigonometric prefactors are the **horizontal radiation patterns**.
+
+Equivalently, in moment-tensor form the leading coefficients are algebraic in
+the $M_{ij}$, e.g. the vertical down-dip and dip-slip terms
+
+$$
+c^Z_{DD} = \tfrac16(M_{xx} + M_{yy} - 2M_{zz}),\qquad
+c^Z_{DS} = -(M_{xx} - M_{yy})\cos 2\phi - 2M_{xy}\sin 2\phi,
+$$
+
+with the full set tabulated in Aki & Richards (2002, §9.2.1, Table 9.1). This
+is *exact*, not truncated: a moment tensor is a second-rank tensor, so its
+azimuthal expansion has support only on $|m| \le 2$ — the three modes are
+complete for any orientation.
+
+The recombined $(u_Z, u_R, u_T)$ are then **rotated** to geographic $(Z, E, N)$
+by the azimuth $\phi$ exactly as in the
+[seismogram step below](#from-kernels-to-a-seismogram).
+
+## The static / zero-frequency limit
+
+A large earthquake leaves a **permanent static offset** — the ground does not
+return to where it started. That offset lives at $\omega = 0$, the
+zero-frequency limit of the same kernels. The naïve propagator is *singular*
+there: as $\omega \to 0$ the two vertical wavenumbers degenerate,
+
+$$
+\nu_\alpha = \sqrt{k^2 - \omega^2/V_P^2} \ \to\ k, \qquad
+\nu_\beta = \sqrt{k^2 - \omega^2/V_S^2} \ \to\ k,
+$$
+
+so $\mathbf{M}$ acquires a double eigenvalue $\pm k$, the eigenvector matrix
+$\mathbf{E}$ becomes defective, and the closed-form layer propagator breaks
+down. Historically a *separate* static code (Okada-type formulae) was needed.
+
+The **Zhu–Rivera** reformulation removes the singularity: by absorbing the
+historical $\omega^2$ factor into $\mathbf{M}$ (which makes the source vectors
+above frequency-independent), the **compound-matrix** propagator stays a
+well-defined function of $k$ alone as $\omega \to 0$. The static-displacement
+code is then literally *the same code* as the dynamic one, evaluated at
+$\omega = 0$ with light numerical regularisation. This is why a single FK run
+can reproduce both the dynamic shaking and its residual static step — essential
+for joint waveform-and-geodetic source inversions and for engineering records
+that retain a permanent offset.
+
+## From kernels to a seismogram
+
+Three operations turn the [nine geometric functions](#the-source-nine-elementary-greens-functions)
+into the recorded motion:
+
+1. **Recombine** with the moment tensor and azimuth $\phi$ — see
+   [the recombination algebra below](#the-moment-tensor-and-the-recombination-coefficients)
+   — giving the radial/transverse frame $(u_Z, u_R, u_T)$.
+2. **Rotate** from radial–transverse to geographic, by the source–receiver
+   azimuth $\phi$ (clockwise from North):
+
+$$
+u_E = u_R\sin\phi - u_T\cos\phi, \qquad u_N = u_R\cos\phi + u_T\sin\phi
 $$
 
 3. **Convolve** with the source time function. The kernel is the *impulse*
    response; the real waveform is $u(t) = G(t) * \dot{s}(t)$, so one Green's
-   function serves any STF:
+   function serves any STF.
 
-![Convolution of the Green's function with a source time function](../assets/images/convolution.png){ width=520 }
+The source time function (here the LOH.1 Gaussian, scaled by $M_0$) convolved
+with the kernels gives the three-component velocity $(Z, E, N)$ stored on each
+[`Station`](../guides/receivers.md):
 
-The result is the three-component velocity $(Z, E, N)$ stored on each
-[`Station`](../guides/receivers.md).
+![LOH.1 source time function and the resulting three-component seismogram](../assets/images/loh1_seismograms_manual.png){ width=640 }
+
+*From the validated [SCEC LOH.1 case](../examples/index.md#12-validation)
+(`examples/12_validation/LOH1.py`).*
 
 ## References
 

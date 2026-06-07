@@ -39,22 +39,15 @@ src = PointSource([0, 0, 4], [90, 90, 0], stf=stf)
 > drop `dsigma` together with `M0` and `Vs` and the corner frequency is
 > derived. Don't mix the two.
 
-## Result: time domain and spectrum
-
-The STF is the knee of the source spectrum: a lower Brune corner frequency
-rolls off earlier (a larger earthquake); a Gaussian is strictly band-limited.
-
-![STF time domain and spectra](../assets/images/stf_overview.png){ width=680 }
-
-*Reproduce with [`gen_stf_gallery.py`](../examples/index.md#generating-the-figures).*
-
-### The full gallery
+## The full gallery
 
 | SRF2 | Dirac |
 |---|---|
 | ![SRF2](../assets/images/SRF2.png) | ![Dirac](../assets/images/stf_dirac.png) |
 | **Brune** | **Gaussian** |
 | ![Brune](../assets/images/stf_brune.png) | ![Gaussian](../assets/images/stf_gaussian.png) |
+
+*Reproduce with [`stf_gallery.py`](../examples/index.md#03-source-time-functions).*
 
 ## Reference
 

@@ -47,15 +47,23 @@ source ~/shakermaker_env/bin/activate
 Isolating the install matters because of the next point, the build is
 **version-sensitive**.
 
-### 3. Python dependencies (pinned)
+### 3. Python dependencies
+
+ShakerMaker **runs on NumPy 2.x** — the engine was ported to NumPy 2 + Numba.
+NumPy is only constrained when you **compile the Fortran from source**: `setup.py`
+drives `f2py` through `numpy.distutils`, which NumPy removed in 2.0 and Python
+removed from its standard library in 3.12. So the *build* step (and only the
+build step) needs a NumPy 1.x together with `setuptools<60`, under Python
+3.8–3.11:
 
 ```bash
-pip install "setuptools<60.0" "numpy<1.24" wheel scipy h5py mpi4py matplotlib
+pip install "setuptools<60.0" "numpy<2.0" wheel scipy h5py mpi4py matplotlib
 ```
 
-The pins are not cosmetic. `f2py` relied on `numpy.distutils`, which **NumPy 2.x
-removed entirely**, a newer NumPy breaks the build. `setuptools<60` keeps the
-classic `setup.py` build path working. Treat these two pins as mandatory.
+`setuptools<60` keeps the classic `setup.py`/`numpy.distutils` path working
+(later setuptools shadows the stdlib `distutils` and breaks it). Once the
+extensions are compiled — or if you install the prebuilt `.so`/`.pyd` shipped in
+the repository — you can run under NumPy 2.x.
 
 ### 4. Build & install
 
@@ -66,9 +74,9 @@ cd /path/to/ShakerMaker
 pip install . --no-build-isolation
 ```
 
-`--no-build-isolation` tells pip to use the NumPy/setuptools you just pinned,
-instead of fetching fresh (newer) build deps into a throwaway environment, 
-which would re-introduce the NumPy-2 problem.
+`--no-build-isolation` tells pip to use the NumPy/setuptools you just pinned for
+the compile, instead of fetching fresh (newer) build deps into a throwaway
+environment, which would re-introduce the `numpy.distutils` problem at build time.
 
 For development you usually want the compiled extensions **in the source tree**
 so you can edit Python and re-import without reinstalling:
@@ -102,7 +110,7 @@ If both print cleanly, the Fortran extensions loaded.
 ### 7. Run with MPI
 
 ```bash
-mpirun -np 4 python main_HalfSpace.py
+mpirun -np 4 python examples/06_nearest_method/nearest_all.py
 ```
 
 One MPI rank per CPU core (the FK kernel is single-threaded within a rank, see
@@ -124,7 +132,8 @@ internal build log; the order matters.
       space-free path and build from there.
     - **Use CMD, not PowerShell, for build steps.** PowerShell quoting breaks
       the compiler invocations.
-    - **NumPy 1.26.x, never 2.x** (same `numpy.distutils` reason as Linux).
+    - **To compile, use NumPy 1.x** (same `numpy.distutils` reason as Linux);
+      once built, ShakerMaker runs fine under NumPy 2.x.
     - **Don't install MSYS2/gfortran** alongside Intel, it contaminates PATH.
 
 ### Required tools
@@ -134,8 +143,8 @@ internal build log; the order matters.
 | Visual Studio 2022 Community | 17.x | MSVC `cl.exe` (C workload) |
 | Intel oneAPI Base Toolkit | 2025.x | MKL |
 | Intel oneAPI HPC Toolkit | 2025.x | the `ifx` Fortran compiler |
-| Python | 3.10.x | matches the `.pyd` suffix |
-| NumPy | 1.26.4 | **not** 2.x |
+| Python | 3.10.x | matches the `.pyd` suffix; build needs 3.8–3.11 |
+| NumPy | 1.26.4 (build) | 1.x only to compile; runs under 2.x |
 
 ### 1. Junction around the space-in-path problem
 

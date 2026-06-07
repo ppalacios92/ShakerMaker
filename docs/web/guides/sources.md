@@ -28,6 +28,18 @@ source = PointSource([0, 0, 4], [90, 90, 0])   # location, [strike, dip, rake]
 | Pure dip-slip (normal) | `[0, 45, -90]` |
 | Pure dip-slip (reverse/thrust) | `[0, 45, 90]` |
 
+Drag the angles to see how `[strike, dip, rake]` move the hanging wall relative
+to the footwall:
+
+<iframe src="../../assets/strike_dip_rake.html"
+        title="Interactive strike, dip & rake block model"
+        width="100%" height="560" loading="lazy"
+        style="border:1px solid var(--sm-hair); border-radius:10px; background:#fff;">
+</iframe>
+
+<small>Interactive 3-D model — drag to orbit, scroll to zoom.
+[Open full screen](../assets/strike_dip_rake.html).</small>
+
 ## Input: `FaultSource`
 
 A collection of `PointSource` objects = an extended fault. Each subfault

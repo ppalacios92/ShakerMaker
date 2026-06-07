@@ -14,9 +14,8 @@ hide:
 ShakerMaker is a Python framework for computing earthquake ground motions
 using the **frequency-wavenumber (FK)** method. It provides a complete
 pipeline, from crustal model definition and earthquake source specification
-to ground motion computation and export in **HDF5, NumPy, and H5DRM**
-(Domain Reduction Method) formats. Computations are parallelized with **MPI**
-and scale from personal workstations to supercomputing clusters.
+to ground motion computation and export in **HDF5 and NumPy** formats. Computations are parallelized with **MPI**
+and scale from personal workstations to High-Performance Computing (HPC).
 
 The FK method is implemented in **Fortran** (originally from
 [L. Zhu](http://www.eas.slu.edu/People/LZhu/home.html), with several
@@ -32,6 +31,9 @@ specific strike, dip, and rake. Graphical functions visualize the computed
 metrics and the statistics of the stochastic space used to select the best
 model.
 
+ShakerMaker also bundles a convenience reader for the [**CRUST 1.0**](https://igppweb.ucsd.edu/~gabi/crust1.html) global crustal model (Laske et al., 2013) — a 1° × 1° grid of 9 layers (water, ice, sediments, crystalline crust, mantle). Given any latitude/longitude, it returns the local crustal column and emits a ready-to-paste `CrustModel` snippet, giving you a sensible starting velocity profile anywhere on Earth. It ships as supplementary data in the repository (not installed by `pip`), under `supplementary/crust1/`.
+
+
 !!! info "Built on a Fortran FK core"
     Motion traces are computed by pairing all sources with all receivers,
     parallelized with MPI, so ShakerMaker runs on a laptop or on a large
@@ -40,7 +42,7 @@ model.
 ## Key features
 
 - **FK ground motion synthesis**, full-wavefield Green's functions in 1D layered viscoelastic media
-- **Domain Reduction Method (DRM)**, boundary motions for sub-domain simulations; export directly to H5DRM (see [H5DRMLoadPattern](https://github.com/OpenSees/OpenSees))
+- **Domain Reduction Method (DRM)**, boundary motions for sub-domain simulations; export directly to HDF5 (see [H5DRMLoadPattern](https://github.com/OpenSees/OpenSees))
 - **Stochastic finite fault ruptures (FFSP)**, spatially-correlated slip distributions, magnitude–area scaling, configurable random seeds
 - **Source time functions**, Brune, Gaussian, Dirac, Discrete, SRF2
 - **Pre-packaged crustal models**, LOH.1 (SCEC), Southern California, AbellThesis; extendable
@@ -60,15 +62,23 @@ three components:
 | **Source** | `PointSource` (single point, strike/dip/rake) or `FaultSource` (extended fault), optionally driven by a `SourceTimeFunction` |
 | **Receiver** | `Station` (single point), `StationList`, `DRMBox`, `SurfaceGrid`, or `PointCloudDRMReceiver` |
 
-These three combine into a `ShakerMaker` instance and dispatch via `.run()`
-(sequential) or `.gen_pairs()` → `.compute_gf()` → `.run_fast()`
-(three-stage, MPI-parallel). Results are stored in each `Station` and
+These three combine into a `ShakerMaker` instance and dispatch either via
+`.run()` (direct, pair-by-pair) or through the three-stage pipeline
+`.gen_pairs()` → `.compute_gf()` → `.run_fast()` — both MPI-parallel. The
+orchestrator `.run_nearest(stage=...)` drives the three stages from a single
+call (running any of stages `0`, `1`, `2`, `'0_1'`, or `'all'`), building a
+database of Green's functions that exploits the cylindrical symmetry of the
+elastic wave-propagation problem: source–receiver pairs are grouped under
+distance tolerances (`delta_h`, `delta_v_rec`, `delta_v_src`), so a Green's
+function computed for one pair is reused for any other pair close enough,
+avoiding redundant FK evaluations. Results are stored in each `Station` and
 optionally written to disk.
 
 ## A minimal simulation
 
-A two-layer crust, a strike-slip point source at 4 km depth, and a single
-receiver 4 km north, plotted with `ZENTPlot`.
+The SCEC **LOH.1** crust, a strike-slip point source at 2 km depth driven by a
+Gaussian source time function, and a single receiver at `(6, 8)` km, plotted
+with `ZENTPlot`.
 
 ```python
 from shakermaker.shakermaker import ShakerMaker
@@ -77,22 +87,28 @@ from shakermaker.pointsource import PointSource
 from shakermaker.faultsource import FaultSource
 from shakermaker.station import Station
 from shakermaker.stationlist import StationList
+from shakermaker.stf_extensions.gaussian import Gaussian
 from shakermaker.tools.plotting import ZENTPlot
 
+# SCEC LOH.1 crust: 1 km slow layer over a half-space
 crust = CrustModel(2)
 crust.add_layer(1.0, 4.0, 2.0, 2.6, 10000., 10000.)
 crust.add_layer(0.0, 6.0, 3.464, 2.7, 10000., 10000.)
 
-source = PointSource([0, 0, 4], [90, 90, 0])
-fault = FaultSource([source], metadata={"name": "single-point-source"})
+# strike-slip double couple at 2 km, Gaussian source time function
+sigma = 0.06
+stf = Gaussian(t0=6 * sigma, freq=1 / sigma, M0=1e18 / 5e14 / 2)
+source = PointSource([0, 0, 2], [0, 90, 0], stf=stf)
+fault = FaultSource([source], metadata={"name": "LOH1"})
 
-s = Station([0, 4, 0], metadata={"name": "a station"})
-stations = StationList([s], metadata=s.metadata)
+# one receiver at (6, 8) km
+s = Station([6, 8, 0], metadata={"name": "STA"})
+stations = StationList([s], {})
 
 model = ShakerMaker(crust, fault, stations)
-model.run()
+model.run(dt=0.005, nfft=4096, dk=0.05, tb=1000)
 
-ZENTPlot(s, xlim=[0, 60], show=True)
+ZENTPlot(s, xlim=[0, 20], show=True)
 ```
 
 ![Quick example output](assets/images/example_0_quick_example.png){ width=560 }
@@ -124,7 +140,9 @@ responses, and spectral content.
 
     *Show me a working model.*
 
-    The numbered `examples/` scripts (0–9) plus cloud-point patterns.
+    The `examples/` tree, twelve topic folders (crust → sources → STF →
+    receivers → engine → writers → DRM → SW4 → FFSP → validation), each with
+    runnable scripts and notebooks.
 
 -   :material-layers-triple:{ .lg .middle } &nbsp; __[Build a model](guides/crust_model.md)__
 

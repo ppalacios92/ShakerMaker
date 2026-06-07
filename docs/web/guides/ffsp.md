@@ -119,29 +119,69 @@ Visualise (each is one call):
 ## From rupture to ground motion
 
 An `FFSPSource` describes the *rupture*; to get ground motion you feed its
-subfaults, each carrying its own slip, mechanism, rupture time, and slip-rate
-function, into the FK engine as a `FaultSource`, then run as usual:
+subfaults, each carrying its own location, mechanism, slip, rupture time, and
+slip-rate function, into the FK engine as a `FaultSource`.
+
+!!! warning "There is no built-in converter"
+    `FFSPSource` does **not** provide a `to_faultsource()` method. After
+    `run()`, `get_subfaults()` (or `get_realization(i)`) returns a plain
+    `dict` of per-subfault NumPy arrays — you build the `FaultSource`
+    yourself, one `PointSource` per subfault. This is the honest, explicit
+    way to drive the FK engine from an FFSP realisation.
+
+The dict holds these aligned arrays (one entry per subfault):
+
+| Key | Meaning |
+|---|---|
+| `x`, `y`, `z` | subfault position (km) |
+| `strike`, `dip`, `rake` | mechanism (deg) |
+| `slip` | slip amplitude (m) |
+| `rupture_time` | onset time → `PointSource(..., tt=)` |
+| `rise_time`, `peak_time` | slip-rate shape → feed the STF |
+
+Build the `FaultSource` by iterating the dict. Here each subfault gets an
+`SRF2` slip-rate pulse whose total duration is its `rise_time`, peak at
+`peak_time`, and amplitude scaled by its `slip`:
 
 ```python
+from shakermaker.pointsource import PointSource
+from shakermaker.faultsource import FaultSource
+from shakermaker.stf_extensions.srf2 import SRF2
+
 source.run()                       # 1. generate the ensemble
 source.set_active_realization(0)   # 2. pick the best/active realisation
-fault = source.to_faultsource()    # 3. subfaults -> FaultSource (one PointSource each)
+sf = source.get_subfaults()        # 3. dict of per-subfault arrays
+
+dt = 0.01
+sources = []
+for i in range(len(sf["x"])):
+    Tr = float(sf["rise_time"][i])     # total rise time (s)
+    Tp = float(sf["peak_time"][i])     # time to peak (s)
+    stf = SRF2(Tr=Tr, Tp=Tp, Te=Tr - Tp, dt=dt,
+               slip=float(sf["slip"][i]), a=1.0, b=1.0)
+    ps = PointSource(
+        [float(sf["x"][i]), float(sf["y"][i]), float(sf["z"][i])],
+        [float(sf["strike"][i]), float(sf["dip"][i]), float(sf["rake"][i])],
+        stf=stf,
+        tt=float(sf["rupture_time"][i]),   # rupture onset
+    )
+    sources.append(ps)
+
+fault = FaultSource(sources, metadata={"name": "ffsp_realization_0"})
 
 model = ShakerMaker(crust, fault, stations)
 model.run_nearest(stage='all', h5_database_name='./ffsp_run/gf.h5',
-                  dt=0.01, nfft=4096, dk=0.1, writer=writer)
+                  dt=dt, nfft=4096, dk=0.1, writer=writer)
 ```
+
+You can swap `SRF2` for `Brune` (or `Discrete`) as the per-subfault slip-rate
+function — any STF works, as long as you scale it by the subfault `slip`.
 
 Because every realisation shares the **same fault geometry and receiver
 layout**, the FK Green's functions are common to the whole ensemble: compute
 them once (Stages 0–1) and re-run only Stage 2 per realisation. That is what
 makes a 50–500-member probabilistic study tractable, see
 [the OP pipeline](running.md#the-op-pipeline-run_nearest).
-
-!!! note
-    Check the exact converter name in your build (`to_faultsource` /
-    `get_subfaults`), the FFSP→FK bridge has evolved; the code is the source
-    of truth.
 
 ## Reference
 

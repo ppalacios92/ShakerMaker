@@ -13,5 +13,7 @@ The reference is generated directly from the package docstrings.
 | [Sources](sources.md) | `PointSource`, `FaultSource` |
 | [Source time functions](stf.md) | `Brune`, `Gaussian`, `Dirac`, `Discrete`, `SRF2` |
 | [Receivers](receivers.md) | `Station`, `StationList`, `DRMBox`, `SurfaceGrid`, `PointCloudDRMReceiver` |
+| [Writers](writers.md) | `StationListWriter`, `HDF5StationListWriter`, `DRMHDF5StationListWriter` |
 | [FFSP](ffsp.md) | `FFSPSource` |
+| [SW4 export](sw4.md) | SW4 exporter |
 | [Plotting](plotting.md) | `ZENTPlot`, `StationPlot`, `SourcePlot` |

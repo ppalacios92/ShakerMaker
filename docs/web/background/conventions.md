@@ -84,7 +84,7 @@ Be consistent with these everywhere:
 | Time | s | `dt = 0.005` |
 | Frequency | Hz | `f0 = 2.0` |
 | Angles | degrees | `[strike, dip, rake]` |
-| Output motion | velocity (cm/s) | `s.z, s.e, s.n` |
+| Output motion | velocity — units follow the STF source | `s.z, s.e, s.n` |
 
 ## Source angles: strike, dip, rake
 
@@ -110,9 +110,9 @@ radians internally.
 | | Theory (equations) | ShakerMaker (code) |
 |---|---|---|
 | Vertical axis | $z$ up, source at $z=-h$ | $z$ down, depth $=+h$ |
-| Horizontal |  | $x$ = North, $y$ = East |
+| Horizontal | radial $R$, transverse $T$ (per source–receiver pair) | $x$ = North, $y$ = East |
 | Output | $(Z, R, T)$ kernels | $(Z, E, N)$ on the station |
 | Lengths | km | km |
-| Angles |  | degrees (Aki–Richards) |
+| Angles | strike $\phi$, dip $\delta$, rake $\lambda$ (Aki–Richards) | degrees (Aki–Richards) |
 
 Back to [**Overview**](overview.md) · on to [**Finite faults & FFSP →**](finite_fault.md).

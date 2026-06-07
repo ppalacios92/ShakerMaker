@@ -1,4 +1,4 @@
-# FK parameters — the complete reference
+# FK parameters
 
 This page documents **every numerical input** of `ShakerMaker.run` (and of the
 identical core arguments in `compute_gf` / `run_fast` / `run_nearest`), what
@@ -61,7 +61,7 @@ low-pass (the `taper`). The flat passband edge is
 
 $$
 f_\text{max} = (1 - \texttt{taper})\,f_\text{Nyq}
-\qquad\text{(\texttt{fk.f:74}: } w_c = \tfrac{N_\text{FFT}}{2}(1-\texttt{taper})\text{)},
+\qquad\text{(fk.f:74: } w_c = \tfrac{N_\text{FFT}}{2}(1-\texttt{taper})\text{)},
 $$
 
 above which the spectrum rolls smoothly to zero at $f_\text{Nyq}$ (`fk.f:169`).
@@ -147,7 +147,7 @@ $$
 N_k \approx \frac{\texttt{kc}\,x_\text{max}}{\pi\,h_s\,\texttt{dk}} \gtrsim 10
 \quad\text{(quadrature resolved)},
 \qquad
-\texttt{dk} < 0.5 \quad\text{(≥4 samples/Bessel period, \texttt{fk.f:82-84})}.
+\texttt{dk} < 0.5 \quad\text{(≥4 samples/Bessel period, fk.f:82-84)}.
 $$
 
 By **Bouchon's theorem**, sampling $k$ at $\Delta k$ surrounds the source with
@@ -200,7 +200,7 @@ A paper argument suggests it might not be. The integration upper bound is
 
 $$
 k_\text{max}(\omega) = \sqrt{\Big(\tfrac{k_c}{h_s}\Big)^2 + \Big(\tfrac{\texttt{pmax}}{V_{s,\text{src}}}\omega\Big)^2}
-\qquad\text{(\texttt{fk.f:141})},
+\qquad\text{(fk.f:141)},
 $$
 
 so a wave of phase velocity $c=\omega/k$ is captured only if $c \ge
@@ -271,6 +271,32 @@ every input labelled `YOU SET` / `RECOMMEND` / `DERIVED` / `default` /
 The verdict logic is two-tier: `nfft`, `dk`, `tb` and the `tmax` record-gate
 are **hard checks** (failure corrupts the result); clipping the coda is a
 **soft recommendation** flagged `[OK, cuts coda]`.
+
+#### What a *failing* report looks like
+
+When a hard check fails, the block is tagged `[ERROR]` instead of `[OK]`, and
+the RESULT block lists the error and refuses to bless the run. The most common
+hard error is asking for a window longer than the record can hold,
+$\texttt{tmax} > t_\text{end}$ — e.g. requesting `tmax`=120 s with an `nfft`
+that only reaches $t_\text{end}=84.1$ s:
+
+```text
+ tmax = 120 s    output window                           [ERROR, exceeds record]
+   MAX  = t_first - pad + nfft*dt = 4.2 - 2.0 + 81.9 = 84.1 s [fk.f:72]
+   full = max(t0 + r/V_Ray) + coda = 54.7 s
+   gate = tmin < tmax <= 84.1   (tmin = 0.0)              VIOLATED  [fk.f:105]
+   >> tmax 120 > t_end 84.1  -> everything past 84.1 s is wrap-around garbage
+   >> recommend tmax = 54.7 s   (or raise nfft to extend the record)
+ ...
+ RESULT: 1 hard error — fix before running
+   [ERROR] tmax 120 s exceeds record end 84.1 s   (gate violated)
+   >> recommended change:  tmax  120 -> 54.7 s    (capture full signal)
+```
+
+Here `report["passed"]` is `False`; a calling script should read
+`report["recommended"]` and re-run with the corrected values rather than
+proceeding. The fix is either to lower `tmax` to $\le t_\text{end}$ or to raise
+`nfft` so the record is long enough to hold the requested window.
 
 !!! tip "Extra knobs of `check_parameters`"
     `n_per_wavelength` (mesh points/wavelength, default 10), `courant`

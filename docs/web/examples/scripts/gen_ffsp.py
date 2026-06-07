@@ -26,7 +26,7 @@ source = FFSPSource(
     rv_avg=3.0, ratio_rise=0.3,
     strike=358.0, dip=40.0, rake=113.0,
     pdip_max=15.0, prake_max=30.0,
-    nsubx=64, nsuby=32,
+    nsubx=256, nsuby=128,
     nb_taper_trbl=[5, 5, 5, 5],
     seeds=[52, 448, 4446],
     id_ran1=1, id_ran2=1,

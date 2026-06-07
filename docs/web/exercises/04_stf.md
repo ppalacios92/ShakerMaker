@@ -39,7 +39,15 @@ plt.show()
 
 ## What you should see
 
-![STF time domain and spectra](../assets/images/stf_overview.png){ width=680 }
+The built-in STFs, each on its own (time domain):
+
+| Dirac | Brune |
+|---|---|
+| ![Dirac](../assets/images/stf_dirac.png) | ![Brune](../assets/images/stf_brune.png) |
+| **Gaussian** | **Discrete** |
+| ![Gaussian](../assets/images/stf_gaussian.png) | ![Discrete](../assets/images/stf_discrete.png) |
+
+How each maps to the source spectrum:
 
 | STF | Time domain | Spectrum |
 |---|---|---|
@@ -62,7 +70,7 @@ smooth, strictly band-limited pulse (e.g. validation against a known input).
 ## Run the built-in gallery
 
 ```bash
-python examples/example9_stf.py     # plots all five STFs and saves figures
+python examples/03_stf/stf_gallery.py     # instantiates all five STFs
 ```
 
 This reproduces the [STF gallery](../guides/source_time_functions.md#the-full-gallery).

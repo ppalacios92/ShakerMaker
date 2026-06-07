@@ -182,6 +182,13 @@ window, without recomputing the kernel.
 `writer_mode='progressive'` flushes each station to the `.h5drm` and frees its
 memory immediately, so even a large box runs in O(1) RAM.
 
+The payoff is visible: for a 6×6 surface array, the pipeline computes the
+kernel fresh only where the geometry is new (orange) and **reuses** it
+everywhere a near-enough slot already exists (blue) — here 13 of 37 receivers
+are served from cache:
+
+![Nearest method: computed-fresh vs reused Green's functions](../assets/images/nearest_calc_vs_reuse.png){ width=520 }
+
 ## What you get
 
 A file `Surface_10m.h5drm` with three-component velocity, displacement and
