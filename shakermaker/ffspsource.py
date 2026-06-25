@@ -1,3 +1,27 @@
+"""FFSP finite-fault stochastic source model.
+
+``FFSPSource`` wraps the FFSP stochastic-rupture kernel (Pengcheng Liu, (c) 2005;
+modifications by Chen Ji, 2020) and exposes it as a ShakerMaker source. It generates
+physically-admissible stochastic slip / slip-rate distributions on a fault plane from a
+deterministic skeleton (magnitude, geometry, mechanism, hypocentre, spectrum) plus random
+fields, and produces an ensemble of realizations.
+
+What it provides
+----------------
+- Generation: ``run`` computes an ensemble of realizations; ``get_realization``,
+  ``set_active_realization`` and ``get_subfaults`` inspect them.
+- Persistence:
+  - HDF5: ``write_hdf5`` / ``load_hdf5`` / classmethod ``from_hdf5``.
+  - Native FFSP text format: ``write_ffsp_format`` / ``load_ffsp_format`` /
+    classmethod ``from_ffsp_format`` (with the ``_load_*`` / ``_parse_ffsp_inp`` helpers).
+- Plotting (matplotlib, imported lazily): ``plot_histogram``, ``plot_spacial_distribution``,
+  ``plot_rupture_snapshot``, ``plot_quality_metrics``, ``plot_temporal_metrics``,
+  ``plot_spectral_comparison``, ``plot_source_time_function``, ``plot_crust_layers``,
+  ``create_animation``.
+- MPI-aware: ensemble generation is distributed across MPI ranks.
+
+See ``docs/web/guides/ffsp.md`` for the user guide and ``FFSP_CITATION`` for attribution.
+"""
 import os
 import numpy as np
 from typing import Optional, Dict, List
@@ -12,8 +36,13 @@ FFSP_CITATION = (
 
 # Finite Fault Stochastic Process (FFSP) source model
 class FFSPSource:
-    """Finite Fault Stochastic Process source model (Pengcheng Liu, 2005;
-    modifications by Chen Ji, 2020)."""
+    """Finite Fault Stochastic Process source model (Pengcheng Liu, (c) 2005;
+    modifications by Chen Ji, 2020).
+
+    An MPI-aware wrapper over the FFSP kernel that generates an ensemble of stochastic
+    finite-fault realizations and exposes HDF5 and native FFSP-format I/O plus plotting.
+    See the module docstring for the full capability list.
+    """
     
     def __init__(self,
                  id_sf_type: int, freq_min: float, freq_max: float,
