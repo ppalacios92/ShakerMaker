@@ -1,7 +1,21 @@
-"""CRUST 1.0 model as a single class.
+"""CRUST 1.0 global crustal model reader (Laske et al., 2013).
 
-Instantiate Crust1() and use its attributes (vp, vs, rho, bnds,
-topography_km, ...) or its methods (profile_at, plot_profile, ...).
+Ships the 1deg x 1deg CRUST 1.0 grids (9 layers: water, ice, sediments,
+crystalline crust, mantle) as package data so they travel with ``pip install``.
+
+:class:`Crust1` loads the grids next to this file and exposes:
+
+- Attributes: ``vp``, ``vs``, ``rho``, ``bnds`` (per layer) and ``topography_km``.
+- Queries: ``profile_at`` (lat/lon -> layered column), ``type_at`` (geological
+  type), ``cell_index`` / ``cell_midpoint``.
+- ShakerMaker glue: ``print_shakermaker`` (ready-to-paste ``CrustModel`` snippet),
+  ``print_tables``.
+- Plotting (matplotlib, imported lazily): ``plot_profile``, ``plot_global_topo``,
+  ``plot_regional_topo``, ``plot_regional_geological``, ``plot_global_velocity``,
+  ``plot_stacked_columns``.
+
+``__init__`` reexports :class:`Crust1` and prints ``CRUST1_CITATION`` on import;
+please cite Laske et al. (2013) if you use the data.
 """
 
 from pathlib import Path
@@ -75,7 +89,12 @@ SITE_COLORS = plt.cm.tab10.colors
 
 
 class Crust1:
-    """CRUST 1.0 global crustal model at 1deg x 1deg."""
+    """CRUST 1.0 global crustal model at 1deg x 1deg (Laske et al., 2013).
+
+    Load with ``Crust1()`` (zero-config: finds the grids next to this file) and
+    query by latitude/longitude, or dump a ready-to-paste ``CrustModel`` snippet.
+    See the module docstring for the full attribute/method list.
+    """
 
     BENCHMARK_SITES = [
         (-33.420003,  -70.606470, "Providencia, Santiago"),
