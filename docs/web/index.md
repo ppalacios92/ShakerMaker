@@ -31,7 +31,7 @@ specific strike, dip, and rake. Graphical functions visualize the computed
 metrics and the statistics of the stochastic space used to select the best
 model.
 
-ShakerMaker also bundles a convenience reader for the [**CRUST 1.0**](https://igppweb.ucsd.edu/~gabi/crust1.html) global crustal model (Laske et al., 2013) — a 1° × 1° grid of 9 layers (water, ice, sediments, crystalline crust, mantle). Given any latitude/longitude, it returns the local crustal column and emits a ready-to-paste `CrustModel` snippet, giving you a sensible starting velocity profile anywhere on Earth. It ships as supplementary data in the repository (not installed by `pip`), under `supplementary/crust1/`.
+ShakerMaker also bundles a convenience reader for the [**CRUST 1.0**](https://igppweb.ucsd.edu/~gabi/crust1.html) global crustal model (Laske et al., 2013) — a 1° × 1° grid of 9 layers (water, ice, sediments, crystalline crust, mantle). Given any latitude/longitude, it returns the local crustal column and emits a ready-to-paste `CrustModel` snippet, giving you a sensible starting velocity profile anywhere on Earth. It ships inside the package under `shakermaker/crust1/`, so the data travels with `pip install` and is importable as `from shakermaker.crust1 import Crust1`.
 
 
 !!! info "Built on a Fortran FK core"

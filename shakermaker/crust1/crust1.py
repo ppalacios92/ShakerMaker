@@ -87,7 +87,6 @@ class Crust1:
     # Construction / loading
     # ------------------------------------------------------------
     def __init__(self, data_dir=None):
-        print(CRUST1_CITATION)
         self.data_dir = (Path(data_dir) if data_dir else
                          Path(__file__).parent / "crust1.0")
         self.nlat, self.nlon, self.nlayers = 180, 360, 9

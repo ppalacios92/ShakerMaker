@@ -148,3 +148,4 @@ nav:
       - FFSP: api/ffsp.md
       - SW4 export: api/sw4.md
       - Plotting: api/plotting.md
+      - CRUST 1.0: api/crust1.md

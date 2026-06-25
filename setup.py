@@ -225,6 +225,7 @@ np_setup(
         "shakermaker.tools",
         "shakermaker.ffsp",
         "shakermaker.sw4_exporter",
+        "shakermaker.crust1",
     ],
     package_data = {
         'shakermaker.ffsp': [
@@ -234,6 +235,7 @@ np_setup(
             'makefile', 'Makefile_f2py',
             'ffsp.pyf',
         ],
+        'shakermaker.crust1': ['crust1.0/*'],
     },
     ext_modules     = ext_modules,
     cmdclass        = cmdclass,

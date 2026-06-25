@@ -33,7 +33,7 @@ Build and inspect the layered velocity model that underpins every FK run.
 | Script | What it shows |
 |---|---|
 | `crustmodel_build.py` | `CrustModel(nlayers)`, `add_layer(thickness, vp, vs, rho, Qp, Qs)`, `modify_layer`, `properties_at_depths`, and the `SCEC_LOH_1/3` library presets |
-| `crust1_sites.py` | the CRUST1.0 supplementary tool: a crustal profile at a given lat/lon plus a ready-to-paste `CrustModel` snippet |
+| `crust1_sites.py` | the bundled CRUST1.0 reader (`from shakermaker.crust1 import Crust1`): crustal profile at a given lat/lon plus a ready-to-paste `CrustModel` snippet |
 
 Notebook: `notebooks/crustmodel.ipynb` (layer table + velocity-profile plot).
 

@@ -84,6 +84,25 @@ Quick queries (no plotting): `crust.nlayers`, and the per-layer arrays
 | `modify_layer(i, vp=…, …)` | edits layer `i` in place |
 | `plot()` / `plot_profile()` | layer plot / full profile |
 
+
+## CRUST 1.0: a global starting profile
+
+If you don't have a velocity model handy, ShakerMaker bundles a reader for the
+[**CRUST 1.0**](https://igppweb.ucsd.edu/~gabi/crust1.html) global crustal model
+(Laske et al., 2013). The data ships inside the package, so it needs no path
+configuration:
+
+```python
+from shakermaker.crust1 import Crust1   # prints CRUST1_CITATION on import
+
+crust1 = Crust1()                          # zero-config: finds the grids next to crust1.py
+crust1.print_shakermaker((-33.42, -70.61))  # ready-to-paste CrustModel snippet
+```
+
+`profile_at(lat, lon)` returns the local 9-layer column (water/ice/seds/crust/mantle)
+and `print_shakermaker(...)` prints a `CrustModel` you can paste straight in. See
+`examples/01_crustmodel/crust1_sites.py` and the [CRUST 1.0 API →](../api/crust1.md).
+
 ## Reference
 
 [`CrustModel` API →](../api/crustmodel.md)
