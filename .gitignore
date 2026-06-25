@@ -1,4 +1,4 @@
-# build/
+﻿# build/
 # .idea/
 # __pycache__/
 
@@ -8,9 +8,13 @@ dist/
 *.egg-info/
 
 # Compiled extensions
-# *.so
-# *.pyd
+*.so
+*.pyd
 *.dll
+
+# f2py generated sources (do not commit)
+shakermaker/core/coremodule.c
+shakermaker/core/core-f2pywrappers.f
 
 # Build artifacts
 build_log.txt
@@ -38,3 +42,4 @@ docs/web/examples/scripts/_ffsp_scratch/
 # Throwaway design mockup (superseded by the real MkDocs site)
 design_preview/
 PR_PLAN.md
+
