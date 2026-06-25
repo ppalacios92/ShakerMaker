@@ -29,11 +29,16 @@ def collect(full):
 def main():
     full = "--full" in sys.argv
     scripts = collect(full)
+    # Make the repo root importable so examples run from a source checkout
+    # without `pip install` (shakermaker resolves to the local package tree).
+    repo_root = os.path.dirname(HERE)
+    env = dict(os.environ)
+    env["PYTHONPATH"] = repo_root + os.pathsep + env.get("PYTHONPATH", "")
     npass = nskip = nfail = 0
     for s in scripts:
         rel = os.path.relpath(s, HERE)
         r = subprocess.run([sys.executable, s], cwd=os.path.dirname(s),
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, env=env)
         out = (r.stdout + r.stderr)
         if r.returncode == 0:
             print(f"{rel:55s} PASS"); npass += 1
