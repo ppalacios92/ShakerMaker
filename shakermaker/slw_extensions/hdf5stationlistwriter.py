@@ -7,6 +7,13 @@ from scipy.interpolate import interp1d
 from scipy.integrate import cumulative_trapezoid
 
 
+def _interpolate(told, yold, tnew):
+    """Interpolate yold(told) onto tnew, clamping outside the sampled range."""
+    return interp1d(told, yold,
+                    fill_value=(yold[0], yold[-1]),
+                    bounds_error=False)(tnew)
+
+
 class HDF5StationListWriter(StationListWriter):
     """HDF5 writer for StationList results.
 
@@ -168,17 +175,12 @@ class HDF5StationListWriter(StationListWriter):
     def _write_station_progressive(self, index, zz, ee, nn, t):
         """Interpolate, differentiate, integrate and write one station."""
 
-        def interpolate(told, yold, tnew):
-            return interp1d(told, yold,
-                            fill_value=(yold[0], yold[-1]),
-                            bounds_error=False)(tnew)
-
         t_final = self._t_final
         dt      = self._dt
 
-        ve = interpolate(t, ee, t_final)
-        vn = interpolate(t, nn, t_final)
-        vz = interpolate(t, zz, t_final)
+        ve = _interpolate(t, ee, t_final)
+        vn = _interpolate(t, nn, t_final)
+        vz = _interpolate(t, zz, t_final)
 
         Nt = len(ve)
         ae = np.zeros(Nt); ae[1:] = (ve[1:] - ve[:-1]) / dt
@@ -243,15 +245,10 @@ class HDF5StationListWriter(StationListWriter):
         if 'tstart' not in grp_meta: grp_meta.create_dataset("tstart", data=self._tstart)
         if 'tend'   not in grp_meta: grp_meta.create_dataset("tend",   data=self._tend)
 
-        def interpolate(told, yold, tnew):
-            return interp1d(told, yold,
-                            fill_value=(yold[0], yold[-1]),
-                            bounds_error=False)(tnew)
-
         for index, (zz, ee, nn, t) in self._velocities.items():
-            ve = interpolate(t, ee, t_final)
-            vn = interpolate(t, nn, t_final)
-            vz = interpolate(t, zz, t_final)
+            ve = _interpolate(t, ee, t_final)
+            vn = _interpolate(t, nn, t_final)
+            vz = _interpolate(t, zz, t_final)
 
             dt = t_final[1] - t_final[0]
             Nt = len(ve)

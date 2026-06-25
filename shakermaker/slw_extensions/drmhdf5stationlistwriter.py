@@ -10,6 +10,13 @@ import datetime
 import os
 
 
+def _interpolate(told, yold, tnew):
+    """Interpolate yold(told) onto tnew, clamping outside the sampled range."""
+    return interp1d(told, yold,
+                    fill_value=(yold[0], yold[-1]),
+                    bounds_error=False)(tnew)
+
+
 class DRMHDF5StationListWriter(HDF5StationListWriter):
     """HDF5 writer for DRM output (.h5drm format).
 
@@ -216,17 +223,12 @@ class DRMHDF5StationListWriter(HDF5StationListWriter):
     def _write_station_progressive_drm(self, index, zz, ee, nn, t, is_QA):
         """Interpolate, derive, integrate and write one DRM station."""
 
-        def interpolate(told, yold, tnew):
-            return interp1d(told, yold,
-                            fill_value=(yold[0], yold[-1]),
-                            bounds_error=False)(tnew)
-
         t_final = self._t_final
         dt      = self._dt
 
-        ve = interpolate(t, ee, t_final)
-        vn = interpolate(t, nn, t_final)
-        vz = interpolate(t, zz, t_final)
+        ve = _interpolate(t, ee, t_final)
+        vn = _interpolate(t, nn, t_final)
+        vz = _interpolate(t, zz, t_final)
 
         Nt = len(ve)
         ae = np.zeros(Nt); ae[1:] = (ve[1:] - ve[:-1]) / dt
@@ -303,15 +305,10 @@ class DRMHDF5StationListWriter(HDF5StationListWriter):
                 if key not in grp_metadata:
                     grp_metadata.create_dataset(key, data=val)
 
-        def interpolate(told, yold, tnew):
-            return interp1d(told, yold,
-                            fill_value=(yold[0], yold[-1]),
-                            bounds_error=False)(tnew)
-
         for index, (zz, ee, nn, t, is_QA) in self._velocities.items():
-            ve = interpolate(t, ee, t_final)
-            vn = interpolate(t, nn, t_final)
-            vz = interpolate(t, zz, t_final)
+            ve = _interpolate(t, ee, t_final)
+            vn = _interpolate(t, nn, t_final)
+            vz = _interpolate(t, zz, t_final)
 
             dt = t_final[1] - t_final[0]
             Nt = len(ve)
