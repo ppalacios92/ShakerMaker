@@ -25,6 +25,7 @@ python module ffsp_core
             slip_out, rupture_time_out, rise_time_out, peak_time_out, &
             strike_out, dip_out, rake_out, &
             ave_tr_out, ave_tp_out, ave_vr_out, err_spectra_out, pdf_out, &
+            fc_main_1_out, fc_main_2_out, &
             ntime_spec_out, nphf_spec_out, lnpt_spec_out, &
             stf_time_out, stf_out, &
             freq_spec_out, moment_rate_out, dcf_out, &
@@ -92,6 +93,8 @@ python module ffsp_core
             real dimension(id_ran2_in-id_ran1_in+1),intent(out),depend(id_ran1_in,id_ran2_in) :: ave_vr_out
             real dimension(id_ran2_in-id_ran1_in+1),intent(out),depend(id_ran1_in,id_ran2_in) :: err_spectra_out
             real dimension(id_ran2_in-id_ran1_in+1),intent(out),depend(id_ran1_in,id_ran2_in) :: pdf_out
+            real intent(out) :: fc_main_1_out
+            real intent(out) :: fc_main_2_out
             
             ! Output: Spectral data dimensions
             integer intent(out) :: ntime_spec_out
@@ -100,16 +103,16 @@ python module ffsp_core
             
             ! Output: STF time domain (max size 131072, actual size in ntime_spec_out)
             real dimension(131072),intent(out) :: stf_time_out
-            real dimension(131072),intent(out) :: stf_out
+            real dimension(131072,id_ran2_in-id_ran1_in+1),intent(out),depend(id_ran1_in,id_ran2_in) :: stf_out
             
             ! Output: Spectrum frequency domain (max size 65536, actual size in nphf_spec_out)
             real dimension(65536),intent(out) :: freq_spec_out
-            real dimension(65536),intent(out) :: moment_rate_out
+            real dimension(65536,id_ran2_in-id_ran1_in+1),intent(out),depend(id_ran1_in,id_ran2_in) :: moment_rate_out
             real dimension(65536),intent(out) :: dcf_out
             
             ! Output: Octave-averaged spectrum (max size 17, actual size in lnpt_spec_out)
             real dimension(17),intent(out) :: freq_center_out
-            real dimension(17),intent(out) :: logmean_synth_out
+            real dimension(17,id_ran2_in-id_ran1_in+1),intent(out),depend(id_ran1_in,id_ran2_in) :: logmean_synth_out
             real dimension(17),intent(out) :: logmean_dcf_out
 
         end subroutine ffsp_run_wrapper

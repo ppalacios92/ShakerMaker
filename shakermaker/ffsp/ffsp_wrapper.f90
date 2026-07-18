@@ -33,6 +33,7 @@ subroutine ffsp_run_wrapper( &
     strike_out, dip_out, rake_out, &
     ! Output: Statistics
     ave_tr_out, ave_tp_out, ave_vr_out, err_spectra_out, pdf_out, &
+    fc_main_1_out, fc_main_2_out, &
     ! Output: Spectral data dimensions
     ntime_spec_out, nphf_spec_out, lnpt_spec_out, &
     ! Output: STF time domain
@@ -102,16 +103,16 @@ subroutine ffsp_run_wrapper( &
     
     ! STF time domain - will be allocated based on ntime from time_freq module
     real, intent(out) :: stf_time_out(131072)  ! Max size (will use only ntime_spec_out)
-    real, intent(out) :: stf_out(131072)
+    real, intent(out) :: stf_out(131072, id_ran2_in-id_ran1_in+1)
     
     ! Spectrum frequency domain
     real, intent(out) :: freq_spec_out(65536)  ! Max size (will use only nphf_spec_out)
-    real, intent(out) :: moment_rate_out(65536)
+    real, intent(out) :: moment_rate_out(65536, id_ran2_in-id_ran1_in+1)
     real, intent(out) :: dcf_out(65536)
     
     ! Octave-averaged spectrum
     real, intent(out) :: freq_center_out(17)  ! Max size (will use only lnpt_spec_out)
-    real, intent(out) :: logmean_synth_out(17)
+    real, intent(out) :: logmean_synth_out(17, id_ran2_in-id_ran1_in+1)
     real, intent(out) :: logmean_dcf_out(17)
     
     !--------------------------------------------------------------------------
@@ -119,10 +120,11 @@ subroutine ffsp_run_wrapper( &
     !--------------------------------------------------------------------------
     integer :: idum1, idum2, idum3
     integer :: idum1_master, idum2_master, idum3_master
-    integer :: nsource, i, j, k, i_real, best_idx
+    integer :: nsource, i, j, k, i_real
     real :: drp, rdip, rstrike, cosx, sinx, str_ref, dip_ref, area_sub
     real :: xij, yij, xs, ys, xps, yps, zps, factor, rakei, dipi
     real :: ave_tr, ave_tp, ave_vr, err_spectra, pdf
+    real, intent(out) :: fc_main_1_out, fc_main_2_out
     
     !--------------------------------------------------------------------------
     ! 0. Clean up previous state (CRITICAL for repeated calls)
@@ -184,12 +186,20 @@ subroutine ffsp_run_wrapper( &
         fc_main_1 = 10**(2.375 - 0.585*Mw)
     endif
     fc_main_2 = 10**(3.250 - 0.5*Mw)
+    fc_main_1_out = fc_main_1
+    fc_main_2_out = fc_main_2
     
     !--------------------------------------------------------------------------
     ! 5. Initialize main fault
     !--------------------------------------------------------------------------
     call mainfault(dip_in, freq_min_in, freq_max_in, rv_avg_in, &
                    ratio_rise_in, nb_taper_TRBL_in)
+
+    ! The axes and DCF target are identical for every realization.
+    call compute_spectral_common(fc_main_1, fc_main_2, &
+         ntime_spec_out, nphf_spec_out, lnpt_spec_out, &
+         stf_time_out, freq_spec_out, dcf_out, &
+         freq_center_out, logmean_dcf_out)
     
     !--------------------------------------------------------------------------
     ! 6. Setup geometric parameters
@@ -220,9 +230,11 @@ subroutine ffsp_run_wrapper( &
         i_real = i_real + 1
         
         ! Calculate unique seeds for this model (PARALLELIZATION)
-        idum1 = idum1_master + (nsource - 1) * 10000
-        idum2 = idum2_master + (nsource - 1) * 20000
-        idum3 = idum3_master + (nsource - 1) * 30000
+        ! ran3 initializes only for a negative seed.  Reinitializing here makes
+        ! realization N independent of batch boundaries and MPI partitioning.
+        idum1 = -abs(idum1_master + (nsource - 1) * 10000)
+        idum2 = -abs(idum2_master + (nsource - 1) * 20000)
+        idum3 = -abs(idum3_master + (nsource - 1) * 30000)
 
         ! idum1 = seeds_in(1)
         ! idum2 = seeds_in(2)
@@ -235,7 +247,10 @@ subroutine ffsp_run_wrapper( &
         ! idum3 = 4446
    
         ! Generate random field
-        call random_field(idum1, idum2, idum3, ave_tr, ave_tp, ave_vr, err_spectra)
+        call random_field_with_spectra(idum1, idum2, idum3, ave_tr, ave_tp, ave_vr, &
+             err_spectra, stf_out(1:ntime_spec_out,i_real), &
+             moment_rate_out(1:nphf_spec_out,i_real), &
+             logmean_synth_out(1:lnpt_spec_out,i_real))
         
         ! Calculate PDF (quality metric)
         pdf = ((log(ave_tr) - log(rstm_mean + pktm_mean)) / 0.1)**2.0
@@ -286,53 +301,33 @@ subroutine ffsp_run_wrapper( &
         enddo
     enddo
     
-    !--------------------------------------------------------------------------
-    ! 9. Calculate spectral data for best realization
-    !--------------------------------------------------------------------------
-    ! Find best realization (minimum PDF)
-    best_idx = minloc(pdf_out(1:n_realizations_out), 1)
-    
-    ! Compute spectral data
-    call compute_spectral_data(smoment, fc_main_1, fc_main_2, &
-         ntime_spec_out, nphf_spec_out, lnpt_spec_out, &
-         stf_time_out, stf_out, &
-         freq_spec_out, moment_rate_out, dcf_out, &
-         freq_center_out, logmean_synth_out, logmean_dcf_out)
-    
 end subroutine ffsp_run_wrapper
 
 !==============================================================================
-! compute_spectral_data
-! Calculates spectral data (STF, spectrum, octave-averaged) for best realization
-! Based on stf_synth_output from dcf_subs_1.f90
+! compute_spectral_common
+! Calculates axes and the DCF target shared by every realization.
 !==============================================================================
-subroutine compute_spectral_data(rmt, fc1, fc2, &
+subroutine compute_spectral_common(fc1, fc2, &
      ntime_out, nphf_out, lnpt_out, &
-     stf_time, stf, &
-     freq_spec, moment_rate, dcf, &
-     freq_center, logmean_s, logmean_m)
+     stf_time, freq_spec, dcf, freq_center, logmean_m)
     
     use time_freq
     implicit NONE
     
     ! Input
-    real, intent(in) :: rmt, fc1, fc2
+    real, intent(in) :: fc1, fc2
     
     ! Output dimensions
     integer, intent(out) :: ntime_out, nphf_out, lnpt_out
     
     ! Output arrays
-    real, dimension(*), intent(out) :: stf_time, stf
-    real, dimension(*), intent(out) :: freq_spec, moment_rate, dcf
-    real, dimension(*), intent(out) :: freq_center, logmean_s, logmean_m
+    real, dimension(*), intent(out) :: stf_time
+    real, dimension(*), intent(out) :: freq_spec, dcf
+    real, dimension(*), intent(out) :: freq_center, logmean_m
     
     ! Local variables
     integer :: i, j, i1, i2
-    real :: tim, dtmt, sum, f2_temp
-! Windows change: svf moved from stack (131072 reals = 512 KB) to heap.
-! A 512 KB stack array causes stack overflow on Windows where the default
-! thread stack is ~1 MB. Using allocatable puts it on the heap instead.
-    real, allocatable :: svf(:)
+    real :: tim, sum
     
     ! Set output dimensions from time_freq module
     ntime_out = ntime
@@ -340,39 +335,18 @@ subroutine compute_spectral_data(rmt, fc1, fc2, &
     lnpt_out = lnpt - 1
     
     !--------------------------------------------------------------------------
-    ! 1. Calculate STF in time domain
+    ! 1. Calculate shared time axis
     !--------------------------------------------------------------------------
-! Windows change: allocate svf on heap (see declaration change above).
-    allocate(svf(ntime))
-    svf = 0.0
-    call sum_point_svf(svf)
-    
     do i = 1, ntime
         tim = (i - 1) * dt
         stf_time(i) = tim
-        stf(i) = svf(i) / rmt
     enddo
-    
-    !--------------------------------------------------------------------------
-    ! 2. Transform to frequency domain
-    !--------------------------------------------------------------------------
-    call realft(svf, ntime, -1)
-    dtmt = dt / rmt
-    
-    do i = 1, ntime
-        svf(i) = svf(i) * dtmt
-    enddo
-    
-    ! Extract moment rate spectrum
-    do i = 1, nphf - 1
-        moment_rate(i) = sqrt(svf(2*(i-1)+1)**2 + svf(2*(i-1)+2)**2)
-    enddo
-    moment_rate(nphf) = svf(nphf-1)
     
     !--------------------------------------------------------------------------
     ! 3. Calculate DCF target and save frequency spectrum
     !--------------------------------------------------------------------------
     do i = 1, nphf
+        freq(i) = (i - 1 + 1.0e-5) * df
         freq_spec(i) = freq(i)
         dcf(i) = 1.0 / ((1.0 + (freq(i)/fc1)**4.0)**0.25) / &
                         ((1.0 + (freq(i)/fc2)**4.0)**0.25)
@@ -385,13 +359,6 @@ subroutine compute_spectral_data(rmt, fc1, fc2, &
         i1 = 2**(i-1)
         i2 = 2**i - 1
         
-        ! Log-mean synthetic
-        sum = 0.0
-        do j = i1, i2
-            sum = sum + log(moment_rate(j))
-        enddo
-        logmean_s(i) = sum / (i2 - i1 + 1)
-        
         ! Log-mean DCF target
         sum = 0.0
         do j = i1, i2
@@ -403,6 +370,4 @@ subroutine compute_spectral_data(rmt, fc1, fc2, &
         freq_center(i) = 0.5 * (freq(i1) + freq(i2))
     enddo
     
-! Windows change: deallocate heap array allocated above.
-    deallocate(svf)
-end subroutine compute_spectral_data
+end subroutine compute_spectral_common

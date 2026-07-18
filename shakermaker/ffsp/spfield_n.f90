@@ -312,9 +312,12 @@ end subroutine mainfault
 !     Note that here we assume that the peaktime << risetime
 !     Chen Ji, 2020
 !
-subroutine random_field(idum1,idum2,idum3,ave_tr,ave_tp,ave_vr,err_spectra)
+subroutine random_field_with_spectra(idum1,idum2,idum3,ave_tr,ave_tp,ave_vr, &
+                                     err_spectra,stf_out,moment_rate_out, &
+                                     logmean_synth_out)
  use sp_sub_f
  use fdtim_2d
+ use time_freq
  implicit NONE
  integer, intent(INOUT):: idum1,idum2,idum3
  integer, parameter:: itrmax=5
@@ -322,6 +325,9 @@ subroutine random_field(idum1,idum2,idum3,ave_tr,ave_tp,ave_vr,err_spectra)
  logical:: lloop,hloop
  integer:: i,j,k,iset,niter,is_stress
  real::ave_tr,ave_tp,ave_vr,err_spectra
+ real,dimension(ntime),intent(OUT):: stf_out
+ real,dimension(nphf),intent(OUT):: moment_rate_out
+ real,dimension(lnpt-1),intent(OUT):: logmean_synth_out
  real:: sum1,cmti,correct,cr0,cr1,cr2,csqt,cv0,cv1,cv2, &
         vrup,er_syn,er_target,cr_sr,cr_sv,gasdev
 
@@ -583,6 +589,11 @@ enddo
 write(*,*)"re-evaluate Quality of selected source model"
 call misfit_ratio(smoment,fc_main_1,fc_main_2,correct,err_spectra)
 write(*,*)"Misfit_ratio = ", correct,err_spectra
+! Capture the finalized realization while rstm and pktm still retain the
+! physical durations expected by sum_point_svf.  The transformations below
+! are only for the historical FFSP subfault output convention.
+call capture_spectral_realization(smoment,stf_out,moment_rate_out, &
+                                  logmean_synth_out)
 call coherent(cr_sv,nsum,rstm,pktm)
 write(*,*) 'cross-correlation between risetime(y) and peak time =',cr_sv
 do i=1,nsum
@@ -597,7 +608,6 @@ write(*,*) 'cross-correlation between risetime and peak time =',cr_sv
 do i=1,nsum
   pktm(i)=pktm(i)/rstm(i)
 end do
-call stf_synth_output(smoment,fc_main_1,fc_main_2)
 !
 ! scale the unit of seismic moment to N-m
   slip=slip*1.0e+15
@@ -625,6 +635,21 @@ call stf_synth_output(smoment,fc_main_1,fc_main_2)
   call filter_field(amz_prt,slip_clx,slip_cly,1.5,dx,dy,nsubx,nsuby)
   call random_rake(amz_prt,nsum)
 
+end subroutine random_field_with_spectra
+!
+!======================================================================
+! Preserve the standalone FFSP entry point used by ffsp_dcf_v2.f90.
+!
+subroutine random_field(idum1,idum2,idum3,ave_tr,ave_tp,ave_vr,err_spectra)
+ use time_freq
+ implicit NONE
+ integer,intent(INOUT):: idum1,idum2,idum3
+ real,intent(OUT):: ave_tr,ave_tp,ave_vr,err_spectra
+ real,allocatable:: stf(:),moment_rate(:),logmean_synth(:)
+ allocate(stf(ntime),moment_rate(nphf),logmean_synth(lnpt-1))
+ call random_field_with_spectra(idum1,idum2,idum3,ave_tr,ave_tp,ave_vr, &
+                                err_spectra,stf,moment_rate,logmean_synth)
+ deallocate(stf,moment_rate,logmean_synth)
 end subroutine random_field
 !
 !======================================================================

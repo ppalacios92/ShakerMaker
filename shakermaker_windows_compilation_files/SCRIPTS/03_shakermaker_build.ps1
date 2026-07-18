@@ -13,7 +13,10 @@
 #      PowerShell -ExecutionPolicy Bypass -File .\shakermaker_build.ps1
 # ==============================================================================
 
-param([switch]$NonInteractive)
+param(
+    [switch]$NonInteractive,
+    [switch]$FFSPOnly
+)
 
 . "$PSScriptRoot\00_shakermaker_common.ps1"
 
@@ -144,6 +147,19 @@ Write-Host "  Launching build subprocess now..." -ForegroundColor Gray
 Write-Host ""
 Log "Launching CMD build subprocess"
 
+if ($FFSPOnly) {
+    # FFSP development must not reinstall or overwrite the unrelated FK core.
+    # Windows locks imported .pyd files, so a full setup.py install can fail
+    # before the FFSP extension is reached even when the FFSP code is valid.
+    $buildDirectory = "$JUNCTION_PATH\shakermaker\ffsp"
+    $buildCommand = @"
+python -m numpy.f2py -c ffsp.pyf ffsp_wrapper.f90 ffsp_comm.f90 spfield_n.f90 dcf_subs_1.f90 slip_rate.f90 ffsp_tool.f --fcompiler=intelvem --f90flags=/Qopenmp --f77flags=/Qopenmp -m ffsp_core 2>&1
+"@
+} else {
+    $buildDirectory = $JUNCTION_PATH
+    $buildCommand = "python setup.py install 2>&1"
+}
+
 # Build the CMD script as a temp file
 $buildCmdScript = "$env:TEMP\shakermaker_build_cmd.bat"
 
@@ -175,8 +191,8 @@ echo  Setting Intel PATH...
 set PATH=%PATH%;C:\Program Files (x86)\Intel\oneAPI\compiler\latest\bin
 
 echo  Running build...
-cd /d "$JUNCTION_PATH"
-python setup.py install 2>&1
+cd /d "$buildDirectory"
+$buildCommand
 if errorlevel 1 (
     echo  [!!] Build failed - will retry once using cache
     exit /b 2
@@ -232,6 +248,18 @@ if ($process.ExitCode -eq 0) {
 
 # Clean up temp file
 Remove-Item $buildCmdScript -Force -ErrorAction SilentlyContinue
+
+if ($FFSPOnly) {
+    $compiledFFSP = Get-ChildItem "$buildDirectory\ffsp_core*.pyd" |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if (-not $compiledFFSP) {
+        Print-FAIL "FFSP binary was not created"
+        exit 1
+    }
+    Copy-Item $compiledFFSP.FullName "$SITE_PKG\shakermaker\ffsp\$($compiledFFSP.Name)" -Force
+    Print-OK "FFSP binary copied to clark_kent"
+    Log "[OK] FFSP binary installed in clark_kent"
+}
 
 # Start transcript NOW - all CMD subprocesses are done, safe to start
 Start-Transcript -Path "$PSScriptRoot\shakermaker.log" -Append -Force | Out-Null
@@ -302,37 +330,37 @@ if ($written -match "I_MPI_FABRICS") {
 
 
 # ==============================================================================
-Print-Header "STEP 4b - Add Intel paths to system PATH permanently"
+Print-Header "STEP 4b - Add Intel paths to user PATH"
 # ==============================================================================
 
-# This allows mpiexec and Intel DLLs to be found from any CMD or terminal
-# without needing to run setvars.bat manually each time.
+# User scope is sufficient for terminals and avoids requiring administrator
+# privileges merely to compile or run ShakerMaker.
 
 $pathsToAdd = @(
     "C:\Program Files (x86)\Intel\oneAPI\compiler\latest\bin",
     "C:\Program Files (x86)\Intel\oneAPI\mpi\latest\bin"
 )
 
-$systemPath = [Environment]::GetEnvironmentVariable("PATH", "Machine")
+$userPath = [Environment]::GetEnvironmentVariable("PATH", "User")
 
 foreach ($p in $pathsToAdd) {
-    if ($systemPath -notlike "*$p*") {
-        $systemPath = "$systemPath;$p"
-        Print-INFO "Adding to system PATH: $p"
+    if ($userPath -notlike "*$p*") {
+        $userPath = "$userPath;$p"
+        Print-INFO "Adding to user PATH: $p"
         Log "[--] Adding to PATH: $p"
     } else {
-        Print-OK "Already in system PATH: $p"
+        Print-OK "Already in user PATH: $p"
         Log "[OK] Already in PATH: $p"
     }
 }
 
 try {
-    [Environment]::SetEnvironmentVariable("PATH", $systemPath, "Machine")
-    Print-OK "System PATH updated - Intel MPI and DLLs now available permanently"
-    Log "[OK] System PATH updated"
+    [Environment]::SetEnvironmentVariable("PATH", $userPath, "User")
+    Print-OK "User PATH updated - Intel MPI and DLLs are available to this user"
+    Log "[OK] User PATH updated"
 } catch {
-    Print-FAIL "Failed to update system PATH - try running as Administrator: $_"
-    Log "[!!] System PATH update failed: $_"
+    Print-FAIL "Failed to update user PATH: $_"
+    Log "[!!] User PATH update failed: $_"
 }
 
 # ==============================================================================
@@ -352,7 +380,7 @@ call "$SETVARS_BAT" intel64 >nul 2>&1
 call "$VENV_PATH\Scripts\activate.bat" >nul 2>&1
 set LIB=%LIB%;$INTEL_LIB
 set PATH=%PATH%;$INTEL_BIN
-python -c "from shakermaker import core; print('core OK')"
+python -c "from shakermaker import core; from shakermaker.ffsp import ffsp_core; print('core OK'); print('ffsp_core OK')"
 if errorlevel 1 (
     echo [!!] core import failed
     exit /b 1
