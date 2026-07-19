@@ -76,6 +76,39 @@ def _validate_ffsp_kernel_contract(params):
         raise ValueError("nsubx and nsuby must be positive")
     if params['id_ran2'] < params['id_ran1']:
         raise ValueError("id_ran2 must be greater than or equal to id_ran1")
+    if params['id_ran1'] < 1:
+        raise ValueError("id_ran1 must be greater than or equal to 1")
+
+    seeds = params['seeds']
+    if len(seeds) != 3:
+        raise ValueError("seeds must contain exactly three integers")
+
+    # The f2py ABI and the FFSP kernel use default 32-bit Fortran INTEGERs.  Seed
+    # offsets are based on the global realization id, so validate them with Python
+    # integers before NumPy/Fortran can silently wrap.  seed1 is negated by the
+    # kernel for nsource > 1; excluding abs(INT32_MIN) also avoids its undefined
+    # two's-complement overflow in Fortran.
+    int32 = np.iinfo(np.int32)
+    for index, seed in enumerate(seeds, start=1):
+        if not isinstance(seed, (int, np.integer)):
+            raise TypeError(f"seed{index} must be an integer")
+        if not int32.min <= int(seed) <= int32.max:
+            raise ValueError(f"seed{index} is outside the int32 range")
+
+    for realization_id in {params['id_ran1'], params['id_ran2']}:
+        derived = (
+            int(seeds[0]) + (realization_id - 1) * 10000,
+            int(seeds[1]) + (realization_id - 1) * 20000,
+            int(seeds[2]) + (realization_id - 1) * 30000,
+        )
+        if realization_id > 1 and abs(derived[0]) > int32.max:
+            raise ValueError(
+                f"derived seed1 for realization {realization_id} exceeds int32")
+        for index, value in enumerate(derived[1:], start=2):
+            if not int32.min <= value <= int32.max:
+                raise ValueError(
+                    f"derived seed{index} for realization "
+                    f"{realization_id} exceeds int32")
 
     dx = params['fault_length'] / params['nsubx']
     dy = params['fault_width'] / params['nsuby']
@@ -170,7 +203,9 @@ class FFSPSource:
         nb_taper_trbl : List[int]
             Taper zones [top, right, bottom, left]
         seeds : List[int]
-            Random seeds [seed1, seed2, seed3]
+            Master random seeds [seed1, seed2, seed3]. Realizations are derived
+            deterministically from these seeds and their global realization ID;
+            realization 1 retains the historical FFSP reference stream.
         id_ran1, id_ran2 : int
             Realization range [start, end]
         angle_north_to_x : float

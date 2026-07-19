@@ -229,26 +229,27 @@ subroutine ffsp_run_wrapper( &
     do nsource = id_ran1_in, id_ran2_in
         i_real = i_real + 1
         
-        ! Calculate unique seeds for this model (PARALLELIZATION)
-        ! Positive seeds, exactly as the original FFSP executable.  Do NOT negate
-        ! them: ran3 (ffsp_tool.f, actually NR ran1) re-seeds whenever idum <= 0,
-        ! so negating changes both the initial value -- max(-idum,1) maps a
-        ! positive seed to 1 -- and the number of re-seedings per realization.
-        ! Either change breaks bitwise agreement with the reference engine, which
-        ! is the traceability anchor of the whole chain.
-        idum1 = idum1_master + (nsource - 1) * 10000
+        ! Derive the random stream from the master seeds and the GLOBAL realization
+        ! id.  This must not depend on the MPI rank, batch limits, or call history.
+        !
+        ! TRACEABILITY (seed audit, 2026-07): ran3 in ffsp_tool.f is Numerical
+        ! Recipes ran1 and keeps iv/iy in SAVE variables.  On a fresh process a
+        ! positive idum enters its initialization branch and max(-idum,1) maps
+        ! every positive seed to 1.  Consequently, the first realization handled
+        ! by every MPI rank used to start from the same slip random field.
+        !
+        ! A negative idum1 forces an explicit reset before EVERY realization.  The
+        ! first realization uses -1 to retain the historical reference FFSP stream;
+        ! subsequent realizations use seed1 plus the global-id offset.  idum2 and
+        ! idum3 intentionally keep the reference positive-offset convention: they
+        ! continue from the known state established by idum1 inside this realization.
+        if (nsource == 1) then
+            idum1 = -1
+        else
+            idum1 = -abs(idum1_master + (nsource - 1) * 10000)
+        endif
         idum2 = idum2_master + (nsource - 1) * 20000
         idum3 = idum3_master + (nsource - 1) * 30000
-
-        ! idum1 = seeds_in(1)
-        ! idum2 = seeds_in(2)
-        ! idum3 = seeds_in(3)
-
-        ! write(*,*) 'DEBUG fortran: nsource=', nsource
-        ! write(*,*) 'DEBUG fortran: idum1,2,3=', idum1, idum2, idum3
-        ! idum1 = 52  ! Hardcoded para debug
-        ! idum2 = 448
-        ! idum3 = 4446
    
         ! Generate random field
         call random_field_with_spectra(idum1, idum2, idum3, ave_tr, ave_tp, ave_vr, &

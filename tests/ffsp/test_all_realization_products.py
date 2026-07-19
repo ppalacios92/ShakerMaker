@@ -7,7 +7,7 @@ import h5py
 import numpy as np
 
 from shakermaker.crustmodel import CrustModel
-from shakermaker.ffspsource import FFSPSource
+from shakermaker.ffspsource import FFSPSource, _validate_ffsp_kernel_contract
 
 
 KINEMATIC_FIELDS = (
@@ -153,6 +153,28 @@ class TestAllRealizationProducts(unittest.TestCase):
         })
         with self.assertRaisesRegex(ValueError, "outside the FFSP octave range"):
             source.run()
+
+
+class TestFFSPInputValidation(unittest.TestCase):
+    def test_realization_ids_are_one_based(self):
+        source = make_source(0, 1)
+        with self.assertRaisesRegex(ValueError, "id_ran1 must be greater"):
+            _validate_ffsp_kernel_contract(source.params)
+
+    def test_seed_vector_has_exactly_three_entries(self):
+        source = make_source(1, 1)
+        source.params["seeds"] = [52, 448]
+        with self.assertRaisesRegex(ValueError, "exactly three integers"):
+            _validate_ffsp_kernel_contract(source.params)
+
+    def test_derived_seed_overflow_is_rejected_before_fortran(self):
+        source = make_source(71584, 71584)
+        with self.assertRaisesRegex(ValueError, "derived seed3.*exceeds int32"):
+            _validate_ffsp_kernel_contract(source.params)
+
+    def test_last_safe_realization_seed_is_accepted(self):
+        source = make_source(71583, 71583)
+        _validate_ffsp_kernel_contract(source.params)
 
 
 if __name__ == "__main__":
