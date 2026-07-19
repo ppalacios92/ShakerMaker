@@ -230,11 +230,15 @@ subroutine ffsp_run_wrapper( &
         i_real = i_real + 1
         
         ! Calculate unique seeds for this model (PARALLELIZATION)
-        ! ran3 initializes only for a negative seed.  Reinitializing here makes
-        ! realization N independent of batch boundaries and MPI partitioning.
-        idum1 = -abs(idum1_master + (nsource - 1) * 10000)
-        idum2 = -abs(idum2_master + (nsource - 1) * 20000)
-        idum3 = -abs(idum3_master + (nsource - 1) * 30000)
+        ! Positive seeds, exactly as the original FFSP executable.  Do NOT negate
+        ! them: ran3 (ffsp_tool.f, actually NR ran1) re-seeds whenever idum <= 0,
+        ! so negating changes both the initial value -- max(-idum,1) maps a
+        ! positive seed to 1 -- and the number of re-seedings per realization.
+        ! Either change breaks bitwise agreement with the reference engine, which
+        ! is the traceability anchor of the whole chain.
+        idum1 = idum1_master + (nsource - 1) * 10000
+        idum2 = idum2_master + (nsource - 1) * 20000
+        idum3 = idum3_master + (nsource - 1) * 30000
 
         ! idum1 = seeds_in(1)
         ! idum2 = seeds_in(2)
