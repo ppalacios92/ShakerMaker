@@ -36,6 +36,12 @@ FFSP_CITATION = (
 
 FFSP_HDF5_SCHEMA_VERSION = "2.0"
 
+#: Magnitude-to-moment constant used internally by the FFSP kernel
+#: (``ffsp_wrapper.f90``): ``M0 = 10 ** (1.5 * Mw + 9.05)`` in N*m.  Hanks &
+#: Kanamori (1979) use 9.1 in SI; the fixed offset of 0.05/1.5 = 0.033 in
+#: magnitude is a convention difference, not a numerical error.
+FFSP_MAGNITUDE_CONSTANT = 9.05
+
 
 def _write_hdf_mapping(group, mapping):
     """Write a nested result mapping without losing its logical structure."""
@@ -2402,20 +2408,32 @@ class FFSPSource:
 
     def plot_source_time_function(self, figsize=(10, 6),xlim=None,
                                 save_fig=False, model_name='source', image_type='png'):
-        """Plot Source Time Function (STF)."""
+        """Plot Source Time Function (STF).
+
+        The stored STF is normalised to unit area by the kernel, so its unit is
+        1/s, not N*m/s.  Multiply by the scalar moment to obtain a physical
+        moment rate: ``M0 = 10 ** (1.5 * magnitude + 9.05)``, using FFSP's own
+        magnitude constant 9.05 rather than the SI 9.1 of Hanks & Kanamori.
+        """
         import matplotlib.pyplot as plt
         if self.subfaults is None or 'stf_time' not in self.subfaults:
             print("No source statistics available. Run simulation first.")
             return
-        
+
         stf = self.subfaults['stf_time']
+        # The kernel stores the STF with unit area, so it is a rate in 1/s.
+        # Scaling by the scalar moment turns it into a physical moment rate.
+        M0 = 10.0 ** (1.5 * float(self.params['magnitude']) + FFSP_MAGNITUDE_CONSTANT)
+        moment_rate = np.asarray(stf['stf'], dtype=float) * M0
+
         plt.figure(figsize=figsize)
-        plt.plot(stf['time'], stf['stf'], color='black', lw=1.5, label='STF')
-        plt.fill_between(stf['time'], 0, stf['stf'], alpha=0.3, color='tab:cyan')
-        max_idx = np.argmax(stf['stf'])
-        plt.plot(stf['time'][max_idx], stf['stf'][max_idx], 'o', color='tab:red', markersize=12, label=f'Peak at t={stf["time"][max_idx]:.2f} s')
+        plt.plot(stf['time'], moment_rate, color='black', lw=1.5, label='STF')
+        plt.fill_between(stf['time'], 0, moment_rate, alpha=0.3, color='tab:cyan')
+        max_idx = np.argmax(moment_rate)
+        plt.plot(stf['time'][max_idx], moment_rate[max_idx], 'o', color='tab:red', markersize=12,
+                 label=f'Peak {moment_rate[max_idx]:.3e} N m/s at t={stf["time"][max_idx]:.2f} s')
         plt.xlabel('Time (s)', fontsize=12)
-        plt.ylabel('Moment Rate', fontsize=12)
+        plt.ylabel(r'$\dot{M}_0$ (N m/s)', fontsize=12)
         plt.title('Source Time Function (STF)', fontsize=14, fontweight='bold')
         plt.legend(fontsize=11)
         plt.grid(alpha=0.3)
