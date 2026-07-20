@@ -1,3 +1,8 @@
 build/
 .idea/
 __pycache__/
+
+# Simulation outputs (large binaries, regenerate by running the examples)
+*.h5drm
+*.h5drm.vmax.json
+examples/**/drm_*_output/
