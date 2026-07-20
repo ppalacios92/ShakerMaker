@@ -186,7 +186,7 @@ Program ffsp_dcf_v3
 ! write(*,*) 'DEBUG fortran: idum_master=', idum1_master, idum2_master, idum3_master
 
  do nsource=id_ran1,id_ran2
-    ! Calcular seeds únicas para este modelo
+    ! Derive seeds unique to this source model
     idum1 = idum1_master + (nsource - 1) * 10000
     idum2 = idum2_master + (nsource - 1) * 20000
     idum3 = idum3_master + (nsource - 1) * 30000
