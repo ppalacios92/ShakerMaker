@@ -1,4 +1,4 @@
-﻿# DRM boxes at SCEC LOH.1 station locations.
+# DRM boxes at SCEC LOH.1 station locations.
 
 import numpy as np
 from mpi4py import MPI
