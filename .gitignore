@@ -35,6 +35,11 @@ __pycache__/
 # folders
 .claude
 
+# Simulation outputs (large binaries, regenerate by running the examples)
+*.h5drm
+*.h5drm.vmax.json
+examples/**/drm_*_output/
+
 # MkDocs build output
 site/
 docs/web/examples/scripts/_ffsp_scratch/
