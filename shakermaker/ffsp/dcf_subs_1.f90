@@ -183,23 +183,22 @@ end subroutine misfit_lsq
 !
 !================================================================
 !
-subroutine stf_synth_output(rmt,fc1,fc2)
+subroutine capture_spectral_realization(rmt,stf,moment_rate,logmean_s)
  use time_freq
  implicit none
  integer:: i,j,i1,i2
- real:: rmt,fc1,fc2,energy
- real:: svf(ntime),moment_rate(nphf),dcf(nphf)
- real:: density,vs,coef,pi,tim,dtmt,sum
- real:: logmean_m(lnpt),logmean_s(lnpt),f2(lnpt)
-!svf=0.0
+ real:: rmt,dtmt,sum
+ real,dimension(ntime),intent(OUT):: stf
+ real,dimension(nphf),intent(OUT):: moment_rate
+ real,dimension(lnpt-1),intent(OUT):: logmean_s
+! Keep the large work array on the heap to avoid the small Windows stack.
+ real,allocatable:: svf(:)
+ allocate(svf(ntime))
+ svf=0.0
  call sum_point_svf(svf)
- open(19,file='calsvf_tim.dat',status='replace')
- write(19,*) ntime
  do i=1,ntime
-    tim=(i-1)*dt
-    write(19,*) tim,svf(i)/rmt
+    stf(i)=svf(i)/rmt
  enddo
- close(19)
 
  call realft(svf,ntime,-1)
  dtmt=dt/rmt
@@ -218,29 +217,6 @@ subroutine stf_synth_output(rmt,fc1,fc2)
        sum=sum+log(moment_rate(j))
     enddo
     logmean_s(i)=sum/(i2-i1+1)
-    f2(i)=0.5*(freq(i1)+freq(i2))
  enddo
-
- open(19,file='calsvf.dat')
- write(19,*) nphf
- do i=1,nphf
-    dcf(i)=1./((1.+(freq(i)/fc1)**4.0)**0.25)/((1.+(freq(i)/fc2)**4.0)**0.25)
-    write(19,*) freq(i),moment_rate(i),dcf(i)
- enddo
- close(19)
- do i=1,lnpt-1
-    i1=2**(i-1)
-    i2=2**i-1
-    sum=0.0
-    do j=i1,i2
-       sum=sum+log(dcf(j))
-    enddo
-    logmean_m(i)=sum/(i2-i1+1)
- enddo
- open(19,file='logsvf.dat')
- write(19,*)lnpt-1
- do i=1,lnpt-1
-    write(19,*)f2(i),logmean_s(i),logmean_m(i)
- enddo
- close(19)
-end subroutine stf_synth_output
+ deallocate(svf)
+end subroutine capture_spectral_realization

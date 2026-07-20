@@ -26,12 +26,120 @@ import os
 import numpy as np
 from typing import Optional, Dict, List
 from .crustmodel import CrustModel
+from .version import shakermaker_version
 
 FFSP_CITATION = (
     "FFSP finite-fault source - (c) 2005 Pengcheng Liu; modifications by Chen Ji "
     "(2020); based on Liu et al. (2006). Code obtained from the original authors "
     "and adapted for use within ShakerMaker."
 )
+
+FFSP_HDF5_SCHEMA_VERSION = "2.0"
+
+#: Magnitude-to-moment constant used internally by the FFSP kernel
+#: (``ffsp_wrapper.f90``): ``M0 = 10 ** (1.5 * Mw + 9.05)`` in N*m.  Hanks &
+#: Kanamori (1979) use 9.1 in SI; the fixed offset of 0.05/1.5 = 0.033 in
+#: magnitude is a convention difference, not a numerical error.
+FFSP_MAGNITUDE_CONSTANT = 9.05
+
+
+def _write_hdf_mapping(group, mapping):
+    """Write a nested result mapping without losing its logical structure."""
+    for key, value in mapping.items():
+        if isinstance(value, dict):
+            _write_hdf_mapping(group.create_group(key), value)
+        elif np.isscalar(value):
+            group.attrs[key] = value
+        else:
+            array = np.asarray(value)
+            options = {'compression': 'gzip', 'shuffle': True} if array.size else {}
+            group.create_dataset(key, data=array, **options)
+
+
+def _read_hdf_mapping(group):
+    """Reconstruct a nested result mapping written by _write_hdf_mapping."""
+    result = {key: value for key, value in group.attrs.items()}
+    for key, value in group.items():
+        result[key] = _read_hdf_mapping(value) if hasattr(value, 'items') else value[:]
+    return result
+
+
+def _validate_ffsp_kernel_contract(params):
+    """Reject inputs that would trigger a Fortran STOP or exceed ABI buffers."""
+    positive = ('fault_length', 'fault_width', 'rv_avg', 'freq_min', 'freq_max')
+    for name in positive:
+        if params[name] <= 0:
+            raise ValueError(f"{name} must be positive")
+    if params['freq_min'] >= params['freq_max']:
+        raise ValueError("freq_min must be smaller than freq_max")
+    if params['nsubx'] <= 0 or params['nsuby'] <= 0:
+        raise ValueError("nsubx and nsuby must be positive")
+    if params['id_ran2'] < params['id_ran1']:
+        raise ValueError("id_ran2 must be greater than or equal to id_ran1")
+    if params['id_ran1'] < 1:
+        raise ValueError("id_ran1 must be greater than or equal to 1")
+
+    seeds = params['seeds']
+    if len(seeds) != 3:
+        raise ValueError("seeds must contain exactly three integers")
+
+    # The f2py ABI and the FFSP kernel use default 32-bit Fortran INTEGERs.  Seed
+    # offsets are based on the global realization id, so validate them with Python
+    # integers before NumPy/Fortran can silently wrap.  seed1 is negated by the
+    # kernel for nsource > 1; excluding abs(INT32_MIN) also avoids its undefined
+    # two's-complement overflow in Fortran.
+    int32 = np.iinfo(np.int32)
+    for index, seed in enumerate(seeds, start=1):
+        if not isinstance(seed, (int, np.integer)):
+            raise TypeError(f"seed{index} must be an integer")
+        if not int32.min <= int(seed) <= int32.max:
+            raise ValueError(f"seed{index} is outside the int32 range")
+
+    for realization_id in {params['id_ran1'], params['id_ran2']}:
+        derived = (
+            int(seeds[0]) + (realization_id - 1) * 10000,
+            int(seeds[1]) + (realization_id - 1) * 20000,
+            int(seeds[2]) + (realization_id - 1) * 30000,
+        )
+        if realization_id > 1 and abs(derived[0]) > int32.max:
+            raise ValueError(
+                f"derived seed1 for realization {realization_id} exceeds int32")
+        for index, value in enumerate(derived[1:], start=2):
+            if not int32.min <= value <= int32.max:
+                raise ValueError(
+                    f"derived seed{index} for realization "
+                    f"{realization_id} exceeds int32")
+
+    dx = params['fault_length'] / params['nsubx']
+    dy = params['fault_width'] / params['nsuby']
+    ncxp = int(params['x_hypc'] / dx) + 1
+    ncyp = int(params['y_hypc'] / dy) + 1
+    if not (1 <= ncxp <= params['nsubx'] and 1 <= ncyp <= params['nsuby']):
+        raise ValueError("The hypocenter must lie inside the discretized fault")
+
+    ix = max(ncxp, params['nsubx'] - ncxp)
+    iy = max(ncyp, params['nsuby'] - ncyp)
+    maximum_distance = np.hypot(ix * dx, iy * dy)
+    minimum_average_velocity = params['rv_avg'] * 1.2 / 1.45
+    required_samples = int(maximum_distance / minimum_average_velocity / 0.001 + 1.0) * 10
+    ntime = 1
+    while ntime < required_samples:
+        ntime *= 2
+
+    if ntime > 131072:
+        raise ValueError(
+            f"FFSP requires ntime={ntime}, exceeding the f2py buffer limit 131072")
+
+    df = 1.0 / (ntime * 0.001)
+    lnpt = int(np.log(ntime) / np.log(2.0) + 0.1)
+    nfe1 = int(1.1 * params['freq_min'] / df) + 1
+    nfe2 = int(0.9 * params['freq_max'] / df) + 1
+    nbb = int(np.log(nfe1) / np.log(2.0))
+    nee = int(np.log(nfe2) / np.log(2.0)) + 1
+    if nbb < 1 or nee > lnpt - 1:
+        raise ValueError(
+            "The requested frequency band is outside the FFSP octave range: "
+            f"nbb={nbb}, nee={nee}, valid=[1, {lnpt - 1}]")
 
 
 # Finite Fault Stochastic Process (FFSP) source model
@@ -65,7 +173,7 @@ class FFSPSource:
                  verbose: bool = True):
         """
         Initialize FFSP source model.
-        
+
         Parameters
         ----------
         id_sf_type : int
@@ -95,7 +203,9 @@ class FFSPSource:
         nb_taper_trbl : List[int]
             Taper zones [top, right, bottom, left]
         seeds : List[int]
-            Random seeds [seed1, seed2, seed3]
+            Master random seeds [seed1, seed2, seed3]. Realizations are derived
+            deterministically from these seeds and their global realization ID;
+            realization 1 retains the historical FFSP reference stream.
         id_ran1, id_ran2 : int
             Realization range [start, end]
         angle_north_to_x : float
@@ -111,7 +221,7 @@ class FFSPSource:
         """
         if verbose:
             print(FFSP_CITATION)
-        
+
         if not isinstance(crust_model, CrustModel):
             raise TypeError("crust_model must be a CrustModel instance")
 
@@ -134,11 +244,11 @@ class FFSPSource:
             'is_moment': is_moment,
             'output_name': output_name,
         }
-        
+
         self.crust_model = crust_model
         self.output_name = output_name
         self.verbose = verbose
-        
+
         # Results storage
         self.all_realizations = None
         self.best_realization = None
@@ -161,6 +271,8 @@ class FFSPSource:
             Best realization subfault data (only valid on rank 0 if using MPI)
         """
         
+        _validate_ffsp_kernel_contract(self.params)
+
         # Detect MPI environment
         try:
             from mpi4py import MPI
@@ -195,6 +307,17 @@ class FFSPSource:
         
         if self.verbose and rank == 0:
             print(f"\nRunning FFSP: {total_models} realizations on {nprocs} MPI ranks\n")
+
+        if use_mpi and my_n_models == 0:
+            # More ranks than realizations is valid; idle ranks must not call
+            # f2py with an inverted realization range.
+            comm.send({'idle': True}, dest=0, tag=rank)
+            self.all_realizations = None
+            self.source_stats = None
+            self.best_realization = None
+            self.subfaults = None
+            self.active_realization = None
+            return None
         
         # Import Fortran wrapper module
         try:
@@ -243,10 +366,11 @@ class FFSPSource:
             self.crust_model.qb.astype(np.float32),
         )
         
-        # Unpack results from Fortran wrapper (27 values)
+        # Unpack kinematics, metrics, shared axes, and per-realization products.
         (n_realizations, npts, x, y, z, slip, rupture_time, 
          rise_time, peak_time, strike, dip, rake,
          ave_tr, ave_tp, ave_vr, err_spectra, pdf,
+         fc_main_1_effective, fc_main_2_effective,
          # Spectral data
          ntime_spec, nphf_spec, lnpt_spec,
          stf_time, stf,
@@ -270,9 +394,20 @@ class FFSPSource:
                 all_ave_vr = [ave_vr]
                 all_err_spectra = [err_spectra]
                 all_pdf = [pdf]
+                all_stf = [stf[:ntime_spec, :]]
+                all_moment_rate = [moment_rate[:nphf_spec, :]]
+                all_logmean_synth = [logmean_synth[:lnpt_spec, :]]
                 
                 for r in range(1, nprocs):
                     recv_data = comm.recv(source=r, tag=r)
+                    if recv_data.get('idle', False):
+                        continue
+
+                    remote_dims = (
+                        recv_data['ntime_spec'], recv_data['nphf_spec'],
+                        recv_data['lnpt_spec'])
+                    if remote_dims != (ntime_spec, nphf_spec, lnpt_spec):
+                        raise RuntimeError("MPI ranks returned inconsistent spectral dimensions")
                     
                     all_x.append(recv_data['x'])
                     all_y.append(recv_data['y'])
@@ -289,6 +424,19 @@ class FFSPSource:
                     all_ave_vr.append(recv_data['ave_vr'])
                     all_err_spectra.append(recv_data['err_spectra'])
                     all_pdf.append(recv_data['pdf'])
+                    all_stf.append(recv_data['stf'])
+                    all_moment_rate.append(recv_data['moment_rate'])
+                    all_logmean_synth.append(recv_data['logmean_synth'])
+
+                    # Every rank must use the same discretization and DCF target.
+                    for name, local, remote, length in (
+                            ('stf_time', stf_time, recv_data['stf_time'], ntime_spec),
+                            ('freq_spec', freq_spec, recv_data['freq_spec'], nphf_spec),
+                            ('dcf', dcf, recv_data['dcf'], nphf_spec),
+                            ('freq_center', freq_center, recv_data['freq_center'], lnpt_spec),
+                            ('logmean_dcf', logmean_dcf, recv_data['logmean_dcf'], lnpt_spec)):
+                        if not np.array_equal(local[:length], remote[:length]):
+                            raise RuntimeError(f"MPI ranks returned inconsistent {name}")
                 
                 # Concatenate all data
                 x = np.concatenate(all_x, axis=1)
@@ -306,6 +454,9 @@ class FFSPSource:
                 ave_vr = np.concatenate(all_ave_vr)
                 err_spectra = np.concatenate(all_err_spectra)
                 pdf = np.concatenate(all_pdf)
+                stf = np.concatenate(all_stf, axis=1)
+                moment_rate = np.concatenate(all_moment_rate, axis=1)
+                logmean_synth = np.concatenate(all_logmean_synth, axis=1)
                 
                 n_realizations = total_models
                 
@@ -326,6 +477,17 @@ class FFSPSource:
                     'ave_vr': ave_vr,
                     'err_spectra': err_spectra,
                     'pdf': pdf,
+                    'stf_time': stf_time,
+                    'stf': stf[:ntime_spec, :],
+                    'freq_spec': freq_spec,
+                    'moment_rate': moment_rate[:nphf_spec, :],
+                    'dcf': dcf,
+                    'freq_center': freq_center,
+                    'logmean_synth': logmean_synth[:lnpt_spec, :],
+                    'logmean_dcf': logmean_dcf,
+                    'ntime_spec': ntime_spec,
+                    'nphf_spec': nphf_spec,
+                    'lnpt_spec': lnpt_spec,
                 }
                 
                 comm.send(send_data, dest=0, tag=rank)
@@ -342,11 +504,21 @@ class FFSPSource:
         # Store results (only rank 0 in MPI mode, or single process)
         # =====================================================================
         
-        # Store all realizations in compatible format
+        self.params.setdefault('fc_main_1_requested', self.params['fc_main_1'])
+        self.params.setdefault('fc_main_2_requested', self.params['fc_main_2'])
+        self.params['fc_main_1'] = float(fc_main_1_effective)
+        self.params['fc_main_2'] = float(fc_main_2_effective)
+
+        realization_ids = np.arange(
+            self.params['id_ran1'], self.params['id_ran2'] + 1,
+            dtype=np.int32)
+
+        # Every realization is complete: kinematics, metrics, STF, and spectra.
         self.all_realizations = {
             'n_realizations': n_realizations,
             'nseg': 1,
             'npts': npts,
+            'realization_id': realization_ids,
             'x': x,
             'y': y,
             'z': z,
@@ -357,6 +529,27 @@ class FFSPSource:
             'strike': strike,
             'dip': dip,
             'rake': rake,
+            'metrics': {
+                'ave_tr': ave_tr,
+                'ave_tp': ave_tp,
+                'ave_vr': ave_vr,
+                'err_spectra': err_spectra,
+                'pdf': pdf,
+            },
+            'stf_time': {
+                'time': stf_time[:ntime_spec],
+                'stf': stf[:ntime_spec, :],
+            },
+            'spectrum': {
+                'freq': freq_spec[:nphf_spec],
+                'moment_rate_synth': moment_rate[:nphf_spec, :],
+                'moment_rate_dcf': dcf[:nphf_spec],
+            },
+            'spectrum_octave': {
+                'freq_center': freq_center[:lnpt_spec],
+                'logmean_synth': logmean_synth[:lnpt_spec, :],
+                'logmean_dcf': logmean_dcf[:lnpt_spec],
+            },
         }
         
         # Store statistics (for plots)
@@ -369,44 +562,21 @@ class FFSPSource:
                 'err_spectra': err_spectra,
                 'pdf': pdf,
             },
-            # Spectral data (from best realization computed by rank 0 or single process)
-            'spectrum': {
-                'freq': freq_spec[:nphf_spec],
-                'moment_rate_synth': moment_rate[:nphf_spec],
-                'moment_rate_dcf': dcf[:nphf_spec],
-            },
-            'stf_time': {
-                'time': stf_time[:ntime_spec],
-                'stf': stf[:ntime_spec],
-            },
-            'spectrum_octave': {
-                'freq_center': freq_center[:lnpt_spec],
-                'logmean_synth': logmean_synth[:lnpt_spec],
-                'logmean_dcf': logmean_dcf[:lnpt_spec],
-            }
         }
         
         # Identify best realization (minimum PDF)
-        best_idx = np.argmin(pdf)
-        self.best_realization = {
-            'nseg': 1,
-            'npts': npts,
-            'x': x[:, best_idx],
-            'y': y[:, best_idx],
-            'z': z[:, best_idx],
-            'slip': slip[:, best_idx],
-            'rupture_time': rupture_time[:, best_idx],
-            'rise_time': rise_time[:, best_idx],
-            'peak_time': peak_time[:, best_idx],
-            'strike': strike[:, best_idx],
-            'dip': dip[:, best_idx],
-            'rake': rake[:, best_idx],
-        }
-        
+        best_idx = int(np.argmin(pdf))
+        self.best_realization = self.get_realization(best_idx)
+
+        # Preserve the historical statistics paths as aliases to the best model.
+        self.source_stats['stf_time'] = self.best_realization['stf_time']
+        self.source_stats['spectrum'] = self.best_realization['spectrum']
+        self.source_stats['spectrum_octave'] = self.best_realization['spectrum_octave']
+
         # Set best realization as active subfaults
         self.subfaults = self.best_realization
         self.active_realization = 'best'
-        
+
         if self.verbose and (rank == 0 or not use_mpi):
             print(f"\nFFSP Complete: {n_realizations} realizations | Best: PDF={pdf[best_idx]:.4f}\n")
         
@@ -434,9 +604,13 @@ class FFSPSource:
         if not (0 <= index < n):
             raise IndexError(f"Index {index} out of range [0, {n-1}]")
         
-        return {
+        result = {
             'nseg': self.all_realizations['nseg'],
             'npts': self.all_realizations['npts'],
+            'realization_id': int(self.all_realizations.get(
+                'realization_id',
+                np.arange(self.params['id_ran1'], self.params['id_ran2'] + 1),
+            )[index]),
             'x': self.all_realizations['x'][:, index],
             'y': self.all_realizations['y'][:, index],
             'z': self.all_realizations['z'][:, index],
@@ -448,6 +622,30 @@ class FFSPSource:
             'dip': self.all_realizations['dip'][:, index],
             'rake': self.all_realizations['rake'][:, index],
         }
+
+        if 'metrics' in self.all_realizations:
+            result['metrics'] = {
+                key: np.asarray(value)[index]
+                for key, value in self.all_realizations['metrics'].items()
+            }
+        if 'stf_time' in self.all_realizations:
+            result['stf_time'] = {
+                'time': self.all_realizations['stf_time']['time'],
+                'stf': self.all_realizations['stf_time']['stf'][:, index],
+            }
+        if 'spectrum' in self.all_realizations:
+            result['spectrum'] = {
+                'freq': self.all_realizations['spectrum']['freq'],
+                'moment_rate_synth': self.all_realizations['spectrum']['moment_rate_synth'][:, index],
+                'moment_rate_dcf': self.all_realizations['spectrum']['moment_rate_dcf'],
+            }
+        if 'spectrum_octave' in self.all_realizations:
+            result['spectrum_octave'] = {
+                'freq_center': self.all_realizations['spectrum_octave']['freq_center'],
+                'logmean_synth': self.all_realizations['spectrum_octave']['logmean_synth'][:, index],
+                'logmean_dcf': self.all_realizations['spectrum_octave']['logmean_dcf'],
+            }
+        return result
 
     def set_active_realization(self, index: int):
         """Set active realization for plotting."""
@@ -497,44 +695,22 @@ class FFSPSource:
         print(f"Writing HDF5: {filename}")
         
         with h5py.File(filename, 'w') as f:
+            f.attrs['schema_version'] = FFSP_HDF5_SCHEMA_VERSION
+            f.attrs['shakermaker_version'] = shakermaker_version
+            f.attrs['best_realization_id'] = self.best_realization['realization_id']
             grp_realizations = f.create_group('realizations')
             grp_best = f.create_group('best_realization')
             grp_stats = f.create_group('statistics')
             grp_params = f.create_group('parameters')
             
-            for key, val in self.all_realizations.items():
-                if isinstance(val, (int, float)):
-                    grp_realizations.attrs[key] = val
-                else:
-                    grp_realizations.create_dataset(key, data=val, compression='gzip')
+            _write_hdf_mapping(grp_realizations, self.all_realizations)
             
             if self.best_realization is not None:
-                for key, val in self.best_realization.items():
-                    if isinstance(val, (int, float)):
-                        grp_best.attrs[key] = val
-                    else:
-                        grp_best.create_dataset(key, data=val, compression='gzip')
+                _write_hdf_mapping(grp_best, self.best_realization)
             
             if self.source_stats is not None:
-                grp_score = grp_stats.create_group('source_score')
-                for key, val in self.source_stats['source_score'].items():
-                    if isinstance(val, (int, float)):
-                        grp_score.attrs[key] = val
-                    else:
-                        grp_score.create_dataset(key, data=val, compression='gzip')
-                
-                if 'spectrum' in self.source_stats:
-                    grp_spectrum = grp_stats.create_group('spectrum')
-                    for key, val in self.source_stats['spectrum'].items():
-                        grp_spectrum.create_dataset(key, data=val, compression='gzip')
-                    
-                    grp_stf = grp_stats.create_group('stf_time')
-                    for key, val in self.source_stats['stf_time'].items():
-                        grp_stf.create_dataset(key, data=val, compression='gzip')
-                    
-                    grp_octave = grp_stats.create_group('spectrum_octave')
-                    for key, val in self.source_stats['spectrum_octave'].items():
-                        grp_octave.create_dataset(key, data=val, compression='gzip')
+                _write_hdf_mapping(grp_stats, self.source_stats)
+                grp_stats.attrs['realization_id'] = self.best_realization['realization_id']
             
             for key, val in self.params.items():
                 if isinstance(val, (int, float, str)):
@@ -579,44 +755,20 @@ class FFSPSource:
         
         with h5py.File(filename, 'r') as f:
             # Load all realizations
-            grp_realizations = f['realizations']
-            self.all_realizations = {}
-            for key in grp_realizations.keys():
-                self.all_realizations[key] = grp_realizations[key][:]
-            for key in grp_realizations.attrs.keys():
-                self.all_realizations[key] = grp_realizations.attrs[key]
+            self.all_realizations = _read_hdf_mapping(f['realizations'])
             
             # Load best realization
-            grp_best = f['best_realization']
-            self.best_realization = {}
-            for key in grp_best.keys():
-                self.best_realization[key] = grp_best[key][:]
-            for key in grp_best.attrs.keys():
-                self.best_realization[key] = grp_best.attrs[key]
+            self.best_realization = _read_hdf_mapping(f['best_realization'])
             
             # Load statistics
-            grp_stats = f['statistics']
-            self.source_stats = {}
-            
-            grp_score = grp_stats['source_score']
-            self.source_stats['source_score'] = {}
-            for key in grp_score.keys():
-                self.source_stats['source_score'][key] = grp_score[key][:]
-            for key in grp_score.attrs.keys():
-                self.source_stats['source_score'][key] = grp_score.attrs[key]
-            
-            if 'spectrum' in grp_stats:
-                self.source_stats['spectrum'] = {}
-                for key in grp_stats['spectrum'].keys():
-                    self.source_stats['spectrum'][key] = grp_stats['spectrum'][key][:]
-                
-                self.source_stats['stf_time'] = {}
-                for key in grp_stats['stf_time'].keys():
-                    self.source_stats['stf_time'][key] = grp_stats['stf_time'][key][:]
-                
-                self.source_stats['spectrum_octave'] = {}
-                for key in grp_stats['spectrum_octave'].keys():
-                    self.source_stats['spectrum_octave'][key] = grp_stats['spectrum_octave'][key][:]
+            self.source_stats = _read_hdf_mapping(f['statistics'])
+
+            # Older files stored spectral products only under /statistics.
+            # Keep those products attached to the loaded best realization
+            # without presenting them as data for every realization.
+            for group_name in ('stf_time', 'spectrum', 'spectrum_octave'):
+                if group_name not in self.best_realization and group_name in self.source_stats:
+                    self.best_realization[group_name] = self.source_stats[group_name]
             
             # Load parameters
             grp_params = f['parameters']
@@ -2249,12 +2401,12 @@ class FFSPSource:
     def plot_spectral_comparison(self, figsize=(14, 6)):
         """Plot Moment Rate Spectrum and Octave-Averaged Spectrum side by side."""
         import matplotlib.pyplot as plt
-        if self.source_stats is None:
+        if self.subfaults is None or 'spectrum' not in self.subfaults:
             print("No source statistics available. Run simulation first.")
             return
         
-        spectrum = self.source_stats['spectrum']
-        octave = self.source_stats['spectrum_octave']
+        spectrum = self.subfaults['spectrum']
+        octave = self.subfaults['spectrum_octave']
         plt.figure(figsize=figsize)
         
         # Normalize to compare shapes
@@ -2291,20 +2443,32 @@ class FFSPSource:
 
     def plot_source_time_function(self, figsize=(10, 6),xlim=None,
                                 save_fig=False, model_name='source', image_type='png'):
-        """Plot Source Time Function (STF)."""
+        """Plot Source Time Function (STF).
+
+        The stored STF is normalised to unit area by the kernel, so its unit is
+        1/s, not N*m/s.  Multiply by the scalar moment to obtain a physical
+        moment rate: ``M0 = 10 ** (1.5 * magnitude + 9.05)``, using FFSP's own
+        magnitude constant 9.05 rather than the SI 9.1 of Hanks & Kanamori.
+        """
         import matplotlib.pyplot as plt
-        if self.source_stats is None:
+        if self.subfaults is None or 'stf_time' not in self.subfaults:
             print("No source statistics available. Run simulation first.")
             return
-        
-        stf = self.source_stats['stf_time']
+
+        stf = self.subfaults['stf_time']
+        # The kernel stores the STF with unit area, so it is a rate in 1/s.
+        # Scaling by the scalar moment turns it into a physical moment rate.
+        M0 = 10.0 ** (1.5 * float(self.params['magnitude']) + FFSP_MAGNITUDE_CONSTANT)
+        moment_rate = np.asarray(stf['stf'], dtype=float) * M0
+
         plt.figure(figsize=figsize)
-        plt.plot(stf['time'], stf['stf'], color='black', lw=1.5, label='STF')
-        plt.fill_between(stf['time'], 0, stf['stf'], alpha=0.3, color='tab:cyan')
-        max_idx = np.argmax(stf['stf'])
-        plt.plot(stf['time'][max_idx], stf['stf'][max_idx], 'o', color='tab:red', markersize=12, label=f'Peak at t={stf["time"][max_idx]:.2f} s')
+        plt.plot(stf['time'], moment_rate, color='black', lw=1.5, label='STF')
+        plt.fill_between(stf['time'], 0, moment_rate, alpha=0.3, color='tab:cyan')
+        max_idx = np.argmax(moment_rate)
+        plt.plot(stf['time'][max_idx], moment_rate[max_idx], 'o', color='tab:red', markersize=12,
+                 label=f'Peak {moment_rate[max_idx]:.3e} N m/s at t={stf["time"][max_idx]:.2f} s')
         plt.xlabel('Time (s)', fontsize=12)
-        plt.ylabel('Moment Rate', fontsize=12)
+        plt.ylabel(r'$\dot{M}_0$ (N m/s)', fontsize=12)
         plt.title('Source Time Function (STF)', fontsize=14, fontweight='bold')
         plt.legend(fontsize=11)
         plt.grid(alpha=0.3)
