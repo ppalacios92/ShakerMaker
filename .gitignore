@@ -48,3 +48,10 @@ docs/web/examples/scripts/_ffsp_scratch/
 design_preview/
 PR_PLAN.md
 
+
+# Backups of locally rebuilt compiled extensions
+*.so.bak
+
+# Station dumps written by the validation examples (regenerate by running them)
+examples/12_validation/*.npz
+examples/12_validation/notebooks/*.npz
