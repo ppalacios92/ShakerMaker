@@ -64,7 +64,7 @@ exposes them as `model.mpi_rank`/`model.mpi_nprocs`/`model.mpi_is_master_process
 | `run()` (legacy) | Pair-by-pair; parallelizes across (source, receiver) pairs. Full detail in `06_engine_run_modes.md`. |
 | `gen_pairs()` (Stage 0) | Geometry computation (distances) is vectorised and distributed across ranks (`Gatherv` to rank 0); the greedy slot-finding itself runs **only on rank 0**, Numba-JIT-compiled if `numba` is installed (100-500x vs. plain Python — same algorithm, bit-for-bit identical slots either way). All ranks synchronise on a final `Barrier`. |
 | `compute_gf()` (Stage 1) | Dynamic master-worker: rank 0 hands the next slot to whichever worker finishes first (longest slots first), workers send zlib-compressed slots, and rank 0 also computes in its main thread while a receiver thread does MPI and the HDF5 writes (`write_direct_chunk`). Needs the `threadsafe` core wrappers and `MPI_THREAD_MULTIPLE`. `SM_GF_STATIC=1` restores the round-robin loop; `SM_GF_RANK0_COMPUTE=0` keeps rank 0 as a pure receiver; `SM_GF_COSTFILE` orders slots by a previous run's `<gf_file>.slotcost.npy`. |
-| `run_fast()` (Stage 2) | Every station's sources are split over all ranks; each rank sums its share on the station's output grid and an MPI `Reduce` adds the parts on rank 0, which writes the station. Split crust models are cached per depth pair. `SM_S2_SPLIT=0` restores the old loop, where station `i` belongs to rank `i % nprocs` and, with fewer stations than ranks, the extra ranks stay idle. |
+| `run_fast()` (Stage 2) | With fewer stations than ranks, every station's sources are split over all ranks; each rank sums its share on the station's output grid and an MPI `Reduce` adds the parts on rank 0, which writes the station. Otherwise (e.g. a DRM box) station `i` belongs to rank `i % nprocs`. `SM_S2_SPLIT=1`/`0` forces either mode. Split crust models are cached per exact depth pair. |
 
 Launch any of them the same way: `mpiexec -n N python script.py` (or `mpirun` — see the
 SLURM example below). No special flag is needed to "enable" MPI; it activates
@@ -121,12 +121,11 @@ Full RCA: `BUG_stage2_mpi_hang.md`. Summary:
   `try/except Exception: traceback.print_exc(); comm.Abort()`, so any real fault now kills
   the job cleanly and loudly within seconds instead of hanging silently. A final
   `comm.Barrier()` was also added to Stage 2, matching what Stage 1 already had.
-- **Operational lesson** (not a code fix — a job-sizing one): Stage 2 now splits each
-  station's sources over all ranks, but past one node it is limited by reading the GF
-  database (one node with 16 ranks was the fastest on the Quito cases). A Stage 2-only
-  run does not need many nodes, and fewer ranks also means fewer that could hit a
-  transient fault. With `SM_S2_SPLIT=0` (`owner = i % nprocs`) most ranks sit idle when
-  there are only a few stations.
+- **Operational lesson** (not a code fix — a job-sizing one): with few stations Stage 2
+  splits each station's sources over all ranks, but past one node it is limited by reading
+  the GF database (one node with 16 ranks was the fastest on the Quito cases). A Stage
+  2-only run does not need many nodes, and fewer ranks also means fewer that could hit a
+  transient fault.
 
 ## Known hang #2 (partially open): a second, still-unexplained hang
 
