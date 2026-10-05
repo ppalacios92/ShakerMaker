@@ -63,12 +63,17 @@ exposes them as `model.mpi_rank`/`model.mpi_nprocs`/`model.mpi_is_master_process
 |---|---|
 | `run()` (legacy) | Pair-by-pair; parallelizes across (source, receiver) pairs. Full detail in `06_engine_run_modes.md`. |
 | `gen_pairs()` (Stage 0) | Geometry computation (distances) is vectorised and distributed across ranks (`Gatherv` to rank 0); the greedy slot-finding itself runs **only on rank 0**, Numba-JIT-compiled if `numba` is installed (100-500x vs. plain Python — same algorithm, bit-for-bit identical slots either way). All ranks synchronise on a final `Barrier`. |
-| `compute_gf()` (Stage 1) | Rank 0 coordinates; worker ranks compute FK kernels for their assigned slots and send results back for the HDF5 write. |
-| `run_fast()` (Stage 2) | Single unified loop: **every rank iterates every station** `[0..nstations)`, and the owner of station `i` is `owner = i % nprocs` — so with more stations than ranks, work is spread; with **fewer stations than ranks, the extra ranks stay idle for the whole run** (see the "few stations, many ranks" gotcha below). |
+| `compute_gf()` (Stage 1) | Dynamic master-worker: rank 0 hands the next slot to whichever worker finishes first (longest slots first), workers send zlib-compressed slots, and rank 0 also computes in its main thread while a receiver thread does MPI and the HDF5 writes (`write_direct_chunk`). Needs the `threadsafe` core wrappers and `MPI_THREAD_MULTIPLE`. `SM_GF_STATIC=1` restores the round-robin loop; `SM_GF_RANK0_COMPUTE=0` keeps rank 0 as a pure receiver; `SM_GF_COSTFILE` orders slots by a previous run's `<gf_file>.slotcost.npy`. |
+| `run_fast()` (Stage 2) | Every station's sources are split over all ranks; each rank sums its share on the station's output grid and an MPI `Reduce` adds the parts on rank 0, which writes the station. Split crust models are cached per depth pair. `SM_S2_SPLIT=0` restores the old loop, where station `i` belongs to rank `i % nprocs` and, with fewer stations than ranks, the extra ranks stay idle. |
 
 Launch any of them the same way: `mpiexec -n N python script.py` (or `mpirun` — see the
 SLURM example below). No special flag is needed to "enable" MPI; it activates
 automatically whenever `nprocs > 1`.
+
+The FK kernel is also OpenMP-parallel. On 16-core / 32-thread nodes the measured best
+layouts were 16 ranks x 2 threads per node up to 2 nodes and 8 x 4 from 4 nodes, with
+`OMP_PLACES=threads OMP_PROC_BIND=close`. Measurements, launch lines and compiler flags:
+`docs/web/guides/performance.md`.
 
 ## The `<root>_map.h5` / `<root>_gf.h5` split
 
@@ -116,11 +121,12 @@ Full RCA: `BUG_stage2_mpi_hang.md`. Summary:
   `try/except Exception: traceback.print_exc(); comm.Abort()`, so any real fault now kills
   the job cleanly and loudly within seconds instead of hanging silently. A final
   `comm.Barrier()` was also added to Stage 2, matching what Stage 1 already had.
-- **Operational lesson** (not a code fix — a job-sizing one): if you only have a handful
-  of active stations, remember `owner = i % nprocs` means most ranks may sit idle for the
-  entire Stage 2 run with no effect on total compute time. Requesting fewer nodes/tasks
-  for Stage 2 in that situation costs nothing in wall-clock time and shrinks the number of
-  ranks that could hit a transient fault in the first place.
+- **Operational lesson** (not a code fix — a job-sizing one): Stage 2 now splits each
+  station's sources over all ranks, but past one node it is limited by reading the GF
+  database (one node with 16 ranks was the fastest on the Quito cases). A Stage 2-only
+  run does not need many nodes, and fewer ranks also means fewer that could hit a
+  transient fault. With `SM_S2_SPLIT=0` (`owner = i % nprocs`) most ranks sit idle when
+  there are only a few stations.
 
 ## Known hang #2 (partially open): a second, still-unexplained hang
 
@@ -194,7 +200,7 @@ date
 ```
 
 5 nodes × 16 tasks/node = 80 MPI ranks in the reference script — size this to your actual
-station/subfault count (see the "few stations, many ranks" note above; requesting more
+station/subfault count (see the Stage 2 sizing note above; requesting more
 ranks than you can actually use wastes allocation and adds failure surface for free).
 
 ## Known gotchas
