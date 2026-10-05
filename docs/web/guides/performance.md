@@ -154,7 +154,7 @@ worked. Two changes:
   `Station.add_to_response`, and an MPI Reduce adds the parts on rank 0. With
   more stations than ranks (a DRM box) the one-rank-per-station loop is kept,
   since it already uses every rank and the split would add one Reduce per
-  station (2067-node DRM box: 4.7 s per station vs 12.9 s split).
+  station (2067-node DRM box: 4.7 s with one rank per station, 12.9 s split).
   `SM_S2_SPLIT=1` forces the split, `SM_S2_SPLIT=0` disables it;
 - **split crust models cached** per (source depth, receiver depth).
 
