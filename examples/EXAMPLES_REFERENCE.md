@@ -458,8 +458,8 @@ named stations, and a lightweight direct-vs-DRM sanity check.
 - **Purpose**: Runs the SCEC LOH.1 point-source model through the full OP pipeline
   (`run_nearest(stage='all')`) with `DRMBox` receivers at named station locations,
   writing `.h5drm` via `DRMHDF5StationListWriter` in `progressive` mode.
-  **This is the exact reproduction script cited by `BUG_drm_qa_data_nan_horizontal.md`**
-  (station `Centro`) for the known `/DRM_QA_Data` horizontal-component NaN issue.
+  It is the script that exposed the `/DRM_QA_Data` horizontal-component NaN at station
+  `Centro` (zero epicentral distance), fixed in `subfk.f` by commit `2a83ca6`.
 - **Required inputs**: MPI (`mpiexec -n N python drm_loh1.py`). No external files — crust
   (2-layer), source (Gaussian STF, `sigma=0.06`, `M0=1e18/5e14/2`), station coordinates
   (`utmx`/`utmy` for `Centro` and `s1`) are all inline. User-editable:
@@ -528,10 +528,8 @@ named stations, and a lightweight direct-vs-DRM sanity check.
   2. One cell contains just the literal text `ppp` with no output — appears to be leftover debug/scratch content; running it as-is would raise `NameError`.
   3. Two commented-out cells reference a hardcoded Windows path to an `ffmpeg.exe` binary — machine-specific, not runnable elsewhere, and inactive.
 
-**Cross-reference**: see `BUG_drm_qa_data_nan_horizontal.md` at the repo root for the
-known issue in `/DRM_QA_Data`'s horizontal components (reproduced by `drm_loh1.py`,
-station `Centro`) — this document only records what the script does, not the bug's
-root cause.
+**Note**: the `/DRM_QA_Data` horizontal-component NaN reproduced by `drm_loh1.py` (station
+`Centro`) was a 0/0 at zero epicentral distance in `subfk.f`, fixed by commit `2a83ca6`.
 
 ---
 

@@ -56,9 +56,6 @@ See also**.
   of every script/notebook under `examples/` (purpose, inputs, outputs).
   Use it to check whether a working example for what you need already
   exists before writing a new one from a `RECIPES.md` template.
-- **`BUG_stage2_mpi_hang.md`, `BUG_drm_qa_data_nan_horizontal.md`** (repo
-  root) — root-cause write-ups for two known issues, referenced from
-  `11_mpi_and_hpc.md` and `08_drm_workflow.md` respectively.
 - **`docs/web/`** — the MkDocs user-facing documentation site. `agents/`
   is denser, source-grounded, and organized for machine consumption; the
   MkDocs site is prose aimed at a human reader learning the tool.

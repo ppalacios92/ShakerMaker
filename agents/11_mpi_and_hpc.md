@@ -23,9 +23,6 @@ loudly, it **hangs** a job silently for hours until someone kills it.
   (cross-node filesystem hardening).
 - `shakermaker/shakermaker.py:2455-2468` — `enable_mpi`, `mpi_is_master_process`,
   `mpi_rank`, `mpi_nprocs`.
-- `BUG_stage2_mpi_hang.md` (repo root) — full RCA of the Stage 2 hang and its fix.
-- `BUG_drm_qa_data_nan_horizontal.md` (repo root) — unrelated but referenced from
-  `08_drm_workflow.md`; not an MPI issue.
 - `examples/14_SFSI/DRM/run.sh`, `examples/14_SFSI/Surface/run.sh` — real SLURM launch
   scripts used in production.
 - Commit `1093948` — "fix(engine): retry opening `_map.h5`/`_gf.h5` across a cross-node
@@ -105,7 +102,7 @@ unconditionally before `mpirun`.
 
 ## Known hang #1 (fixed): Stage 2 (`run_fast`) hangs after computation finishes
 
-Full RCA: `BUG_stage2_mpi_hang.md`. Summary:
+Summary (fix: commit `ccbe2ad`, upstream PR #53):
 
 - **Symptom**: the science finishes (`.h5` output is complete and valid), the log prints
   `"...done. Total time: ... s"`, but the SLURM job never releases its nodes — it hangs
@@ -241,7 +238,6 @@ ranks than you can actually use wastes allocation and adds failure surface for f
 
 ## See also
 
-- `BUG_stage2_mpi_hang.md`, `BUG_drm_qa_data_nan_horizontal.md` (repo root).
 - `examples/14_SFSI/DRM/run.sh`, `examples/14_SFSI/Surface/run.sh` — real launch scripts.
 - `examples/EXAMPLES_REFERENCE.md` §14_SFSI — documents that neither HPC script in that
   folder ships an output artifact in-repo but both are confirmed to have run to

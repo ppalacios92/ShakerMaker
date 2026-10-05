@@ -279,8 +279,8 @@ z, e, n, t = s.get_response()
   decision with an external tool.
 - **`acceleration`/`displacement` do not come from the FK engine** — they
   are derived inside the writer from the velocity already interpolated
-  onto the final grid. Any `NaN` in the raw velocity (e.g. the known bug in
-  `BUG_drm_qa_data_nan_horizontal.md`) propagates automatically to both.
+  onto the final grid. Any `NaN` in the raw velocity (e.g. the zero-epicentral-distance NaN, fixed in `subfk.f` by commit `2a83ca6`)
+  propagates automatically to both.
 - **`Station.save`/`load` is NOT interchangeable with the HDF5 writers** —
   it's a different format (`.npz`, not HDF5), meant for a single station,
   not a full `StationList`.
@@ -307,5 +307,3 @@ z, e, n, t = s.get_response()
   `examples/EXAMPLES_REFERENCE.md`.
 - `examples/08_drm/notebooks/drm.ipynb` — `export_drm_geometry` example
   with a 3D visualization of the result.
-- `BUG_drm_qa_data_nan_horizontal.md` (repo root) — known bug in
-  `/DRM_QA_Data`'s horizontal components, with a narrated root cause.

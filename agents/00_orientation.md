@@ -141,5 +141,3 @@ it never blocks execution, it only prints a report.
 - `examples/EXAMPLES_REFERENCE.md` — a full audit of every script/notebook
   under `examples/`: what each one does, needs, and produces. Use it to find
   a close prior-art example before writing a new one from scratch.
-- `BUG_stage2_mpi_hang.md`, `BUG_drm_qa_data_nan_horizontal.md` (repo root) —
-  known-issue write-ups; see `11_mpi_and_hpc.md` and `08_drm_workflow.md`.

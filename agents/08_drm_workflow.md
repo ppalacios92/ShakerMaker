@@ -17,8 +17,7 @@ layer.
 
 `shakermaker/sl_extensions/` (receiver geometry), `shakermaker/
 slw_extensions/drmhdf5stationlistwriter.py` (writer), `shakermaker/
-shakermaker.py::export_drm_geometry` (line 2206), `BUG_drm_qa_data_nan_
-horizontal.md` (repo root, known issue).
+shakermaker.py::export_drm_geometry` (line 2206).
 
 ## The three receiver options for a DRM boundary
 
@@ -132,13 +131,10 @@ station). See `04_receivers.md` for the full parameter reference.
 - **`export_drm_geometry`'s data is synthetic** — a 2-sample linear ramp,
   not physics. Only use it to sanity-check geometry/node count, never as
   simulation output.
-- **Known bug**: `BUG_drm_qa_data_nan_horizontal.md` (repo root) documents
-  NaN values appearing partway through the record in `/DRM_QA_Data`'s
-  **horizontal** (E, N) components only — vertical stays clean. Confirmed
-  isolated to the QA reference station's group; `/DRM_Data` (the actual
-  boundary data consumed by OpenSees) was confirmed clean in the same file.
-  Reproducer: `examples/08_drm/drm_loh1.py`. Read that file before trusting
-  a QA-station horizontal plot at face value.
+- **Fixed bug (was: NaN in `/DRM_QA_Data`)**: NaN appeared partway through the record
+  in the **horizontal** (E, N) components of the QA station when it sat exactly above
+  the source (zero epicentral distance, a 0/0 in the Bessel terms of `subfk.f`). Fixed by
+  commit `2a83ca6` (upstream PR #48); `/DRM_Data` was never affected.
 - **`SurfaceGrid` + `DRMHDF5StationListWriter` is not always a "real" DRM
   boundary.** A single-plane `SurfaceGrid` (`mode='plane'`) paired with the
   DRM writer (seen in `examples/14_SFSI/Surface/surface_SSFI.py`) does not
