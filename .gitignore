@@ -55,3 +55,10 @@ PR_PLAN.md
 # Station dumps written by the validation examples (regenerate by running them)
 examples/12_validation/*.npz
 examples/12_validation/notebooks/*.npz
+
+# Outputs written by the examples when run (e.g. by examples/run_all_smoke.py)
+examples/06_nearest_method/out_*/
+examples/07_writers/*.h5
+examples/07_writers/*.npz
+examples/09_sw4_export/_sw4_out*/
+examples/10_ffsp/ffsp.h5
