@@ -120,9 +120,9 @@ Summary (fix: commit `ccbe2ad`, upstream PR #53):
   `comm.Barrier()` was also added to Stage 2, matching what Stage 1 already had.
 - **Operational lesson** (not a code fix — a job-sizing one): with few stations Stage 2
   splits each station's sources over all ranks, but past one node it is limited by reading
-  the GF database (one node with 16 ranks was the fastest on the Quito cases). A Stage
-  2-only run does not need many nodes, and fewer ranks also means fewer that could hit a
-  transient fault.
+  the GF database (one node with 16 ranks was the fastest on two finite-fault cases with
+  3 stations and 4 096 or 32 768 subfaults). A Stage 2-only run does not need many nodes,
+  and fewer ranks also means fewer that could hit a transient fault.
 
 ## Known hang #2 (partially open): a second, still-unexplained hang
 
