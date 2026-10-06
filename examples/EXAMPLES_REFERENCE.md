@@ -559,12 +559,11 @@ read SW4's text output back in.
 - **Purpose**: Same model as `export_sw4.py` but with real Cartesian topography via
   `model.export_sw4_topo(...)`, re-centering an absolute-UTM `.topo` file into the local
   km frame.
-- **Required inputs**: A topography file at a **hardcoded Windows path**
-  (`C:\Dropbox\...\STG_Surface\topo\cuenca_STG_h500_cartesian.topo`) specific to the
-  original author's machine. The script checks existence and prints `SKIP` + exits if
-  absent — **on this Linux checkout, and on any machine other than the original author's,
-  this script always skips.**
-- **Outputs** (only if the topo file is found): `./_sw4_out_topo/cuenca_STG_h500_local.topo`
+- **Required inputs**: A topography file (absolute UTM `x y z` rows, 500 m spacing) given
+  by the environment variable `SHAKERMAKER_TOPO_FILE` (default
+  `topography_h500_cartesian.topo` in the working directory). No such file ships with the
+  repository: without one the script prints `SKIP` and exits.
+- **Outputs** (only if the topo file is found): `./_sw4_out_topo/topography_h500_local.topo`
   and `./_sw4_out_topo/shakermakerexports/sw4_package.h5`.
 - **Dependencies**: numpy.
 - ⚠️ **Open question**: this example is not runnable as shipped outside the original
@@ -1024,7 +1023,7 @@ section): the wrong Q values in `SCEC_LOH_3`, and the stale-install import hazar
 
 #### `data/LOH.3_prose_corrected`
 - The semi-analytical reference, copied from the SW4 matlab tools
-  (`.../01. SAIC/04. SW4/matlab_tools/`) alongside its generating script `loh3exact.m`.
+  alongside its generating script `loh3exact.m`.
   Same format as `LOH.1_prose3`: 2048 rows, `dt = 0.008` s, columns
   `time, vertical×(-1e5), radial×(1e5), transverse×(1e5)`, no header. Same provenance
   chain as the LOH.1 table.
@@ -1039,7 +1038,7 @@ swapped. Anything run with the old values was not LOH.3. Fixed in
 **Note 2 — the examples now pin the import to the working tree.** `LOH3.py`,
 `LOH3_check.py` and both LOH.3 notebooks start by prepending the repo root to
 `sys.path` and printing `shakermaker.__file__`. ShakerMaker is installed **non-editable**
-in the `clark_kent` venv, so a plain `import shakermaker` from `examples/12_validation/`
+in some development environments, so a plain `import shakermaker` from `examples/12_validation/`
 (or from `notebooks/`) resolves to a frozen `site-packages` snapshot whose
 `cm_library/LOH.py`, `shakermaker.py` and compiled `core` are all older than the working
 tree. This bit during development: the first executed run of `LOH3_validation.ipynb`
@@ -1128,7 +1127,7 @@ the OP pipeline into DRM-ready `.h5drm` files for OpenSees.
   Beach"), defines a point source via UTM coordinates + a Gaussian STF, builds the crust
   from a **live CRUST 1.0 lookup** at the site's (lat, lon) via
   `Crust1().profile_at(...)` (two alternative crust definitions — LOH.1 and a manual
-  4-layer STG model — are left commented out as reference, not used), runs the classic FK
+  4-layer model — are left commented out as reference, not used), runs the classic FK
   engine with an `HDF5StationListWriter`, saves the station to `.npz` as a backup,
   converts velocity → displacement/acceleration by hand (trapezoidal integration /
   backward finite difference), computes an elastic pseudo-acceleration response spectrum
@@ -1159,8 +1158,8 @@ the OP pipeline into DRM-ready `.h5drm` files for OpenSees.
 - **Required inputs**: `drm_nodes.txt` in the same directory (present, tracked, 9864 data
   rows). Must be launched under MPI — the accompanying `run.sh` is a SLURM batch script
   requesting **5 nodes × 16 tasks/node = 80 MPI ranks**, activating a venv at
-  `~/v_ENV/clark_kent` and invoking `mpirun /mnt/deadmanschest/pxpalacios/v_ENV/clark_kent/
-  bin/python -s drm.py` — **hardcoded to a specific cluster/user, not portable as-is.**
+  a user-specific virtual environment and invoking `mpirun <venv>/bin/python -s drm.py`
+  — **hardcoded to one machine, not portable as-is.**
   `HDF5_USE_FILE_LOCKING=FALSE` is set, consistent with the OP-pipeline HDF5 gotchas
   documented in the shakemaker-skill.
 - **Outputs**: `ssfi_gf.h5` (+ implied `_map.h5`/`_gf.h5` pair per OP convention) and
