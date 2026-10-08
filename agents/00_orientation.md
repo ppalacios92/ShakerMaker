@@ -46,8 +46,9 @@ shakermaker/
 
 - **Position** `x = [x, y, z]`: **km**. `x = North, y = East, z = Down`
   (positive down). This is the ShakerMaker convention everywhere *except*
-  inside FFSP's raw kernel output and SW4's own files — see the two gotchas
-  below.
+  inside FFSP's raw kernel output (metres) — see the gotchas below.
+  Positions vs motion, and the order of components in each output, are in
+  `12_coordinates_and_conventions.md`.
 - **Angles** (`strike, dip, rake`): **degrees** at the API boundary
   (`PointSource.__init__`), but stored internally as **radians** — the
   `.angles` property returns radians, not what you passed in.
@@ -60,10 +61,14 @@ shakermaker/
   Divide by `1e3` before handing them to `PointSource`. See
   `03_ffsp_source.md` — this is the single most-repeated unit bug across the
   whole codebase and its example history.
-- **SW4 coordinates differ from ShakerMaker's**: SW4 uses `x = East,
-  y = North`, meters, in a local cartesian box (not georeferenced).
-  ShakerMaker's exporter (`09_sw4_export.md`) transforms with a pure
-  **translation** (no rotation) between the two frames.
+- **SW4 uses the same frame as ShakerMaker**: `x = North, y = East,
+  z = down` (SW4's default `az = 0`), in metres, in a local cartesian box
+  with the origin at a corner. ShakerMaker's exporter (`09_sw4_export.md`)
+  transforms with a pure **translation** (km → m, no rotation).
+- **Output motion order differs by format** (same signs everywhere):
+  `get_response()` → (down, East, North); `.h5`/`.h5drm` rows → (East,
+  North, down); positions (`xyz`) → (North, East, depth). Full table, the
+  reason, and the OpenSees matrix `T` in `12_coordinates_and_conventions.md`.
 
 ## The three "run tiers" (pick one before doing anything else)
 

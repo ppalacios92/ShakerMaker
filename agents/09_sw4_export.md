@@ -3,7 +3,9 @@
 ## What this is
 
 `shakermaker/sw4_exporter/` bridges a ShakerMaker model to a run of **SW4** (the
-finite-difference wave-propagation code) and back. ShakerMaker never runs SW4 itself —
+finite-difference wave-propagation code) and back. SW4 and ShakerMaker share
+the same frame (`x = North, y = East, z = down`); how SW4 records compare with
+ShakerMaker outputs is in `12_coordinates_and_conventions.md`. ShakerMaker never runs SW4 itself —
 SW4 is an external tool the user must install/compile separately. This subpackage only:
 
 1. Writes SW4 input files + a compact HDF5 transport bundle (`ShakerMaker.export_sw4(...)`

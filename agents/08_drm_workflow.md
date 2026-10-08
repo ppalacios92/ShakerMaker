@@ -11,7 +11,9 @@ directly. This file walks the concepts that don't belong to any single
 class (`04_receivers.md` covers `DRMBox`/`SurfaceGrid`/`PointCloudDRMReceiver`
 in isolation; `07_writers_persistence.md` covers `DRMHDF5StationListWriter`'s
 schema) — this is the "how the pieces fit together for a real DRM campaign"
-layer.
+layer. For the positions/motion order inside the `.h5drm` and the OpenSees
+matrix `T` (STKO Local X = (0, 1, 0), Local Y = (1, 0, 0) for a Z-up model),
+read `12_coordinates_and_conventions.md` first.
 
 ## Source of truth
 

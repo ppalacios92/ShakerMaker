@@ -102,7 +102,10 @@ class HDF5StationListWriter(StationListWriter):
 ```
 
 Row layout for station index `i`: `row = 3*i` → `row`=E, `row+1`=N,
-`row+2`=Z. This matches `Data/data_location[i] == 3*i`.
+`row+2`=Z (vertical, positive **down**). This matches
+`Data/data_location[i] == 3*i`. Note that `xyz` is (North, East, depth) while
+the motion rows are (East, North, down) — on purpose; see
+`12_coordinates_and_conventions.md`.
 
 `acceleration` and `displacement` are derived from `velocity` inside the
 writer itself (not by the engine): backward finite difference for

@@ -44,6 +44,7 @@ it's grounded in; re-verify against that when in doubt.
 | [`09_sw4_export.md`](09_sw4_export.md) | Export to SW4, coordinate convention, running SW4 externally, rebuilding `.h5drm` after |
 | [`10_plotting.md`](10_plotting.md) | `ZENTPlot`, `StationPlot`, `SourcePlot` |
 | [`11_mpi_and_hpc.md`](11_mpi_and_hpc.md) | MPI parallelism, SLURM patterns, known hangs (one fixed, one still partially open — documented in the source itself) |
+| [`12_coordinates_and_conventions.md`](12_coordinates_and_conventions.md) | Positions vs motion, component order and signs of every output, SW4 frame, the OpenSees `H5DRMLoadPattern` matrix `T` |
 | [`RECIPES.md`](RECIPES.md) | Compatibility matrix + worked combination templates — the generative layer |
 
 Every file follows the same shape: **What this is → Source of truth →
