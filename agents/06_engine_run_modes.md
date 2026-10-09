@@ -88,10 +88,18 @@ into "slots" within the given tolerances, and writes the flat index
 - `delta_v_src` — source depth tolerance (km).
 - `npairs_max` — kept for API compatibility; **not used internally**.
 
-Algorithm: MPI-parallel vectorised geometry computation across all ranks,
-then a Numba `@njit`-compiled greedy slot-assignment on rank 0 (falls back
-to plain Python automatically if Numba isn't installed — 100-500× slower
-but bit-identical results). This is cheap enough to run alone just to
+Algorithm: pairs visited in canonical order; each joins the covering slot
+with the smallest L1 distance (lowest index on ties) or opens a new one, so
+the decisions are sequential. By default (Numba installed) rank 0 does it
+alone: candidate slots come from a hash table over cells slightly larger
+than the tolerances (cost linear in the number of pairs), the geometry is
+computed one block of stations at a time (~4 bytes per pair in memory), and
+the other ranks wait at a `Barrier`. `SM_S0_LEGACY=1` (or no Numba) runs the
+previous implementation — geometry on every rank, `Gatherv` to rank 0 and a
+search over every slot (pairs x slots) — which writes the same map. Measured
+on a DRM box of 8179 receivers x 32768 subfaults (2.7e8 pairs, 14k-57k
+slots): 3-4.5 min and 1.7 GB in one process, against 30-55 min with the
+legacy path on 10 nodes. This is cheap enough to run alone just to
 inspect the dedup ratio before spending any real FK compute — see
 `examples/06_nearest_method/notebooks/nearest_explained.ipynb`.
 
@@ -183,8 +191,12 @@ original run's values) are reused.
 - **Stage 2 needs Stage 0's `/pair_to_slot`** to already exist in the
   `_map.h5` file — running `run_fast`/`run_nearest(stage=2)` cold, without
   ever running Stage 0 (or the legacy-migration helper), will fail.
-- **Numba absence silently degrades Stage 0**, not fails it — 100-500×
-  slower, same result. Install `numba` for any non-trivial receiver count.
+- **Numba absence silently degrades Stage 0**, not fails it — it falls back
+  to the legacy greedy (pairs x slots), same result. Install `numba` for any
+  non-trivial receiver count.
+- **Stage 0 needs one process.** Running it inside a many-node `stage='all'`
+  job only keeps those nodes waiting for a few minutes; a separate
+  `stage=0` job on one node is enough (several stations' maps fit at once).
 - **`writer_mode='progressive'` is the default and the right choice for
   large campaigns** — `'legacy'` mode buffers every station in memory
   before writing, which defeats the whole point of O(1)-RAM staged

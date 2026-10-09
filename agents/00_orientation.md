@@ -104,9 +104,11 @@ it never blocks execution, it only prints a report.
   `run_nearest` auto-relaunch themselves in a 64 MB-stack thread on Windows
   so the Fortran FK core doesn't segfault on large `nfft`. Don't bypass this.
   See `11_mpi_and_hpc.md`.
-- **Numba is optional but strongly recommended**: `gen_pairs` (Stage 0) uses
-  a Numba `@njit`-compiled greedy algorithm if available (100-500× faster),
-  with an automatic pure-Python fallback if not installed.
+- **Numba is optional but strongly recommended**: with Numba, `gen_pairs`
+  (Stage 0) groups the pairs with a hash table on rank 0 alone (cost linear in
+  the number of pairs, ~4 bytes per pair); without it (or with
+  `SM_S0_LEGACY=1`) it runs the previous greedy, which writes the same map
+  but costs pairs x slots.
 - **HDF5 double-file convention**: the OP pipeline writes `<root>_map.h5` +
   `<root>_gf.h5` — always pass the **root** name (no `.h5` suffix needed,
   it's stripped/added consistently) to `gen_pairs`/`compute_gf`/`run_fast`/
