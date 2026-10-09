@@ -140,6 +140,19 @@ sent/received, written, and cleared immediately (O(1) RAM per rank
 regardless of station count). See `11_mpi_and_hpc.md` for the historical
 hang bug this loop's error handling was hardened against.
 
+`SM_S2_GROUP=1` replaces that loop with the grouped Stage 2
+(`_stage2_grouped`): the slot components are convolved once per
+(source, slot, pair time step) and each receiver of the group applies its own
+mechanism-azimuth coefficients and integer shift, only on the samples
+`add_to_response` keeps. Receivers go in chunks (`SM_S2_CHUNK`, or
+`SM_S2_CHUNK_MB` of buffers per rank, default 1024 MB); each rank owns slots
+balanced by pair count and one Reduce per chunk sums the responses on rank 0.
+It is the per-pair arithmetic in float64 and in another order: the motions
+differ from the default loop only by that loop's single-precision round-off
+(~1e-5 of the peak), with identical time grids. Gains measured: 6.8x on 64
+DRM receivers, 2.4-3.1x with one receiver, ~9x fewer node-hours on a DRM box
+of 8179 receivers. Off by default for that reason; it needs no new database.
+
 ### The orchestrator — `run_nearest(stage='all', h5_database_name=None, ...)`
 
 Single entry point that runs stage `0`, `1`, `2`, `'0_1'` (0 then 1), or
