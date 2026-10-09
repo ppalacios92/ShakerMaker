@@ -136,8 +136,9 @@ list of several — `Crust1._norm` normalizes either form. With 1 site,
 `plot_profile` draws layer-colored backgrounds; with >1, it draws one
 overlaid curve per site.
 
-`Crust1.BENCHMARK_SITES` ships 3 example sites already loaded: Santiago,
-San Francisco, and Meyrin/CERN.
+`Crust1.BENCHMARK_SITES` ships 3 example sites already loaded, labelled by tectonic
+setting and coordinates (subduction margin, transform boundary, alpine
+foreland basin).
 
 Importing `shakermaker.crust1` prints `CRUST1_CITATION` (a mandatory
 citation to Laske et al. 2013).
