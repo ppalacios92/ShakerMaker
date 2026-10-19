@@ -42,6 +42,7 @@ run manually.
 | [12_validation](#12-validation) | SCEC LOH.1 + LOH.3 physics benchmarks | No | Reference solutions (included) | Yes (legacy path) |
 | [13_shakermaker_sw4](#13-shakermaker-sw4) | FK vs. real SW4 run, cross-validation | Recommended | SW4 output + ObsPy (included as data) | Yes |
 | [14_SFSI](#14-sfsi) | Real-site (Samoa Beach) end-to-end case study | Yes (HPC scripts) | No | Yes |
+| [15_loh1_below_source](#15-loh1-below-source) | LOH.1 with receivers above and below the source, FK vs. SW4 | No | SW4 output (included as data) | Yes (legacy path) |
 | [legacy_examples](#legacy-examples) | Original upstream regression suite | No | No | Yes (legacy path) |
 
 ---
@@ -1204,6 +1205,50 @@ the OP pipeline into DRM-ready `.h5drm` files for OpenSees.
   closed box, not a single plane) — the `.h5drm` container format is used here only so
   the output can be read by the separate `ShakerMakerResults` tool. In principle this
   should just be a plain `.h5` file; the writer choice is expected to be revisited later.
+
+---
+
+## 15. LOH1 Below Source
+
+`examples/15_loh1_below_source/`
+
+Checks the FK engine for receivers deeper than the source (the flipped-model path of
+`subgreen.f`, `subgreen2.f`, `subrt.f`) against an SW4 finite-difference run of the SCEC LOH.1
+model with the same source and receivers: ten receivers on two verticals (10 km and 1 km from
+the epicentre), from the surface to 4 km below the 2 km deep source, compared in 0.1-1.2 Hz
+with one amplitude factor fitted at the surface. Documented in its own `README.md`.
+
+#### `run_shakermaker.py`
+- **Purpose**: Runs the ten receivers of `receivers.txt` with the crust, source and FK
+  parameters of `12_validation/LOH1.py`. A few seconds, serial.
+- **Outputs**: `_output/sm_<receiver>.npz` (first 12 s; ignored by git). `data/sm/` holds the
+  same files from the reference run.
+
+#### `compare.py`
+- **Purpose**: ShakerMaker (`data/sm/`) against SW4 (`data/sw4/`): integrates the SW4 velocity
+  in time (the two codes define the Gaussian STF differently; checked at the surface),
+  band-passes both to 0.1-1.2 Hz, fits one amplitude factor at `o6_z0000` and reports
+  correlation, peak ratio and normalized misfit per receiver and component.
+- **Outputs**: `_output/comparison.csv`, `_output/loh1_below_source.png`.
+
+#### `kc_check.py`
+- **Purpose**: Reruns the three receivers 0.5 km from the source depth with `kc` = 15, 30, 60
+  and 150. The receiver 0.5 km below the source near the epicentre needs `kc` >= 30 on Z
+  (peak ratio 1.36 with the default 15): `subfk.f` cuts the wavenumber integral at `kc / hs`
+  with `hs` = total model thickness instead of the source-receiver separation of `fk.f`.
+- **Outputs**: `_output/kc_check.csv`.
+
+#### `loh1_below_source.in`
+- SW4 input: LOH.1 material, `mxy = 1e18` N m Gaussian source at (12, 12, 2) km, 24 x 24 x 12 km,
+  h = 100 m refined to 50 m in the layer, 9 s; about 25 min on 4 MPI ranks, 2.7 GB. Its output
+  is stored in `data/sw4/` (with the run log); SW4 is not needed to run the example.
+
+#### `notebooks/loh1_below_source.ipynb`
+- **Purpose**: The whole workflow with its outputs: model and receivers, ShakerMaker run, SW4
+  reference and STF convention check, comparison table, traces of both verticals, agreement
+  against depth, `kc` check, conclusions.
+- **Outputs** (tracked): `comparison.csv`, `kc_check.csv`, `model_and_receivers.png`,
+  `traces_o6.png`, `traces_o06.png`, `agreement_vs_depth.png`, `kc_o06_z2500.png`.
 
 ---
 
