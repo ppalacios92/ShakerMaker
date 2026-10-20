@@ -1233,15 +1233,16 @@ with one amplitude factor fitted at the surface. Documented in its own `README.m
 
 #### `kc_check.py`
 - **Purpose**: Reruns the three receivers 0.5 km from the source depth with `kc` = 15, 30, 60
-  and 150. The receiver 0.5 km below the source near the epicentre needs `kc` >= 30 on Z
-  (peak ratio 1.36 with the default 15): `subfk.f` cuts the wavenumber integral at `kc / hs`
-  with `hs` = total model thickness instead of the source-receiver separation of `fk.f`.
+  and 150 and checks that the result does not depend on `kc`. `subfk.f` cuts the wavenumber
+  integral at `kc / hs`; `subgreen` passes the source-receiver separation as `hs`, as `fk.f`
+  does. Before that fix (it passed the total model thickness) the receiver 0.5 km below the
+  source near the epicentre had a Z peak ratio of 1.36 with the default `kc` = 15.
 - **Outputs**: `_output/kc_check.csv`.
 
 #### `loh1_below_source.in`
 - SW4 input: LOH.1 material, `mxy = 1e18` N m Gaussian source at (12, 12, 2) km, 24 x 24 x 12 km,
   h = 100 m refined to 50 m in the layer, 9 s; about 25 min on 4 MPI ranks, 2.7 GB. Its output
-  is stored in `data/sw4/` (with the run log); SW4 is not needed to run the example.
+  is stored in `data/sw4/` (with the run log, `sw4_run_log.txt`); SW4 is not needed to run the example.
 
 #### `notebooks/loh1_below_source.ipynb`
 - **Purpose**: The whole workflow with its outputs: model and receivers, ShakerMaker run, SW4
