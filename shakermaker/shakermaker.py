@@ -83,6 +83,7 @@ from shakermaker.crustmodel import CrustModel
 from shakermaker.faultsource import FaultSource
 from shakermaker.stationlist import StationList
 from shakermaker.stationlistwriter import StationListWriter
+from shakermaker.station import add_shifted, lagrange4_taps
 from shakermaker import core
 
 # Windows change: the default Windows thread stack is ~1 MB, which is not
@@ -2360,26 +2361,33 @@ class ShakerMaker:
                             c['core'] += perf_counter() - t1
                             t_arr = np.arange(0, len(z) * dt, dt) + psource.tt + t0
                             dti = t_arr[1] - t_arr[0]
-                            if t_arr[0] >= 0:
-                                nb, ns_ = int(t_arr[0] / dti), 0
-                            else:
-                                nb, ns_ = 0, int(-t_arr[0] / dti)
-                            nw = min(len(z) - ns_, nout - nb)
-                            if nw <= 0:
+                            # if t_arr[0] >= 0:
+                            #     nb, ns_ = int(t_arr[0] / dti), 0
+                            # else:
+                            #     nb, ns_ = 0, int(-t_arr[0] / dti)
+                            # nw = min(len(z) - ns_, nout - nb)
+                            # Real offset of the trace on buf (index 0 = t tmin), fraction
+                            # of a sample included (B04); +2 samples for the 4 taps.
+                            mu = (t_arr[0] - tmin) / dti
+                            nkeep = min(len(z), int(np.floor(nout - mu)) + 2)
+                            if nkeep <= 0:
                                 continue
                             t1 = perf_counter()
                             if _s2conv == "fast":
                                 z_stf, e_stf, n_stf = _conv3(_stf_cache, psource.stf, z, e, n,
-                                                             dti, ns_ + nw)
+                                                             dti, nkeep)
                             else:
                                 z_stf = psource.stf.convolve(z, t_arr)
                                 e_stf = psource.stf.convolve(e, t_arr)
                                 n_stf = psource.stf.convolve(n, t_arr)
                             c['conv'] += perf_counter() - t1
                             t1 = perf_counter()
-                            buf[0, nb:nb + nw] += z_stf[ns_:ns_ + nw]
-                            buf[1, nb:nb + nw] += e_stf[ns_:ns_ + nw]
-                            buf[2, nb:nb + nw] += n_stf[ns_:ns_ + nw]
+                            # buf[0, nb:nb + nw] += z_stf[ns_:ns_ + nw]
+                            # buf[1, nb:nb + nw] += e_stf[ns_:ns_ + nw]
+                            # buf[2, nb:nb + nw] += n_stf[ns_:ns_ + nw]
+                            add_shifted(buf[0], z_stf[:nkeep], mu)
+                            add_shifted(buf[1], e_stf[:nkeep], mu)
+                            add_shifted(buf[2], n_stf[:nkeep], mu)
                             c['add'] += perf_counter() - t1
                     tot = np.zeros_like(buf) if rank == 0 else None
                     t1 = perf_counter()
@@ -2390,6 +2398,8 @@ class ShakerMaker:
                     c['send'] += perf_counter() - t1
                     if rank == 0:
                         t1 = perf_counter()
+                        # station.add_to_response(tot[0], tot[1], tot[2], t_out, tmin, tmax)
+                        # buf index 0 is t = tmin: t_out itself
                         station.add_to_response(tot[0], tot[1], tot[2], t_out, tmin, tmax)
                         if writer:
                             _timed_write(writer, station, i_station, c, perf_time_begin)
@@ -2677,22 +2687,33 @@ class ShakerMaker:
                 from numba import njit as _nj
 
                 @_nj(nogil=True, cache=False)
-                def fused(buf, K, cg, mem):
+                def fused(buf, K, cg, mem, H):
                     # subfocal structure, one pass over the 8 convolved components
                     # (rows g1 g2 g4 g5 g6 g7 g8 g9) per receiver:
                     #   z = Z2 g7 + Z1 g4 - A0 g1,  r = Z2 g8 + Z1 g5 - A0 g2,
                     #   t = T2 g9 + T1 g6,  e = -s r - c t,  n = -c r + s t
+                    # Each receiver adds sum_j H[q, j] x[k - j] at buf index m0 + k:
+                    # its trace placed at its real time with the 4-point Lagrange
+                    # interpolator of station.add_shifted (B04). Previously a whole-
+                    # sample copy, buf[m, :, nb + t] += x[ns + t].
+                    keep = cg.shape[1]
                     for q in range(mem.shape[0]):
-                        m, nb, ns, nw = mem[q, 0], mem[q, 1], mem[q, 2], mem[q, 3]
+                        m, m0, k0, nk = mem[q, 0], mem[q, 1], mem[q, 2], mem[q, 3]
                         Z2, Z1, A0, T2, T1, cc, ss = K[q, 0], K[q, 1], K[q, 2], K[q, 3], K[q, 4], K[q, 5], K[q, 6]
-                        for t in range(nw):
-                            s = ns + t
-                            zv = Z2 * cg[5, s] + Z1 * cg[2, s] - A0 * cg[0, s]
-                            rv = Z2 * cg[6, s] + Z1 * cg[3, s] - A0 * cg[1, s]
-                            tv = T2 * cg[7, s] + T1 * cg[4, s]
-                            buf[m, 0, nb + t] += zv
-                            buf[m, 1, nb + t] += -ss * rv - cc * tv
-                            buf[m, 2, nb + t] += -cc * rv + ss * tv
+                        for t in range(nk):
+                            k = k0 + t
+                            zv = 0.0; rv = 0.0; tv = 0.0
+                            for j in range(4):
+                                s = k - j
+                                if s < 0 or s >= keep:
+                                    continue
+                                w = H[q, j]
+                                zv += w * (Z2 * cg[5, s] + Z1 * cg[2, s] - A0 * cg[0, s])
+                                rv += w * (Z2 * cg[6, s] + Z1 * cg[3, s] - A0 * cg[1, s])
+                                tv += w * (T2 * cg[7, s] + T1 * cg[4, s])
+                            buf[m, 0, m0 + k] += zv
+                            buf[m, 1, m0 + k] += -ss * rv - cc * tv
+                            buf[m, 2, m0 + k] += -cc * rv + ss * tv
             except ImportError:
                 fused = None
         nsta, nsrc = slot_matrix.shape
@@ -2753,15 +2774,29 @@ class ShakerMaker:
         s2order = os.environ.get("SM_S2_ORDER", "slot")
 
         def window(ps, t0, nout):
-            """dti, nb, ns, nw of add_to_response for this pair."""
+            """dti and placement of this pair on the buffer (index 0 = t tmin).
+
+            Returns (dti, m0, k0, nk, keep, mu, h): the trace x convolved with the
+            4 taps h is added at buffer indices m0 + k, k in [k0, k0 + nk), and
+            keep samples of x are needed. Same placement as station.add_shifted,
+            fraction of a sample included (B04); previously (dti, nb, ns, nw) of a
+            whole-sample copy.
+            """
             a0 = (0.0 + ps.tt) + np.float64(t0)
             a1 = (dt + ps.tt) + np.float64(t0)
             dti = a1 - a0
-            if a0 >= 0:
-                nb, ns = int(a0 / dti), 0
-            else:
-                nb, ns = 0, int(-a0 / dti)
-            return dti, nb, ns, min(L - ns, nout - nb)
+            # if a0 >= 0:
+            #     nb, ns = int(a0 / dti), 0
+            # else:
+            #     nb, ns = 0, int(-a0 / dti)
+            # return dti, nb, ns, min(L - ns, nout - nb)
+            mu = (a0 - tmin) / dti          # buffer index 0 is t = tmin
+            m0, h = lagrange4_taps(mu)
+            if h is None:
+                h = np.array([1.0, 0.0, 0.0, 0.0])
+            k0 = max(0, -m0)
+            kend = min(L + 3, nout - m0)
+            return dti, m0, k0, kend - k0, min(L, kend), mu, h
 
         for c0 in range(0, nsta, chunk):
             ids = np.arange(c0, min(c0 + chunk, nsta))
@@ -2769,7 +2804,7 @@ class ShakerMaker:
             t1 = perf_counter()
             dt_sta = np.empty(len(ids)); nout = np.empty(len(ids), dtype=np.int64)
             for m, i in enumerate(ids):
-                dti, _, _, _ = window(srcs[0], t0_of(srcs[0], stations[i], int(slot_matrix[i, 0])), 0)
+                dti = window(srcs[0], t0_of(srcs[0], stations[i], int(slot_matrix[i, 0])), 0)[0]
                 dt_sta[m] = dti
                 nout[m] = len(np.arange(tmin, tmax, dti))
             c['core'] += perf_counter() - t1
@@ -2795,6 +2830,9 @@ class ShakerMaker:
                 mm_, jj_, kk_ = mm_[o], jj_[o], kk_[o]
                 key = kk_.astype(np.int64) * nsrc + jj_
                 cut = np.flatnonzero(np.diff(key)) + 1
+                # yield int(jj_[a_]), mm_[a_:b_], kk_[a_:b_]
+                if jj_.size == 0:
+                    return  # No grouped work on this rank.
                 for a_, b_ in zip(np.r_[0, cut], np.r_[cut, len(key)]):
                     yield int(jj_[a_]), mm_[a_:b_], kk_[a_:b_]
 
@@ -2812,13 +2850,14 @@ class ShakerMaker:
                 groups = {}
                 for m, k in zip(mlist, klist):
                     st = stations[ids[m]]
-                    dti, nb, ns, nw = window(ps, t0_of(ps, st, int(k)), int(nout[m]))
-                    if nw <= 0:
+                    dti, m0, k0, nk, kp, mu, h = window(ps, t0_of(ps, st, int(k)), int(nout[m]))
+                    if nk <= 0 or kp <= 0:
                         continue
-                    groups.setdefault((int(k), dti), []).append((int(m), nb, ns, nw))
+                    groups.setdefault((int(k), dti), []).append((int(m), m0, k0, nk, kp, mu, h))
                 c['core'] += perf_counter() - t1
                 for (k, dti), members in groups.items():
-                    keep = max(ns + nw for _, _, ns, nw in members)
+                    # keep = max(ns + nw for _, _, ns, nw in members)
+                    keep = max(mb_[4] for mb_ in members)
                     g = slot(k)
                     stf_r, scale = stf_cache.get(ps.stf, dti)
                     t1 = perf_counter()
@@ -2858,14 +2897,19 @@ class ShakerMaker:
                         t1 = perf_counter()
                         if fused is not None:
                             # combine and add in one pass, no (members, 3, keep) temporary
-                            mem = np.array(members, dtype=np.int64)
+                            mem = np.array([mb_[:4] for mb_ in members], dtype=np.int64)
+                            H = np.array([mb_[6] for mb_ in members], dtype=np.float64)
                             K = np.column_stack((Z2, Z1, np.full(len(members), a0), T2, T1, c1, s1))
-                            fused(buf, np.ascontiguousarray(K), np.ascontiguousarray(cg), mem)
+                            fused(buf, np.ascontiguousarray(K), np.ascontiguousarray(cg), mem, H)
                             c['add'] += perf_counter() - t1
                             continue
                         out = (W.reshape(-1, 8) @ cg).reshape(len(members), 3, keep)
-                    for q, (m, nb, ns, nw) in enumerate(members):
-                        buf[m, :, nb:nb + nw] += out[q, :, ns:ns + nw]
+                    # for q, (m, nb, ns, nw) in enumerate(members):
+                    #     buf[m, :, nb:nb + nw] += out[q, :, ns:ns + nw]
+                    for q, mb_ in enumerate(members):
+                        m, mu = mb_[0], mb_[5]
+                        for cc_ in range(3):
+                            add_shifted(buf[m, cc_], out[q, cc_, :keep], mu)
                     c['add'] += perf_counter() - t1
             tot = np.zeros_like(buf) if rank == 0 else None
             t1 = perf_counter()
@@ -2881,7 +2925,9 @@ class ShakerMaker:
                     n_ = int(nout[m])
                     # buffer index 0 is t = 0, as add_to_response counts the shifts;
                     # the station grid itself is arange(tmin, tmax, dt_sta) as usual
-                    t_buf = np.arange(n_) * dt_sta[m]
+                    # t_buf = np.arange(n_) * dt_sta[m]
+                    # buffer index 0 is t = tmin (window), on the station grid
+                    t_buf = tmin + np.arange(n_) * dt_sta[m]
                     st.add_to_response(tot[m, 0, :n_], tot[m, 1, :n_], tot[m, 2, :n_],
                                        t_buf, tmin, tmax)
                     if writer:
