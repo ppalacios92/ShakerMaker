@@ -390,5 +390,5 @@ def stage2_inter(model, h5_database_name, dt=0.05, nfft=4096, tb=1000, tmin=0., 
         print(f"[Stage 2 inter] {nsta} stations x {nsrc} sources, order {order}: {total:.1f} s "
               f"(read {c['read']:.1f}, conv {c['conv']:.1f}, add {c['add']:.1f}, send {c['send']:.1f}, "
               f"write {c['recv']:.1f})", flush=True)
-    smod._perf_dump("stage2_inter", c, total)
+    smod._perf_dump("stage2_inter", {k: [v] for k, v in c.items()}, total)   # counters as [seconds]
     return c
