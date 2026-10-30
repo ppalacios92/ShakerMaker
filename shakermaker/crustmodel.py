@@ -23,10 +23,11 @@ class CrustModel:
 
     #: Depth tolerance in km used by split_at_depth and get_layer when they are called
     #: without ``tol``: a depth closer than this to an existing interface is taken at
-    #: the interface. The default keeps the previous fixed value (10 m); set it once,
-    #: e.g. ``CrustModel.depth_tol = 1e-4``, to place sources and receivers that close
-    #: to an interface (thin site layers) at their real depth.
-    depth_tol = 0.01
+    #: the interface. 1 mm: the previous 10 m moved every DRM node in the top 10 m of
+    #: a box onto the free surface (B15). ``CrustModel.depth_tol = 0.01`` reproduces
+    #: runs made before the change.
+    # depth_tol = 0.01
+    depth_tol = 1e-6
 
     def __init__(self, nlayers):
 
