@@ -1957,7 +1957,63 @@ class ShakerMaker:
                 key_ = (float(ps_.x[2]), float(st_.x[2]))
                 x_ = float(np.sqrt((ps_.x[0] - st_.x[0])**2 + (ps_.x[1] - st_.x[1])**2))
                 _xkey_s[key_] = max(_xkey_s.get(key_, 0.0), x_)
-        for i_station, i_psource in (pairs_to_compute if not _dyn else []):
+        # One process with SM_GF_XMAX=common: every slot of a (z_src, z_rec) in
+        # batched calls (one k grid per pair of depths, so a call with many
+        # distances returns exactly what a call per slot returns), written at its
+        # own index; the per-slot loop below is then skipped.
+        _batched_static = (not _dyn) and nprocs == 1 and bool(_xkey_s) \
+            and os.environ.get("SM_GF_BATCH", "1") != "0"
+        if _batched_static:
+            _bykey_s = {}
+            for ip, (i_station, i_psource) in enumerate(pairs_to_compute):
+                st_ = self._receivers.get_station_by_id(int(i_station))
+                ps_ = self._source.get_source_by_id(int(i_psource))
+                _bykey_s.setdefault((float(ps_.x[2]), float(st_.x[2])), []).append(ip)
+            _gmax_s = max(1, min(int(os.environ.get("SM_GF_BATCH_MAX", "64")),
+                                 int(float(os.environ.get("SM_GF_BATCH_MB", "512")) * 2**20
+                                     // (9 * 2 * nfft * 12))))
+            t0_ds = hfile_gf['/t0']
+            t0_ds.resize(npairs, axis=0)
+            gf_ds = None
+            ndone = 0
+            for key_ in sorted(_bykey_s):
+                ips = _bykey_s[key_]
+                i_st0, i_ps0 = pairs_to_compute[ips[0]]
+                station = self._receivers.get_station_by_id(int(i_st0))
+                psource = self._source.get_source_by_id(int(i_ps0))
+                aux_crust = copy.deepcopy(self._crust)
+                aux_crust.split_at_depth(key_[0])
+                aux_crust.split_at_depth(key_[1])
+                for i0 in range(0, len(ips), _gmax_s):
+                    blk = ips[i0:i0 + _gmax_s]
+                    xs = []
+                    for ip in blk:
+                        a_st, a_ps = pairs_to_compute[ip]
+                        st_ = self._receivers.get_station_by_id(int(a_st))
+                        ps_ = self._source.get_source_by_id(int(a_ps))
+                        xs.append(np.sqrt((ps_.x[0] - st_.x[0])**2 + (ps_.x[1] - st_.x[1])**2))
+                    t1 = perf_counter()
+                    tdata, t0v = self._call_core_multi(
+                        dt, nfft, tb, sigma, smth, wc1, wc2, pmin, pmax, dk, kc, taper,
+                        aux_crust, psource, station, np.array(xs, dtype=np.float64),
+                        xmax=_xkey_s[key_])
+                    c['core'] += perf_counter() - t1
+                    t_w0 = perf_counter()
+                    for ix, ip in enumerate(blk):
+                        tdata_c = np.ascontiguousarray(tdata[ix].T, dtype=np.float64)
+                        if gf_ds is None:
+                            gf_ds = hfile_gf.create_dataset(
+                                '/tdata', shape=(npairs, tdata_c.shape[0], 9),
+                                maxshape=(None, tdata_c.shape[0], 9), chunks=(1, tdata_c.shape[0], 9),
+                                dtype=np.float64, compression='gzip', compression_opts=4)
+                        gf_ds[ip] = tdata_c
+                        t0_ds[ip] = float(t0v[ix])
+                    c['write'] += perf_counter() - t_w0
+                    ndone += len(blk)
+                    if showProgress:
+                        print(f"{ndone} of {npairs} done (batched, {len(blk)} per call)  "
+                              f"ETA={_eta_str(perf_counter() - tstart, ndone, npairs)}")
+        for i_station, i_psource in (pairs_to_compute if not (_dyn or _batched_static) else []):
             station  = self._receivers.get_station_by_id(int(i_station))
             psource  = self._source.get_source_by_id(int(i_psource))
             z_src = psource.x[2]; z_rec = station.x[2]
