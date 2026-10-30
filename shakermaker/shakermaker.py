@@ -3252,6 +3252,16 @@ class ShakerMaker:
                   delta_v_src=0.2,
                   dh_grid=0.04,
                   order=3,
+                  # Etapa 2: tensor grid, iterative (scheme='tensor')
+                  scheme='grid',
+                  dz_src0=0.32,
+                  dh0=0.16,
+                  dz_src_min=0.04,
+                  dh_min=0.02,
+                  eps_v=0.01,
+                  eps_s=0.05,
+                  f_err=20.0,
+                  store='zstd',
                   # Core (stages 1 and 2)
                   dt=0.05,
                   nfft=4096,
@@ -3292,6 +3302,15 @@ class ShakerMaker:
           own first arrival, fraction of a sample included.
 
         Stage 1 is compute_gf on the grid nodes. run_nearest is unchanged.
+
+        ``scheme='tensor'`` (shakermaker/run_inter_tensor.py): the source depth is
+        interpolated too, on a tensor grid of source-depth levels x distances per
+        receiver depth, refined iteratively (start ``dz_src0`` x ``dh0``; a cell is
+        accepted when its midpoint is predicted within ``eps_v`` in value and, in
+        distance, ``eps_s`` relative to the change across the cell, both in
+        [0, ``f_err``] Hz; minimum ``dz_src_min``, ``dh_min``); accepted midpoints are
+        not stored. Stages 0 and 1 run together; the database keeps only the samples
+        Stage 2 can use, with ``store`` 'f32', 'zstd' (shuffle + zstd) or 'zfp<bits>'.
         """
         from shakermaker import run_inter as _ri
         if h5_database_name is None:
@@ -3300,6 +3319,23 @@ class ShakerMaker:
                        pmin=pmin, pmax=pmax, dk=dk, nx=nx, kc=kc, verbose=verbose, debugMPI=debugMPI,
                        showProgress=showProgress)
         t_all = perf_counter()
+        if scheme == 'tensor':
+            from shakermaker import run_inter_tensor as _rt
+            fk = dict(dt=dt, nfft=nfft, tb=tb, smth=smth, sigma=sigma, taper=taper, wc1=wc1, wc2=wc2,
+                      pmin=pmin, pmax=pmax, dk=dk, kc=kc)
+            if stage in (0, 1, 'all'):
+                t_s = perf_counter()
+                st = _rt.stage01_tensor(self, h5_database_name, fk, tmax, delta_v_rec=delta_v_rec,
+                                        dz_src0=dz_src0, dh0=dh0, dz_src_min=dz_src_min, dh_min=dh_min,
+                                        eps_v=eps_v, eps_s=eps_s, f_err=f_err, order=order, store=store,
+                                        showProgress=showProgress)
+                _perf_dump('stage01_tensor', {}, perf_counter() - t_s)
+            if stage in (2, 'all'):
+                _rt.stage2_tensor(self, h5_database_name, dt=dt, nfft=nfft, tb=tb, tmin=tmin, tmax=tmax,
+                                  writer=writer, writer_mode=writer_mode, showProgress=showProgress)
+            if rank == 0 and showProgress:
+                print(f"run_inter (tensor) stage={stage}: {perf_counter() - t_all:.1f} s", flush=True)
+            return
         if stage in (0, 'all'):
             t_s = perf_counter()
             _ri.stage0_inter(self, h5_database_name, delta_v_rec=delta_v_rec, delta_v_src=delta_v_src,
