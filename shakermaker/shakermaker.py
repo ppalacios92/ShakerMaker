@@ -1675,7 +1675,7 @@ class ShakerMaker:
             TAG_TASK, TAG_HDR, TAG_T0, TAG_DATA = 7101, 7102, 7103, 7104
             STOP = np.array([-1], dtype=np.int64)
 
-            def _compute_slot(k):
+            def _compute_slot(k, xmax=0.0):
                 i_st, i_ps = pairs_to_compute[k]
                 station = self._receivers.get_station_by_id(int(i_st))
                 psource = self._source.get_source_by_id(int(i_ps))
@@ -1686,7 +1686,7 @@ class ShakerMaker:
                 tdata, z, e, n, t0 = self._call_core(
                     dt, nfft, tb, nx, sigma, smth,
                     wc1, wc2, pmin, pmax, dk, kc,
-                    taper, aux_crust, psource, station, verbose)
+                    taper, aux_crust, psource, station, verbose, xmax=xmax)
                 dtc = perf_counter() - t1
                 c['core'] += dtc
                 if _gf_f32:
@@ -1715,8 +1715,17 @@ class ShakerMaker:
             _per_dist = 9 * 2 * nfft * 12
             _gmax = max(1, min(int(os.environ.get("SM_GF_BATCH_MAX", "64")),
                                int(float(os.environ.get("SM_GF_BATCH_MB", "512")) * 2**20 // _per_dist)))
+            # SM_GF_XMAX=common: every slot of one (z_src, z_rec) is integrated with
+            # the wavenumber step of the largest distance of that pair of depths
+            # (dk*pi/xmax), instead of the step of its own call (B18, D5). With one
+            # k grid per pair of depths, a call with many distances returns exactly
+            # what separate calls return at any distance, so all the slots of a
+            # pair of depths are batched, not only those within hs.
+            _xmax_common = os.environ.get("SM_GF_XMAX", "call") == "common"
+            _xkey = {}
             groups = []
-            if _batch:
+            group_xmax = []
+            if _batch or _xmax_common:
                 _bykey, _hs = {}, {}
                 for k in range(npairs):
                     i_st, i_ps = pairs_to_compute[k]
@@ -1731,22 +1740,28 @@ class ShakerMaker:
                             h32 = np.float32(h32 + _d)
                         _hs[key] = h32
                     x = np.sqrt((ps.x[0] - st.x[0])**2 + (ps.x[1] - st.x[1])**2)
-                    if np.float32(x) <= _hs[key]:
+                    _xkey[key] = max(_xkey.get(key, 0.0), float(x))
+                    if _xmax_common or np.float32(x) <= _hs[key]:
                         _bykey.setdefault(key, []).append(k)
                     else:
                         groups.append([k])
+                        group_xmax.append(0.0)
+                if not _batch:
+                    _gmax = 1
                 for key in sorted(_bykey):
                     ks = _bykey[key]
                     for i0 in range(0, len(ks), _gmax):
                         groups.append(ks[i0:i0 + _gmax])
+                        group_xmax.append(_xkey[key] if _xmax_common else 0.0)
             else:
                 groups = [[k] for k in range(npairs)]
+                group_xmax = [0.0] * npairs
             ngroups = len(groups)
 
             def _compute_group(g):
                 ks = groups[g]
                 if len(ks) == 1:
-                    nt_real, t0v, comp, dtc = _compute_slot(ks[0])
+                    nt_real, t0v, comp, dtc = _compute_slot(ks[0], group_xmax[g])
                     return [(ks[0], nt_real, t0v, comp)], dtc
                 i_st, i_ps = pairs_to_compute[ks[0]]
                 station = self._receivers.get_station_by_id(int(i_st))
@@ -1763,7 +1778,8 @@ class ShakerMaker:
                 t1 = perf_counter()
                 tdata, t0 = self._call_core_multi(
                     dt, nfft, tb, sigma, smth, wc1, wc2, pmin, pmax, dk, kc, taper,
-                    aux_crust, psource, station, np.array(xs, dtype=np.float64))
+                    aux_crust, psource, station, np.array(xs, dtype=np.float64),
+                    xmax=group_xmax[g])
                 dtc = perf_counter() - t1
                 c['core'] += dtc
                 out = []
@@ -1931,6 +1947,16 @@ class ShakerMaker:
                     c['send'] += perf_counter() - t1
                     comm.Recv(task, source=0, tag=TAG_TASK)
 
+        # SM_GF_XMAX=common in the static route too: the largest distance of each
+        # (z_src, z_rec) sets its wavenumber step (B18, as in the dynamic route).
+        _xkey_s = {}
+        if not _dyn and os.environ.get("SM_GF_XMAX", "call") == "common":
+            for i_station, i_psource in pairs_to_compute:
+                st_ = self._receivers.get_station_by_id(int(i_station))
+                ps_ = self._source.get_source_by_id(int(i_psource))
+                key_ = (float(ps_.x[2]), float(st_.x[2]))
+                x_ = float(np.sqrt((ps_.x[0] - st_.x[0])**2 + (ps_.x[1] - st_.x[1])**2))
+                _xkey_s[key_] = max(_xkey_s.get(key_, 0.0), x_)
         for i_station, i_psource in (pairs_to_compute if not _dyn else []):
             station  = self._receivers.get_station_by_id(int(i_station))
             psource  = self._source.get_source_by_id(int(i_psource))
@@ -1954,7 +1980,8 @@ class ShakerMaker:
                     tdata, z, e, n, t0 = self._call_core(
                         dt, nfft, tb, nx, sigma, smth,
                         wc1, wc2, pmin, pmax, dk, kc,
-                        taper, aux_crust, psource, station, verbose)
+                        taper, aux_crust, psource, station, verbose,
+                        xmax=_xkey_s.get((float(z_src), float(z_rec)), 0.0))
                     c['core'] += perf_counter() - t1
                     if verbose:
                         print("calling core END")
@@ -3657,7 +3684,8 @@ class ShakerMaker:
     def mpi_nprocs(self):
         return self._mpi_nprocs
 
-    def _call_core(self, dt, nfft, tb, nx, sigma, smth, wc1, wc2, pmin, pmax, dk, kc, taper, crust, psource, station, verbose=False):
+    def _call_core(self, dt, nfft, tb, nx, sigma, smth, wc1, wc2, pmin, pmax, dk, kc, taper, crust, psource, station, verbose=False,
+                   xmax=0.0):
         mb = crust.nlayers
 
         if verbose:
@@ -3705,8 +3733,12 @@ class ShakerMaker:
                            wc2, pmin, pmax, dk, kc, taper, x, pf, df, lf, sx, sy, rx, ry))
 
         # Execute the core subgreen fortran routing
+        # xmax > 0 sets the wavenumber step dk*pi/xmax when larger than x and hs
+        # (a common k grid for every distance of one (zs, zr), B18); 0 keeps the
+        # step of this call alone.
         tdata, z, e, n, t0 = core.subgreen(mb, src, rcv, stype, updn, d, a, b, rho, qa, qb, dt, nfft, tb, nx, sigma,
-                                           smth, wc1, wc2, pmin, pmax, dk, kc, taper, x, pf, df, lf, sx, sy, rx, ry)
+                                           smth, wc1, wc2, pmin, pmax, dk, kc, taper, x, pf, df, lf, sx, sy, rx, ry,
+                                           float(xmax))
 
         self._logger.debug('ShakerMaker._call_core - core.subgreen returned: z_size'.format(len(z)))
 
@@ -3714,8 +3746,11 @@ class ShakerMaker:
 
 
     def _call_core_multi(self, dt, nfft, tb, sigma, smth, wc1, wc2, pmin, pmax, dk, kc,
-                         taper, crust, psource, station, xs):
+                         taper, crust, psource, station, xs, xmax=0.0):
         """core.subgreen with several distances xs (km) for one (z_src, z_rec).
+
+        xmax > 0: wavenumber step dk*pi/xmax shared with every other call of this
+        (z_src, z_rec) that passes the same xmax (B18); 0 keeps max(hs, xs).
 
         Used by compute_gf (Stage 1) to batch slots. Returns tdata (nx, 9, 2*nfft)
         and t0 (nx,), each row what _call_core returns for that distance.
@@ -3726,7 +3761,8 @@ class ShakerMaker:
             crust.nlayers, src, rcv, 2, 0, crust.d, crust.a, crust.b, crust.rho,
             crust.qa, crust.qb, dt, nfft, tb, len(xs), sigma, smth, wc1, wc2, pmin,
             pmax, dk, kc, taper, xs, psource.angles[0], psource.angles[1],
-            psource.angles[2], psource.x[0], psource.x[1], station.x[0], station.x[1])
+            psource.angles[2], psource.x[0], psource.x[1], station.x[0], station.x[1],
+            float(xmax))
         return tdata, t0
 
     def _check_slot_t0(self, hfile, hfile_gf, crust_for, dt, tb):
