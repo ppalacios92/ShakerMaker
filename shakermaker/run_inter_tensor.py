@@ -91,7 +91,8 @@ class _Core:
             c.nlayers, c.get_layer(zs) + 1, c.get_layer(zr) + 1, 2, 0, c.d, c.a, c.b, c.rho, c.qa, c.qb,
             fk["dt"], fk["nfft"], fk["tb"], len(xs), fk["sigma"], fk["smth"], fk["wc1"], fk["wc2"],
             fk["pmin"], fk["pmax"], fk["dk"], fk["kc"], fk["taper"], np.asarray(xs, dtype=np.float64),
-            0.0, np.pi / 2, 0.0, 0.0, 0.0, float(xs[0]), 0.0, float(self.xmax_of(zr)))
+            0.0, np.pi / 2, 0.0, 0.0, 0.0, float(xs[0]), 0.0, float(self.xmax_of(zr)),
+            float(fk.get("freq_cut", 0.0) or 0.0))
         td = np.asarray(tdata[:, :, :self.nkeep], dtype=np.float32)          # (nx, 9, nkeep)
         sp = np.fft.rfft(td[:, COMPS, :].astype(np.float64), n=2 * self.nkeep, axis=-1)
         f = np.fft.rfftfreq(2 * self.nkeep, fk["dt"])
@@ -104,8 +105,26 @@ def _rel(a, b):
 
 def stage01_tensor(model, h5_database_name, fk, tmax, delta_v_rec=1e-5, dz_src0=0.32, dh0=0.16,
                    dz_src_min=0.04, dh_min=0.02, eps_v=0.01, eps_s=0.05, f_err=20.0, order=3,
-                   store="zstd", calls_max=64, showProgress=True):
-    """Stages 0 and 1 of the tensor scheme: iterative grid and database (rank 0 writes)."""
+                   store="zstd", calls_max=64, src_levels="exact", showProgress=True):
+    """Stages 0 and 1 of the tensor scheme (rank 0 coordinates and writes; the others compute).
+
+    src_levels='exact' (default): one source-depth level per distinct source depth,
+    not refined (above ~5 Hz the source depth cannot be interpolated, B18 E2.1);
+    'interp': levels every dz_src0, refined iteratively like below.
+
+    Distance: every source-depth level is computed once at ALL candidate distances
+    (every dh_min) in calls that share the wavenumber kernel (each extra distance costs a
+    few percent of a call); which distances become nodes is decided afterwards, without
+    new calls, by bisection on the stored band-limited spectra: starting from every
+    dh0, a cell is accepted when the candidate at its midpoint is predicted within eps_v
+    (value) and eps_s (relative to the change across the cell) at every level.
+    Source depth: iterative rounds; the midpoint level of every untested cell is
+    computed (one call per chunk of candidates) and kept only if the levels around it
+    do not predict it within eps_v at every candidate distance.
+    The traces of computed levels go to a temporary file; only the selected
+    levels x distances are copied to the database (R1: samples Stage 2 can use; R2/R3:
+    store='zstd' / 'zfp<bits>').
+    """
     from shakermaker import shakermaker as smod
     from shakermaker.run_inter import _levels
     comm, rank, nprocs, use_mpi = getattr(smod, "comm", None), smod.rank, smod.nprocs, smod.use_mpi
@@ -120,7 +139,13 @@ def stage01_tensor(model, h5_database_name, fk, tmax, delta_v_rec=1e-5, dz_src0=
         for c0 in range(0, nsrc, 512):
             d = np.hypot(sx[c0:c0 + 512, 0][:, None] - rx[r, 0][None, :], sx[c0:c0 + 512, 1][:, None] - rx[r, 1][None, :])
             dmin[j] = min(dmin[j], d.min()); dmax[j] = max(dmax[j], d.max())
-    xmax = {float(z): float(dmax[j] + 2 * dh0) for j, z in enumerate(zr_lev)}
+    step = max(1, int(round(dh0 / dh_min)))                 # coarse nodes every `step` candidates
+    cand = {}
+    for j in range(len(zr_lev)):
+        ib = max(0, int(np.floor(dmin[j] / dh0)) - (1 if order == 3 else 0)) * step
+        ie = (int(np.ceil(dmax[j] / dh0)) + (2 if order == 3 else 1)) * step
+        cand[j] = np.arange(ib, ie + 1) * dh_min
+    xmax = {float(z): float(cand[j][-1]) for j, z in enumerate(zr_lev)}
     dt = fk["dt"]
     nkeep = int(min(2 * fk["nfft"], np.ceil((tmax + fk["tb"] * dt + 1.0) / dt)))       # R1
     core_call = _Core(model, fk, lambda z: xmax[float(z)], nkeep, f_err)
@@ -138,33 +163,41 @@ def stage01_tensor(model, h5_database_name, fk, tmax, delta_v_rec=1e-5, dz_src0=
         return
 
     # ---------------- coordinator (rank 0) --------------------------------
-    stats = dict(calls=0, computed=0, stored=0, tested_dh=0, tested_zs=0, accepted=0, rounds=0, seconds_core=0.0)
-    grids = []                       # per (z_r, segment): dict(zr, zs, dh, data{(i,k)->(td,t0,sp)})
+    stats = dict(calls=0, computed=0, levels_computed=0, levels_stored=0, candidates=0, dh_stored=0,
+                 rounds=0, seconds_core=0.0)
+    gf_file = h5_database_name.replace('.h5', '') + '_gf.h5'
+    map_file = h5_database_name.replace('.h5', '') + '_map.h5'
+    tmp_file = gf_file + ".levels.tmp"
+    htmp = h5py.File(tmp_file, "w", locking=False)
+    grids = []
     zs_all = sx[:, 2]
     for j, zr in enumerate(zr_lev):
         for (za, zb) in _segments(model._crust, zs_all.min(), zs_all.max() + 1e-9):
             if not np.any((zs_all >= za - 1e-9) & (zs_all <= zb + 1e-9)):
                 continue
-            if zb - za < 1e-9:                     # every source at one depth: one level
-                zs = np.array([za])
+            if zb - za < 1e-6:
+                zs = [za]
+            elif src_levels == "exact":
+                sel_ = (zs_all >= za - 1e-9) & (zs_all <= zb + 1e-9)
+                zs = list(np.unique(np.round(zs_all[sel_], 9)))
             else:
                 nz = max(1, int(np.ceil((zb - za) / dz_src0)))
-                zs = np.linspace(za, zb, nz + 1)
+                zs = list(np.linspace(za, zb, nz + 1))
                 if order == 3 and len(zs) < 4:
-                    zs = np.linspace(za, zb, 4)
-            ib = max(0, int(np.floor(dmin[j] / dh0)) - (1 if order == 3 else 0))
-            ie = int(np.ceil(dmax[j] / dh0)) + (2 if order == 3 else 1)
-            dh = np.arange(ib, ie + 1) * dh0
-            grids.append(dict(zr=float(zr), zs=list(zs), dh=list(dh), data={}, ok_dh=set(), ok_zs=set()))
+                    zs = list(np.linspace(za, zb, 4))
+            grids.append(dict(j=j, zr=float(zr), zs=zs, sp={}, ok_zs=set(),
+                              sel=list(range(0, len(cand[j]), step)) + ([len(cand[j]) - 1]
+                                   if (len(cand[j]) - 1) % step else [])))
 
-    def run_tasks(items):
-        """items: list of (key, zs, zr, xs). Returns {key: (td, t0, sp)}. Batched calls, MPI dynamic."""
-        out = {}
+    def run_levels(items):
+        """items: (gi, z). Computes every candidate distance of each level; spectra kept, traces to tmp."""
         tasks = []
-        for key, zs, zr, xs in items:
+        for gi, z in items:
+            xs = cand[grids[gi]["j"]]
             for c0 in range(0, len(xs), calls_max):
-                tasks.append(((key, c0), zs, zr, np.asarray(xs[c0:c0 + calls_max])))
+                tasks.append(((gi, round(z, 9), c0), z, grids[gi]["zr"], xs[c0:c0 + calls_max]))
         t1 = perf_counter()
+        parts = {}
         if use_mpi and nprocs > 1:
             pend, it = 0, iter(tasks)
             for w in range(1, nprocs):
@@ -172,7 +205,6 @@ def stage01_tensor(model, h5_database_name, fk, tmax, delta_v_rec=1e-5, dz_src0=
                 if t is None:
                     break
                 comm.send(t, dest=w, tag=TAG_TASK); pend += 1
-            parts = {}
             while pend:
                 st = smod.MPI.Status()
                 tid, res = comm.recv(source=smod.MPI.ANY_SOURCE, tag=TAG_RES, status=st)
@@ -181,122 +213,92 @@ def stage01_tensor(model, h5_database_name, fk, tmax, delta_v_rec=1e-5, dz_src0=
                 if t is not None:
                     comm.send(t, dest=st.Get_source(), tag=TAG_TASK); pend += 1
         else:
-            parts = {t[0]: core_call(t[1], t[2], t[3]) for t in tasks}
+            for t in tasks:
+                parts[t[0]] = core_call(t[1], t[2], t[3])
         stats["seconds_core"] += perf_counter() - t1
         stats["calls"] += len(tasks)
-        for key, zs, zr, xs in items:
-            cs = sorted(c for (k_, c) in parts if k_ == key)
-            out[key] = tuple(np.concatenate([parts[(key, c)][q] for c in cs]) for q in range(3))
-            stats["computed"] += len(xs)
+        out = {}
+        for gi, z in items:
+            key = (gi, round(z, 9))
+            cs = sorted(c for (g_, z_, c) in parts if (g_, z_) == key)
+            td = np.concatenate([parts[key + (c,)][0] for c in cs])
+            t0 = np.concatenate([parts[key + (c,)][1] for c in cs])
+            sp = np.concatenate([parts[key + (c,)][2] for c in cs])
+            name = f"g{gi}_z{round(z, 9):.9f}"
+            htmp.create_dataset(name, data=td); htmp.create_dataset(name + "_t0", data=t0)
+            out[key] = sp
+            stats["computed"] += len(td); stats["levels_computed"] += 1
         return out
 
-    def ensure(g):
-        """Compute every node of grid g that is missing."""
-        items = []
-        for i, z in enumerate(g["zs"]):
-            miss = [k for k in range(len(g["dh"])) if (round(z, 9), round(g["dh"][k], 9)) not in g["data"]]
-            if miss:
-                items.append(((id(g), i), z, g["zr"], [g["dh"][k] for k in miss]))
-        res = run_tasks(items)
-        for (gid, i), (td, t0, sp) in res.items():
-            z = g["zs"][i]
-            miss = [k for k in range(len(g["dh"])) if (round(z, 9), round(g["dh"][k], 9)) not in g["data"]]
-            for q, k in enumerate(miss):
-                g["data"][(round(z, 9), round(g["dh"][k], 9))] = (td[q], t0[q], sp[q])
+    def select_dh(g):
+        """Bisection over the candidate distances of every stored level (no new calls)."""
+        nC = len(cand[g["j"]])
+        sel = sorted(set(g["sel"]))
+        levels = [g["sp"][round(z, 9)] for z in g["zs"]]
+        ok = set()
+        while True:
+            new = []
+            for a, b in zip(sel[:-1], sel[1:]):
+                if b - a < 2 or (a, b) in ok:
+                    continue
+                m = (a + b) // 2
+                grid = np.array(sel, dtype=np.float64)
+                idx, w = stencil(float(m), grid, order)
+                worst_v = worst_s = 0.0
+                for spl in levels:
+                    interp = sum(w[q] * spl[sel[idx[q]]] for q in range(len(idx)))
+                    worst_v = max(worst_v, _rel(interp, spl[m]))
+                    span = spl[b] - spl[a]
+                    worst_s = max(worst_s, float(np.sqrt(np.sum(np.abs(interp - spl[m]) ** 2))
+                                                 / max(np.sqrt(np.sum(np.abs(span) ** 2)), 1e-300)))
+                if worst_v <= eps_v and worst_s <= eps_s:
+                    ok.add((a, b))
+                else:
+                    new.append(m)
+            if not new:
+                break
+            sel = sorted(set(sel) | set(new))
+        g["sel"] = sel
 
-    def node(g, z, d):
-        return g["data"][(round(z, 9), round(d, 9))]
-
+    # first round: every coarse level of every grid
+    res = run_levels([(gi, z) for gi, g in enumerate(grids) for z in g["zs"]])
+    for (gi, zk), sp in res.items():
+        grids[gi]["sp"][zk] = sp
     while True:
         stats["rounds"] += 1
         for g in grids:
-            ensure(g)
-        changed = False
-        # ---- distance cells: midpoint columns -----------------------------
-        items, cells, mids = [], [], {}
-        for gi, g in enumerate(grids):
-            dh = g["dh"]
-            ks = []
-            for k in range(len(dh) - 1):
-                key = (round(dh[k], 9), round(dh[k + 1], 9))
-                if key in g["ok_dh"] or dh[k + 1] - dh[k] <= dh_min * 1.5:
-                    continue
-                cells.append((gi, k)); ks.append(k)
-            if ks:
-                mids[gi] = ks
-                xms = [0.5 * (dh[k] + dh[k + 1]) for k in ks]
-                for i, z in enumerate(g["zs"]):            # one call per level, every midpoint
-                    items.append(((gi, i), z, g["zr"], xms))
-        res_b = run_tasks(items)
-        res = {}
-        for gi, ks in mids.items():
-            for i in range(len(grids[gi]["zs"])):
-                td, t0, sp = res_b[(gi, i)]
-                for q, k in enumerate(ks):
-                    res[(gi, k, i)] = (td[q:q + 1], t0[q:q + 1], sp[q:q + 1])
-        stats["tested_dh"] += len(cells)
-        new_cols = {}
-        for gi, k in cells:
-            g = grids[gi]; dh = np.array(g["dh"]); xm = 0.5 * (dh[k] + dh[k + 1])
-            idx, w = stencil(xm, dh, order)
-            worst_v = worst_s = 0.0
-            for i, z in enumerate(g["zs"]):
-                sp_m = res[(gi, k, i)][2][0]
-                interp = sum(w[q] * node(g, z, dh[idx[q]])[2] for q in range(len(idx)))
-                worst_v = max(worst_v, _rel(interp, sp_m))
-                span = node(g, z, dh[k + 1])[2] - node(g, z, dh[k])[2]
-                worst_s = max(worst_s, float(np.sqrt(np.sum(np.abs(interp - sp_m) ** 2))
-                                             / max(np.sqrt(np.sum(np.abs(span) ** 2)), 1e-300)))
-            if worst_v <= eps_v and worst_s <= eps_s:
-                g["ok_dh"].add((round(dh[k], 9), round(dh[k + 1], 9))); stats["accepted"] += 1
-            else:
-                new_cols.setdefault(gi, []).append((k, xm))
-        for gi, lst in new_cols.items():
-            g = grids[gi]
-            for k, xm in lst:
-                for i, z in enumerate(g["zs"]):
-                    td, t0, sp = res[(gi, k, i)]
-                    g["data"][(round(z, 9), round(xm, 9))] = (td[0], t0[0], sp[0])
-            g["dh"] = sorted(set(g["dh"]) | {xm for _, xm in lst})
-            changed = True
-        # ---- source-depth cells: midpoint rows (value only) ----------------
-        items, cells = [], []
+            select_dh(g)
+        items = []
         for gi, g in enumerate(grids):
             zs = g["zs"]
+            if src_levels == "exact":
+                continue
             for i in range(len(zs) - 1):
-                key = (round(zs[i], 9), round(zs[i + 1], 9))
-                if key in g["ok_zs"] or zs[i + 1] - zs[i] <= dz_src_min * 1.5:
+                if (round(zs[i], 9), round(zs[i + 1], 9)) in g["ok_zs"] or zs[i + 1] - zs[i] <= dz_src_min * 1.5:
                     continue
-                cells.append((gi, i))
-                items.append(((gi, i), 0.5 * (zs[i] + zs[i + 1]), g["zr"], list(g["dh"])))
-        if cells:
-            for g in grids:
-                ensure(g)
-        res = run_tasks(items)
-        stats["tested_zs"] += len(cells)
-        new_rows = {}
-        for gi, i in cells:
-            g = grids[gi]; zs = np.array(g["zs"]); zm = 0.5 * (zs[i] + zs[i + 1])
+                items.append((gi, 0.5 * (zs[i] + zs[i + 1]), i))
+        if not items:
+            break
+        res = run_levels([(gi, zm) for gi, zm, _ in items])
+        changed = False
+        for gi, zm, i in items:
+            g = grids[gi]; zs = np.array(g["zs"]); spm = res[(gi, round(zm, 9))]
             idx, w = stencil(zm, zs, order)
-            td, t0, sp = res[(gi, i)]
-            worst = 0.0
-            for k, d in enumerate(g["dh"]):
-                interp = sum(w[q] * node(g, zs[idx[q]], d)[2] for q in range(len(idx)))
-                worst = max(worst, _rel(interp, sp[k]))
+            worst = max(_rel(sum(w[q] * g["sp"][round(zs[idx[q]], 9)][k] for q in range(len(idx))), spm[k])
+                        for k in range(len(spm)))
             if worst <= eps_v:
-                g["ok_zs"].add((round(zs[i], 9), round(zs[i + 1], 9))); stats["accepted"] += 1
+                g["ok_zs"].add((round(zs[i], 9), round(zs[i + 1], 9)))
             else:
-                new_rows.setdefault(gi, []).append(zm)
-                for k, d in enumerate(g["dh"]):
-                    g["data"][(round(zm, 9), round(d, 9))] = (td[k], t0[k], sp[k])
-        for gi, lst in new_rows.items():
-            grids[gi]["zs"] = sorted(set(grids[gi]["zs"]) | set(lst))
-            changed = True
+                g["sp"][round(zm, 9)] = spm
+                g["zs"] = sorted(set(g["zs"]) | {zm})
+                changed = True
         if showProgress:
-            nn = sum(len(g["zs"]) * len(g["dh"]) for g in grids)
-            print(f"[Stage 1 tensor] round {stats['rounds']}: {nn} nodes, {stats['computed']} computed, "
-                  f"{stats['calls']} core calls, {perf_counter() - t_begin:.0f} s", flush=True)
+            nn = sum(len(g["zs"]) * len(g["sel"]) for g in grids)
+            print(f"[Stage 1 tensor] round {stats['rounds']}: {nn} nodes selected, {stats['levels_computed']} levels "
+                  f"computed, {stats['calls']} core calls, {perf_counter() - t_begin:.0f} s", flush=True)
         if not changed:
+            for g in grids:
+                select_dh(g)
             break
 
     if use_mpi and nprocs > 1:
@@ -304,10 +306,8 @@ def stage01_tensor(model, h5_database_name, fk, tmax, delta_v_rec=1e-5, dz_src0=
             comm.send(None, dest=w, tag=TAG_TASK)
         comm.Barrier()
 
-    # ---------------- write the database -----------------------------------
-    gf_file = h5_database_name.replace('.h5', '') + '_gf.h5'
-    map_file = h5_database_name.replace('.h5', '') + '_map.h5'
-    nslot = sum(len(g["zs"]) * len(g["dh"]) for g in grids)
+    # ---------------- write the database: selected levels x distances --------
+    nslot = sum(len(g["zs"]) * len(g["sel"]) for g in grids)
     kw = dict(chunks=(1, 1, nkeep), dtype=np.float32)
     if store == "zstd":
         import hdf5plugin
@@ -322,32 +322,35 @@ def stage01_tensor(model, h5_database_name, fk, tmax, delta_v_rec=1e-5, dz_src0=
         s = 0
         g_m = hm.create_group("tensor")
         for gi, g in enumerate(grids):
-            zs, dh = np.array(g["zs"]), np.array(g["dh"])
+            zs = np.array(g["zs"]); sel = np.array(g["sel"]); dh = cand[g["j"]][sel]
             for i, z in enumerate(zs):
-                block = np.stack([node(g, z, d)[0] for d in dh])
-                ds[s + i * len(dh): s + (i + 1) * len(dh)] = block
-                t0s[s + i * len(dh): s + (i + 1) * len(dh)] = [node(g, z, d)[1] for d in dh]
+                name = f"g{gi}_z{round(z, 9):.9f}"
+                ds[s + i * len(sel): s + (i + 1) * len(sel)] = htmp[name][sel]
+                t0s[s + i * len(sel): s + (i + 1) * len(sel)] = htmp[name + "_t0"][sel]
             gg = g_m.create_group(f"g{gi}")
             gg.create_dataset("zs", data=zs); gg.create_dataset("dh", data=dh)
             gg.attrs.update(zr=g["zr"], offset=s, zmin=zs.min(), zmax=zs.max())
-            s += len(zs) * len(dh)
+            s += len(zs) * len(sel)
+            stats["levels_stored"] += len(zs); stats["dh_stored"] += len(sel); stats["candidates"] += len(cand[g["j"]])
         hg.create_dataset("t0", data=t0s)
         g_m.attrs.update(gf_mode="tensor", order=order, ngrids=len(grids), nkeep=nkeep, store=store,
                          eps_v=eps_v, eps_s=eps_s, f_err=f_err, dz_src0=dz_src0, dh0=dh0,
+                         src_levels=src_levels, freq_cut=float(fk.get("freq_cut", 0.0) or 0.0),
                          dz_src_min=dz_src_min, dh_min=dh_min, delta_v_rec=delta_v_rec, tmax=tmax)
         g_m.create_dataset("zr_lev", data=zr_lev); g_m.create_dataset("r_lev", data=r_lev)
+        stats["stored"] = nslot
         for k_, v_ in stats.items():
             g_m.attrs[f"stat_{k_}"] = v_
-    stats["stored"] = nslot
+    htmp.close(); os.remove(tmp_file)
+    if use_mpi and nprocs > 1:
+        comm.Barrier()                       # database written: Stage 2 may open it
     stats["seconds_write"] = perf_counter() - t1
     stats["seconds_total"] = perf_counter() - t_begin
     stats["gf_bytes"] = os.path.getsize(gf_file)
-    if use_mpi and nprocs > 1:
-        comm.Barrier()                       # database written: Stage 2 may open it
     if showProgress:
         print(f"[Stage 1 tensor] {nslot} nodes stored ({stats['computed']} computed, {stats['calls']} calls, "
-              f"{stats['rounds']} rounds), {stats['gf_bytes'] / 1e6:.1f} MB ({store}), "
-              f"{stats['seconds_total']:.0f} s -> {gf_file}", flush=True)
+              f"{stats['levels_computed']} levels computed, {stats['levels_stored']} stored), "
+              f"{stats['gf_bytes'] / 1e6:.1f} MB ({store}), {stats['seconds_total']:.0f} s -> {gf_file}", flush=True)
     return stats
 
 

@@ -3249,11 +3249,13 @@ class ShakerMaker:
                   h5_database_name=None,
                   # Stage 0 (inter)
                   delta_v_rec=1e-5,
-                  delta_v_src=0.2,
+                  delta_v_src=1e-5,
                   dh_grid=0.04,
                   order=3,
                   # Etapa 2: tensor grid, iterative (scheme='tensor')
                   scheme='grid',
+                  src_levels='exact',
+                  freq_cut=None,
                   dz_src0=0.32,
                   dh0=0.16,
                   dz_src_min=0.04,
@@ -3311,6 +3313,16 @@ class ShakerMaker:
         [0, ``f_err``] Hz; minimum ``dz_src_min``, ``dh_min``); accepted midpoints are
         not stored. Stages 0 and 1 run together; the database keeps only the samples
         Stage 2 can use, with ``store`` 'f32', 'zstd' (shuffle + zstd) or 'zfp<bits>'.
+        ``src_levels='exact'`` (default) keeps one level per distinct source depth
+        and does not refine in depth (above ~5 Hz the source depth cannot be
+        interpolated: surface-reflected phases move the other way, B18 E2.1);
+        'interp' refines it from ``dz_src0`` like the distance.
+
+        ``freq_cut`` (Hz): the FK core stops at 1.4 * freq_cut with a cosine taper
+        from freq_cut (frequencies below it are the same operations as without the
+        cut); None = up to Nyquist. Recommended: 1.25 times the band of interest.
+        The default ``delta_v_src`` is exact (1e-5 km): 200 m is only usable below
+        ~3 Hz (B18 V3).
         """
         from shakermaker import run_inter as _ri
         if h5_database_name is None:
@@ -3322,13 +3334,13 @@ class ShakerMaker:
         if scheme == 'tensor':
             from shakermaker import run_inter_tensor as _rt
             fk = dict(dt=dt, nfft=nfft, tb=tb, smth=smth, sigma=sigma, taper=taper, wc1=wc1, wc2=wc2,
-                      pmin=pmin, pmax=pmax, dk=dk, kc=kc)
+                      pmin=pmin, pmax=pmax, dk=dk, kc=kc, freq_cut=float(freq_cut or 0.0))
             if stage in (0, 1, 'all'):
                 t_s = perf_counter()
                 st = _rt.stage01_tensor(self, h5_database_name, fk, tmax, delta_v_rec=delta_v_rec,
                                         dz_src0=dz_src0, dh0=dh0, dz_src_min=dz_src_min, dh_min=dh_min,
                                         eps_v=eps_v, eps_s=eps_s, f_err=f_err, order=order, store=store,
-                                        showProgress=showProgress)
+                                        src_levels=src_levels, showProgress=showProgress)
                 _perf_dump('stage01_tensor', {}, perf_counter() - t_s)
             if stage in (2, 'all'):
                 _rt.stage2_tensor(self, h5_database_name, dt=dt, nfft=nfft, tb=tb, tmin=tmin, tmax=tmax,
@@ -3342,7 +3354,16 @@ class ShakerMaker:
                              dh_grid=dh_grid, order=order, showProgress=showProgress)
             _perf_dump('stage0_inter', {}, perf_counter() - t_s)
         if stage in (1, 'all'):
-            _ri.stage1_inter(self, h5_database_name, **core_kw)
+            old_fc = os.environ.get("SM_FREQ_CUT")
+            if freq_cut:
+                os.environ["SM_FREQ_CUT"] = str(float(freq_cut))
+            try:
+                _ri.stage1_inter(self, h5_database_name, **core_kw)
+            finally:
+                if old_fc is None:
+                    os.environ.pop("SM_FREQ_CUT", None)
+                else:
+                    os.environ["SM_FREQ_CUT"] = old_fc
         if stage in (2, 'all'):
             _ri.stage2_inter(self, h5_database_name, dt=dt, nfft=nfft, tb=tb, tmin=tmin, tmax=tmax,
                              writer=writer, writer_mode=writer_mode, showProgress=showProgress)
@@ -3846,7 +3867,7 @@ class ShakerMaker:
         return self._mpi_nprocs
 
     def _call_core(self, dt, nfft, tb, nx, sigma, smth, wc1, wc2, pmin, pmax, dk, kc, taper, crust, psource, station, verbose=False,
-                   xmax=0.0):
+                   xmax=0.0, fcut=None):
         mb = crust.nlayers
 
         if verbose:
@@ -3897,9 +3918,13 @@ class ShakerMaker:
         # xmax > 0 sets the wavenumber step dk*pi/xmax when larger than x and hs
         # (a common k grid for every distance of one (zs, zr), B18); 0 keeps the
         # step of this call alone.
+        # fcut (Hz): frequencies above 1.4*fcut are not computed, cosine taper from
+        # fcut (B18 etapa 3); None reads SM_FREQ_CUT, 0 = up to Nyquist.
+        if fcut is None:
+            fcut = float(os.environ.get("SM_FREQ_CUT", "0") or 0)
         tdata, z, e, n, t0 = core.subgreen(mb, src, rcv, stype, updn, d, a, b, rho, qa, qb, dt, nfft, tb, nx, sigma,
                                            smth, wc1, wc2, pmin, pmax, dk, kc, taper, x, pf, df, lf, sx, sy, rx, ry,
-                                           float(xmax))
+                                           float(xmax), float(fcut))
 
         self._logger.debug('ShakerMaker._call_core - core.subgreen returned: z_size'.format(len(z)))
 
@@ -3907,7 +3932,7 @@ class ShakerMaker:
 
 
     def _call_core_multi(self, dt, nfft, tb, sigma, smth, wc1, wc2, pmin, pmax, dk, kc,
-                         taper, crust, psource, station, xs, xmax=0.0):
+                         taper, crust, psource, station, xs, xmax=0.0, fcut=None):
         """core.subgreen with several distances xs (km) for one (z_src, z_rec).
 
         xmax > 0: wavenumber step dk*pi/xmax shared with every other call of this
@@ -3923,7 +3948,7 @@ class ShakerMaker:
             crust.qa, crust.qb, dt, nfft, tb, len(xs), sigma, smth, wc1, wc2, pmin,
             pmax, dk, kc, taper, xs, psource.angles[0], psource.angles[1],
             psource.angles[2], psource.x[0], psource.x[1], station.x[0], station.x[1],
-            float(xmax))
+            float(xmax), float(os.environ.get("SM_FREQ_CUT", "0") or 0) if fcut is None else float(fcut))
         return tdata, t0
 
     def _check_slot_t0(self, hfile, hfile_gf, crust_for, dt, tb):
