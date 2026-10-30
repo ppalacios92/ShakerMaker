@@ -24,6 +24,9 @@ the value: the two layers of a DRM box see the same source.
 Storage: (slot, component, sample) float32, only the samples Stage 2 can use (R1:
 tmax - t0 + 1 s), with shuffle + zstd (R2, store='zstd') or ZFP per component
 (R3, store='zfp<bits>') through hdf5plugin; store='f32' is plain gzip-free float32.
+With freq_cut the core leaves nothing above 1.4 freq_cut, so the database keeps one
+sample every q dt (decimate=True, B18 E3.6) and Stage 2 rebuilds the dt samples
+with a Kaiser low-pass before using them; the output dt does not change.
 
 Stage 2: the source depth level weights are the same for all receivers of a source,
 so for every source and every distance node its receivers need, the levels are
@@ -41,6 +44,41 @@ import numpy as np
 
 COMPS = np.array([0, 1, 3, 4, 5, 6, 7, 8])
 TAG_TASK, TAG_RES = 71, 72
+
+
+def decimation(dt, freq_cut, guard=1.1, atten=120.0):
+    """Stored-sample step q and reconstruction filter for a core run cut at freq_cut.
+
+    The core leaves nothing above f_top = 1.4 freq_cut, so samples every q dt with a
+    Nyquist 1/(2 q dt) >= guard * f_top keep the trace. The dt samples are rebuilt by
+    zero insertion and a Kaiser low-pass at that Nyquist: pass band up to f_top, stop
+    band (``atten`` dB) from the first image, 2/(2 q dt) - f_top. Returns (1, None)
+    when there is no cut or nothing to gain.
+    """
+    if not freq_cut:
+        return 1, None
+    from scipy.signal import firwin, kaiserord
+    fs, ftop = 1.0 / dt, 1.4 * float(freq_cut)
+    q = int(np.floor(fs / (2.0 * ftop * guard)))
+    if q < 2:
+        return 1, None
+    fn = fs / (2.0 * q)
+    ntap, beta = kaiserord(atten, 2.0 * (fn - ftop) / (fs / 2.0))
+    return q, firwin(ntap | 1, fn, window=("kaiser", beta), fs=fs)
+
+
+def upsample(g, q, h, n):
+    """dt samples (first n) of traces stored every q dt (last axis).
+
+    The trace need not start at zero (it starts tb samples before the first arrival),
+    so it is extended before its first sample by odd reflection (value and slope
+    continuous) instead of the zeros resample_poly assumes; after the last stored
+    sample there is the filter half-length of real samples (stage01_tensor).
+    """
+    from scipy.signal import resample_poly
+    p = min(g.shape[-1] - 1, len(h) // (2 * q) + 2)
+    ext = np.concatenate([2.0 * g[..., :1] - g[..., p:0:-1], g], axis=-1)
+    return resample_poly(ext, q, 1, axis=-1, window=h)[..., p * q:p * q + n]
 
 
 def lagrange_weights(x, nodes):
@@ -77,10 +115,16 @@ def _segments(crust, zmin, zmax):
 
 
 class _Core:
-    """One core call: (z_src, z_rec, distances) -> trimmed float32 tdata, t0, band spectra."""
+    """One core call: (z_src, z_rec, distances) -> stored float32 tdata, t0, band spectra.
 
-    def __init__(self, model, fk, xmax_of, nkeep, f_err):
+    The stored traces are the first nstore samples, one every q (q = 1: no decimation),
+    plus the first nhead samples at dt (the head the low-pass cannot rebuild); the
+    spectra are those of the first nkeep samples at dt.
+    """
+
+    def __init__(self, model, fk, xmax_of, nkeep, f_err, q=1, nstore=None, nhead=0):
         self.m, self.fk, self.xmax_of, self.nkeep, self.f_err = model, fk, xmax_of, nkeep, f_err
+        self.q, self.nstore, self.nhead = q, nstore or nkeep, nhead
 
     def __call__(self, zs, zr, xs):
         from shakermaker import core
@@ -96,7 +140,10 @@ class _Core:
         td = np.asarray(tdata[:, :, :self.nkeep], dtype=np.float32)          # (nx, 9, nkeep)
         sp = np.fft.rfft(td[:, COMPS, :].astype(np.float64), n=2 * self.nkeep, axis=-1)
         f = np.fft.rfftfreq(2 * self.nkeep, fk["dt"])
-        return td, np.asarray(t0, dtype=np.float64), sp[..., f <= self.f_err].astype(np.complex64)
+        head = td[:, :, :self.nhead].copy()
+        if self.q > 1 or self.nstore != self.nkeep:
+            td = np.ascontiguousarray(np.asarray(tdata[:, :, :self.nstore:self.q], dtype=np.float32))
+        return td, np.asarray(t0, dtype=np.float64), sp[..., f <= self.f_err].astype(np.complex64), head
 
 
 def _rel(a, b):
@@ -105,7 +152,7 @@ def _rel(a, b):
 
 def stage01_tensor(model, h5_database_name, fk, tmax, delta_v_rec=1e-5, dz_src0=0.32, dh0=0.16,
                    dz_src_min=0.04, dh_min=0.02, eps_v=0.01, eps_s=0.05, f_err=20.0, order=3,
-                   store="zstd", calls_max=64, src_levels="exact", showProgress=True):
+                   store="zstd", calls_max=64, src_levels="exact", decimate=True, showProgress=True):
     """Stages 0 and 1 of the tensor scheme (rank 0 coordinates and writes; the others compute).
 
     src_levels='exact' (default): one source-depth level per distinct source depth,
@@ -123,7 +170,9 @@ def stage01_tensor(model, h5_database_name, fk, tmax, delta_v_rec=1e-5, dz_src0=
     do not predict it within eps_v at every candidate distance.
     The traces of computed levels go to a temporary file; only the selected
     levels x distances are copied to the database (R1: samples Stage 2 can use; R2/R3:
-    store='zstd' / 'zfp<bits>').
+    store='zstd' / 'zfp<bits>'). decimate=True with freq_cut: one sample every q dt,
+    see decimation(); the filter half-length is added to the stored samples so the
+    rebuilt nkeep samples are exact up to the end.
     """
     from shakermaker import shakermaker as smod
     from shakermaker.run_inter import _levels
@@ -148,7 +197,18 @@ def stage01_tensor(model, h5_database_name, fk, tmax, delta_v_rec=1e-5, dz_src0=
     xmax = {float(z): float(cand[j][-1]) for j, z in enumerate(zr_lev)}
     dt = fk["dt"]
     nkeep = int(min(2 * fk["nfft"], np.ceil((tmax + fk["tb"] * dt + 1.0) / dt)))       # R1
-    core_call = _Core(model, fk, lambda z: xmax[float(z)], nkeep, f_err)
+    q, fir = decimation(dt, fk.get("freq_cut", 0.0)) if decimate else (1, None)
+    if q > 1 and nkeep + len(fir) // 2 + q > fk["nfft"]:
+        # the core trace has nfft samples (zeros after): the step there would ring
+        # back over the rebuilt samples, so keep the full rate
+        q, fir = 1, None
+    nstore = nkeep if q == 1 else nkeep + len(fir) // 2 + q
+    nsamp = -(-nstore // q)                                   # samples stored per trace
+    # head kept at dt: the core trace is multiplied by exp(sigma (t0 + t)), which is not
+    # periodic, so near its first sample the trace is not band-limited and the low-pass
+    # cannot rebuild the first half-length of samples from the coarse ones
+    nhead = 0 if q == 1 else min(nkeep, len(fir) // 2 + 2 * q)
+    core_call = _Core(model, fk, lambda z: xmax[float(z)], nkeep, f_err, q=q, nstore=nstore, nhead=nhead)
 
     # ---------------- worker side -----------------------------------------
     if use_mpi and nprocs > 1 and rank > 0:
@@ -224,8 +284,11 @@ def stage01_tensor(model, h5_database_name, fk, tmax, delta_v_rec=1e-5, dz_src0=
             td = np.concatenate([parts[key + (c,)][0] for c in cs])
             t0 = np.concatenate([parts[key + (c,)][1] for c in cs])
             sp = np.concatenate([parts[key + (c,)][2] for c in cs])
+            hd = np.concatenate([parts[key + (c,)][3] for c in cs])
             name = f"g{gi}_z{round(z, 9):.9f}"
             htmp.create_dataset(name, data=td); htmp.create_dataset(name + "_t0", data=t0)
+            if nhead:
+                htmp.create_dataset(name + "_head", data=hd)
             out[key] = sp
             stats["computed"] += len(td); stats["levels_computed"] += 1
         return out
@@ -308,7 +371,7 @@ def stage01_tensor(model, h5_database_name, fk, tmax, delta_v_rec=1e-5, dz_src0=
 
     # ---------------- write the database: selected levels x distances --------
     nslot = sum(len(g["zs"]) * len(g["sel"]) for g in grids)
-    kw = dict(chunks=(1, 1, nkeep), dtype=np.float32)
+    kw = dict(chunks=(1, 1, nsamp), dtype=np.float32)
     if store == "zstd":
         import hdf5plugin
         kw.update(shuffle=True, **hdf5plugin.Zstd(clevel=3))
@@ -317,7 +380,8 @@ def stage01_tensor(model, h5_database_name, fk, tmax, delta_v_rec=1e-5, dz_src0=
         kw.update(**hdf5plugin.Zfp(precision=int(store[3:])))
     t1 = perf_counter()
     with h5py.File(gf_file, "w", locking=False) as hg, h5py.File(map_file, "w", locking=False) as hm:
-        ds = hg.create_dataset("tdata", shape=(nslot, 9, nkeep), **kw)
+        ds = hg.create_dataset("tdata", shape=(nslot, 9, nsamp), **kw)
+        dsh = hg.create_dataset("thead", shape=(nslot, 9, nhead), **dict(kw, chunks=(1, 1, nhead))) if nhead else None
         t0s = np.empty(nslot)
         s = 0
         g_m = hm.create_group("tensor")
@@ -326,6 +390,8 @@ def stage01_tensor(model, h5_database_name, fk, tmax, delta_v_rec=1e-5, dz_src0=
             for i, z in enumerate(zs):
                 name = f"g{gi}_z{round(z, 9):.9f}"
                 ds[s + i * len(sel): s + (i + 1) * len(sel)] = htmp[name][sel]
+                if nhead:
+                    dsh[s + i * len(sel): s + (i + 1) * len(sel)] = htmp[name + "_head"][sel]
                 t0s[s + i * len(sel): s + (i + 1) * len(sel)] = htmp[name + "_t0"][sel]
             gg = g_m.create_group(f"g{gi}")
             gg.create_dataset("zs", data=zs); gg.create_dataset("dh", data=dh)
@@ -334,6 +400,7 @@ def stage01_tensor(model, h5_database_name, fk, tmax, delta_v_rec=1e-5, dz_src0=
             stats["levels_stored"] += len(zs); stats["dh_stored"] += len(sel); stats["candidates"] += len(cand[g["j"]])
         hg.create_dataset("t0", data=t0s)
         g_m.attrs.update(gf_mode="tensor", order=order, ngrids=len(grids), nkeep=nkeep, store=store,
+                         decim=q, nstore=nstore, nhead=nhead, dt=dt,
                          eps_v=eps_v, eps_s=eps_s, f_err=f_err, dz_src0=dz_src0, dh0=dh0,
                          src_levels=src_levels, freq_cut=float(fk.get("freq_cut", 0.0) or 0.0),
                          dz_src_min=dz_src_min, dh_min=dh_min, delta_v_rec=delta_v_rec, tmax=tmax)
@@ -372,6 +439,8 @@ def stage2_tensor(model, h5_database_name, dt=0.05, nfft=4096, tb=1000, tmin=0.,
     hm = h5py.File(h5_database_name.replace('.h5', '') + '_map.h5', 'r', locking=False)
     hg = h5py.File(h5_database_name.replace('.h5', '') + '_gf.h5', 'r', locking=False)
     gt = hm["tensor"]; order = int(gt.attrs["order"]); nkeep = int(gt.attrs["nkeep"])
+    q_dec = int(gt.attrs.get("decim", 1))
+    fir = decimation(float(gt.attrs["dt"]), float(gt.attrs["freq_cut"]))[1] if q_dec > 1 else None
     grids = []
     for gi in range(int(gt.attrs["ngrids"])):
         gg = gt[f"g{gi}"]
@@ -379,6 +448,7 @@ def stage2_tensor(model, h5_database_name, dt=0.05, nfft=4096, tb=1000, tmin=0.,
                           zmin=float(gg.attrs["zmin"]), zmax=float(gg.attrs["zmax"])))
     zr_lev = gt["zr_lev"][:]
     ds = hg["tdata"]
+    dsh = hg["thead"] if "thead" in hg else None
     nsrc, nsta = model._source.nsources, model._receivers.nstations
     srcs = [model._source.get_source_by_id(i) for i in range(nsrc)]
     stations = [model._receivers.get_station_by_id(i) for i in range(nsta)]
@@ -408,8 +478,14 @@ def stage2_tensor(model, h5_database_name, dt=0.05, nfft=4096, tb=1000, tmin=0.,
         g = cache.get(s_)
         if g is None:
             t1 = perf_counter()
-            g = np.ascontiguousarray(ds[s_][COMPS], dtype=np.float64)        # (8, nkeep)
+            g = np.ascontiguousarray(ds[s_][COMPS], dtype=np.float64)        # (8, nkeep) or every q
             c['read'] += perf_counter() - t1
+            if q_dec > 1:
+                t1 = perf_counter()
+                g = np.ascontiguousarray(upsample(g, q_dec, fir, nkeep))
+                nh = dsh.shape[-1]
+                g[:, :nh] = dsh[s_][COMPS]
+                c['upsample'] = c.get('upsample', 0.0) + perf_counter() - t1
             cache[s_] = g; corder.append(s_); cbytes[0] += g.nbytes
             while cbytes[0] > cap and len(corder) > 1:
                 old = corder.pop(0); cbytes[0] -= cache.pop(old).nbytes

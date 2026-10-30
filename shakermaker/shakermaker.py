@@ -3263,7 +3263,9 @@ class ShakerMaker:
                   eps_v=0.01,
                   eps_s=0.05,
                   f_err=20.0,
-                  store='zstd',
+                  store='zfp20',
+                  decimate=True,
+                  depth_tol=1e-6,
                   # Core (stages 1 and 2)
                   dt=0.05,
                   nfft=4096,
@@ -3323,6 +3325,15 @@ class ShakerMaker:
         cut); None = up to Nyquist. Recommended: 1.25 times the band of interest.
         The default ``delta_v_src`` is exact (1e-5 km): 200 m is only usable below
         ~3 Hz (B18 V3).
+
+        ``decimate`` (tensor scheme, with ``freq_cut``): the database keeps one sample
+        every q dt (nothing is left above 1.4 * freq_cut) and Stage 2 rebuilds the dt
+        samples; the output dt does not change (B18 E3.6). ``store`` default 'zfp20'.
+
+        ``depth_tol`` (km): CrustModel tolerance while run_inter runs (split_at_depth
+        and get_layer); 1e-6 keeps every receiver at its own depth (the CrustModel
+        default, 0.01, moves the top 10 m of a box onto the free surface, B15). The
+        crust's own value is restored at the end, so run_nearest is unchanged.
         """
         from shakermaker import run_inter as _ri
         if h5_database_name is None:
@@ -3330,45 +3341,55 @@ class ShakerMaker:
         core_kw = dict(dt=dt, nfft=nfft, tb=tb, smth=smth, sigma=sigma, taper=taper, wc1=wc1, wc2=wc2,
                        pmin=pmin, pmax=pmax, dk=dk, nx=nx, kc=kc, verbose=verbose, debugMPI=debugMPI,
                        showProgress=showProgress)
-        t_all = perf_counter()
-        if scheme == 'tensor':
-            from shakermaker import run_inter_tensor as _rt
-            fk = dict(dt=dt, nfft=nfft, tb=tb, smth=smth, sigma=sigma, taper=taper, wc1=wc1, wc2=wc2,
-                      pmin=pmin, pmax=pmax, dk=dk, kc=kc, freq_cut=float(freq_cut or 0.0))
-            if stage in (0, 1, 'all'):
+        crust = self._crust
+        own_tol = crust.__dict__.get("depth_tol")
+        crust.depth_tol = depth_tol
+        try:
+            t_all = perf_counter()
+            if scheme == 'tensor':
+                from shakermaker import run_inter_tensor as _rt
+                fk = dict(dt=dt, nfft=nfft, tb=tb, smth=smth, sigma=sigma, taper=taper, wc1=wc1, wc2=wc2,
+                          pmin=pmin, pmax=pmax, dk=dk, kc=kc, freq_cut=float(freq_cut or 0.0))
+                if stage in (0, 1, 'all'):
+                    t_s = perf_counter()
+                    st = _rt.stage01_tensor(self, h5_database_name, fk, tmax, delta_v_rec=delta_v_rec,
+                                            dz_src0=dz_src0, dh0=dh0, dz_src_min=dz_src_min, dh_min=dh_min,
+                                            eps_v=eps_v, eps_s=eps_s, f_err=f_err, order=order, store=store,
+                                            src_levels=src_levels, decimate=decimate,
+                                        showProgress=showProgress)
+                    _perf_dump('stage01_tensor', {}, perf_counter() - t_s)
+                if stage in (2, 'all'):
+                    _rt.stage2_tensor(self, h5_database_name, dt=dt, nfft=nfft, tb=tb, tmin=tmin, tmax=tmax,
+                                      writer=writer, writer_mode=writer_mode, showProgress=showProgress)
+                if rank == 0 and showProgress:
+                    print(f"run_inter (tensor) stage={stage}: {perf_counter() - t_all:.1f} s", flush=True)
+                return
+            if stage in (0, 'all'):
                 t_s = perf_counter()
-                st = _rt.stage01_tensor(self, h5_database_name, fk, tmax, delta_v_rec=delta_v_rec,
-                                        dz_src0=dz_src0, dh0=dh0, dz_src_min=dz_src_min, dh_min=dh_min,
-                                        eps_v=eps_v, eps_s=eps_s, f_err=f_err, order=order, store=store,
-                                        src_levels=src_levels, showProgress=showProgress)
-                _perf_dump('stage01_tensor', {}, perf_counter() - t_s)
+                _ri.stage0_inter(self, h5_database_name, delta_v_rec=delta_v_rec, delta_v_src=delta_v_src,
+                                 dh_grid=dh_grid, order=order, showProgress=showProgress)
+                _perf_dump('stage0_inter', {}, perf_counter() - t_s)
+            if stage in (1, 'all'):
+                old_fc = os.environ.get("SM_FREQ_CUT")
+                if freq_cut:
+                    os.environ["SM_FREQ_CUT"] = str(float(freq_cut))
+                try:
+                    _ri.stage1_inter(self, h5_database_name, **core_kw)
+                finally:
+                    if old_fc is None:
+                        os.environ.pop("SM_FREQ_CUT", None)
+                    else:
+                        os.environ["SM_FREQ_CUT"] = old_fc
             if stage in (2, 'all'):
-                _rt.stage2_tensor(self, h5_database_name, dt=dt, nfft=nfft, tb=tb, tmin=tmin, tmax=tmax,
-                                  writer=writer, writer_mode=writer_mode, showProgress=showProgress)
+                _ri.stage2_inter(self, h5_database_name, dt=dt, nfft=nfft, tb=tb, tmin=tmin, tmax=tmax,
+                                 writer=writer, writer_mode=writer_mode, showProgress=showProgress)
             if rank == 0 and showProgress:
-                print(f"run_inter (tensor) stage={stage}: {perf_counter() - t_all:.1f} s", flush=True)
-            return
-        if stage in (0, 'all'):
-            t_s = perf_counter()
-            _ri.stage0_inter(self, h5_database_name, delta_v_rec=delta_v_rec, delta_v_src=delta_v_src,
-                             dh_grid=dh_grid, order=order, showProgress=showProgress)
-            _perf_dump('stage0_inter', {}, perf_counter() - t_s)
-        if stage in (1, 'all'):
-            old_fc = os.environ.get("SM_FREQ_CUT")
-            if freq_cut:
-                os.environ["SM_FREQ_CUT"] = str(float(freq_cut))
-            try:
-                _ri.stage1_inter(self, h5_database_name, **core_kw)
-            finally:
-                if old_fc is None:
-                    os.environ.pop("SM_FREQ_CUT", None)
-                else:
-                    os.environ["SM_FREQ_CUT"] = old_fc
-        if stage in (2, 'all'):
-            _ri.stage2_inter(self, h5_database_name, dt=dt, nfft=nfft, tb=tb, tmin=tmin, tmax=tmax,
-                             writer=writer, writer_mode=writer_mode, showProgress=showProgress)
-        if rank == 0 and showProgress:
-            print(f"run_inter stage={stage}: {perf_counter() - t_all:.1f} s", flush=True)
+                print(f"run_inter stage={stage}: {perf_counter() - t_all:.1f} s", flush=True)
+        finally:
+            if own_tol is None:
+                del crust.depth_tol
+            else:
+                crust.depth_tol = own_tol
 
     def build_pair_to_slot_from_legacy_h5(self,
                                           h5_database_name,

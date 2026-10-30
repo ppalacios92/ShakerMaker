@@ -23,11 +23,11 @@ class CrustModel:
 
     #: Depth tolerance in km used by split_at_depth and get_layer when they are called
     #: without ``tol``: a depth closer than this to an existing interface is taken at
-    #: the interface. 1 mm: the previous 10 m moved every DRM node in the top 10 m of
-    #: a box onto the free surface (B15). ``CrustModel.depth_tol = 0.01`` reproduces
-    #: runs made before the change.
-    # depth_tol = 0.01
-    depth_tol = 1e-6
+    #: the interface. 0.01 (10 m, as before) for run / run_nearest; run_inter sets
+    #: its own (``depth_tol=1e-6``) on the crust while it runs, because 10 m moves
+    #: every DRM node in the top 10 m of a box onto the free surface (B15).
+    depth_tol = 0.01
+    # depth_tol = 1e-6
 
     def __init__(self, nlayers):
 

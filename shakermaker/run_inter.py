@@ -127,7 +127,7 @@ def stage0_inter(model, h5_database_name, delta_v_rec=1e-5, delta_v_src=0.2, dh_
             for k_, v_ in dict(gf_mode="inter", dh_grid=dh_grid, order=order, delta_v_src=delta_v_src,
                                delta_v_rec=delta_v_rec, nsrc=nsrc, nsta=nsta).items():
                 g.attrs[k_] = v_
-            g.attrs["depth_tol"] = __import__("shakermaker.crustmodel", fromlist=["CrustModel"]).CrustModel.depth_tol
+            g.attrs["depth_tol"] = model._crust.depth_tol
         if showProgress:
             print(f"[Stage 0 inter] {nsrc} sources in {len(zs_lev)} depth levels (delta_v_src {delta_v_src * 1e3:g} m), "
                   f"{nsta} receivers at {len(zr_lev)} depths; {len(dp)} pairs of depths, {nslot} grid nodes "

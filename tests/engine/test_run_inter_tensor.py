@@ -26,6 +26,7 @@ def runs(tmp_path_factory):
     m = _model()
     db = str(tmp_path_factory.mktemp("ref") / "gf")
     os.environ["SM_GF_XMAX"] = "common"
+    m._crust.depth_tol = 1e-6          # the tolerance run_inter uses (its default depth_tol)
     m.run_nearest(stage=0, h5_database_name=db, delta_h=1e-5, delta_v_rec=1e-5, delta_v_src=1e-5,
                   showProgress=False, tmin=0.0, tmax=2.0, **FK)
     m.run_nearest(stage=1, h5_database_name=db, showProgress=False, tmin=0.0, tmax=2.0, **FK)
