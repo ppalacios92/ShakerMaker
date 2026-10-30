@@ -3188,6 +3188,75 @@ class ShakerMaker:
     # Legacy migration  --  build_pair_to_slot_from_legacy_h5
     # =========================================================================
 
+    def run_inter(self,
+                  stage='all',
+                  h5_database_name=None,
+                  # Stage 0 (inter)
+                  delta_v_rec=1e-5,
+                  delta_v_src=0.2,
+                  dh_grid=0.04,
+                  order=3,
+                  # Core (stages 1 and 2)
+                  dt=0.05,
+                  nfft=4096,
+                  tb=1000,
+                  smth=1,
+                  sigma=2,
+                  taper=0.9,
+                  wc1=1,
+                  wc2=2,
+                  pmin=0,
+                  pmax=1,
+                  dk=0.3,
+                  nx=1,
+                  kc=15.0,
+                  # Stage 2
+                  writer=None,
+                  writer_mode='progressive',
+                  tmin=0.,
+                  tmax=100,
+                  # General
+                  verbose=False,
+                  debugMPI=False,
+                  showProgress=True):
+        """Pipeline with Green's functions interpolated in distance instead of reused (B18).
+
+        Same use as run_nearest (``stage`` 0, 1, 2 or 'all', one database per
+        station set), different Stage 0 and Stage 2 (shakermaker/run_inter.py):
+
+        - receiver depth exact (``delta_v_rec``, km, default 1 cm);
+        - source depth grouped by source only (``delta_v_src``, km): every source
+          uses one depth level for all receivers, so the two layers of a DRM box
+          see the same source;
+        - for every pair of depths, Green's functions on a regular grid of
+          horizontal distances (multiples of ``dh_grid``, km), all with the
+          wavenumber step of the largest distance of that pair of depths;
+        - every pair mixes the grid nodes around its distance in reduced time:
+          ``order`` 3 = 4-point Lagrange (cubic), 1 = linear; it is placed at its
+          own first arrival, fraction of a sample included.
+
+        Stage 1 is compute_gf on the grid nodes. run_nearest is unchanged.
+        """
+        from shakermaker import run_inter as _ri
+        if h5_database_name is None:
+            raise ValueError("run_inter needs h5_database_name")
+        core_kw = dict(dt=dt, nfft=nfft, tb=tb, smth=smth, sigma=sigma, taper=taper, wc1=wc1, wc2=wc2,
+                       pmin=pmin, pmax=pmax, dk=dk, nx=nx, kc=kc, verbose=verbose, debugMPI=debugMPI,
+                       showProgress=showProgress)
+        t_all = perf_counter()
+        if stage in (0, 'all'):
+            t_s = perf_counter()
+            _ri.stage0_inter(self, h5_database_name, delta_v_rec=delta_v_rec, delta_v_src=delta_v_src,
+                             dh_grid=dh_grid, order=order, showProgress=showProgress)
+            _perf_dump('stage0_inter', {}, perf_counter() - t_s)
+        if stage in (1, 'all'):
+            _ri.stage1_inter(self, h5_database_name, **core_kw)
+        if stage in (2, 'all'):
+            _ri.stage2_inter(self, h5_database_name, dt=dt, nfft=nfft, tb=tb, tmin=tmin, tmax=tmax,
+                             writer=writer, writer_mode=writer_mode, showProgress=showProgress)
+        if rank == 0 and showProgress:
+            print(f"run_inter stage={stage}: {perf_counter() - t_all:.1f} s", flush=True)
+
     def build_pair_to_slot_from_legacy_h5(self,
                                           h5_database_name,
                                           delta_h=None,
