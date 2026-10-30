@@ -57,6 +57,8 @@ def lagrange_weights(x, nodes):
 def stencil(x, grid, order):
     """Indices and weights of the order-3 (4 nodes) or order-1 (2 nodes) stencil of x."""
     n = len(grid)
+    if n == 1:                                   # a single level (e.g. one source depth)
+        return np.array([0]), np.array([1.0])
     k = int(np.clip(np.searchsorted(grid, x, side="right") - 1, 0, n - 2))
     if order == 1 or n < 4:
         idx = np.array([k, k + 1])
@@ -143,10 +145,13 @@ def stage01_tensor(model, h5_database_name, fk, tmax, delta_v_rec=1e-5, dz_src0=
         for (za, zb) in _segments(model._crust, zs_all.min(), zs_all.max() + 1e-9):
             if not np.any((zs_all >= za - 1e-9) & (zs_all <= zb + 1e-9)):
                 continue
-            nz = max(1, int(np.ceil((zb - za) / dz_src0)))
-            zs = np.linspace(za, zb, nz + 1)
-            if order == 3 and len(zs) < 4:
-                zs = np.linspace(za, zb, 4)
+            if zb - za < 1e-9:                     # every source at one depth: one level
+                zs = np.array([za])
+            else:
+                nz = max(1, int(np.ceil((zb - za) / dz_src0)))
+                zs = np.linspace(za, zb, nz + 1)
+                if order == 3 and len(zs) < 4:
+                    zs = np.linspace(za, zb, 4)
             ib = max(0, int(np.floor(dmin[j] / dh0)) - (1 if order == 3 else 0))
             ie = int(np.ceil(dmax[j] / dh0)) + (2 if order == 3 else 1)
             dh = np.arange(ib, ie + 1) * dh0
