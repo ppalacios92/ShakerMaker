@@ -3265,6 +3265,7 @@ class ShakerMaker:
                   f_err=20.0,
                   store='zfp20',
                   decimate=True,
+                  eps_bands=((0.0, 1.0), (0.5, 1.0)),
                   depth_tol=1e-6,
                   # Core (stages 1 and 2)
                   dt=0.05,
@@ -3329,6 +3330,8 @@ class ShakerMaker:
         ``decimate`` (tensor scheme, with ``freq_cut``): the database keeps one sample
         every q dt (nothing is left above 1.4 * freq_cut) and Stage 2 rebuilds the dt
         samples; the output dt does not change (B18 E3.6). ``store`` default 'zfp20'.
+        ``eps_bands`` (fractions of ``f_err``): the tolerances hold in each of these
+        frequency ranges, by default the whole band and its upper half (B18 E3.3).
 
         ``depth_tol`` (km): CrustModel tolerance while run_inter runs (split_at_depth
         and get_layer); 1e-6 keeps every receiver at its own depth (the CrustModel
@@ -3355,7 +3358,7 @@ class ShakerMaker:
                     st = _rt.stage01_tensor(self, h5_database_name, fk, tmax, delta_v_rec=delta_v_rec,
                                             dz_src0=dz_src0, dh0=dh0, dz_src_min=dz_src_min, dh_min=dh_min,
                                             eps_v=eps_v, eps_s=eps_s, f_err=f_err, order=order, store=store,
-                                            src_levels=src_levels, decimate=decimate,
+                                            src_levels=src_levels, decimate=decimate, eps_bands=eps_bands,
                                         showProgress=showProgress)
                     _perf_dump('stage01_tensor', {}, perf_counter() - t_s)
                 if stage in (2, 'all'):

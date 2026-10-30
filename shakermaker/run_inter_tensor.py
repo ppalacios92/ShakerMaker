@@ -152,7 +152,8 @@ def _rel(a, b):
 
 def stage01_tensor(model, h5_database_name, fk, tmax, delta_v_rec=1e-5, dz_src0=0.32, dh0=0.16,
                    dz_src_min=0.04, dh_min=0.02, eps_v=0.01, eps_s=0.05, f_err=20.0, order=3,
-                   store="zstd", calls_max=64, src_levels="exact", decimate=True, showProgress=True):
+                   store="zstd", calls_max=64, src_levels="exact", decimate=True,
+                   eps_bands=((0.0, 1.0), (0.5, 1.0)), showProgress=True):
     """Stages 0 and 1 of the tensor scheme (rank 0 coordinates and writes; the others compute).
 
     src_levels='exact' (default): one source-depth level per distinct source depth,
@@ -164,7 +165,11 @@ def stage01_tensor(model, h5_database_name, fk, tmax, delta_v_rec=1e-5, dz_src0=
     few percent of a call); which distances become nodes is decided afterwards, without
     new calls, by bisection on the stored band-limited spectra: starting from every
     dh0, a cell is accepted when the candidate at its midpoint is predicted within eps_v
-    (value) and eps_s (relative to the change across the cell) at every level.
+    (value) and eps_s (relative to the change across the cell) at every level, in
+    every frequency range of eps_bands (fractions of f_err): the whole band and its
+    upper half by default, because the error over the whole band is ruled by the
+    energetic low frequencies and left the top of the band loose (B18 E3.3: 5 % at
+    5-10 Hz in the 10 Hz band).
     Source depth: iterative rounds; the midpoint level of every untested cell is
     computed (one call per chunk of candidates) and kept only if the levels around it
     do not predict it within eps_v at every candidate distance.
@@ -298,6 +303,8 @@ def stage01_tensor(model, h5_database_name, fk, tmax, delta_v_rec=1e-5, dz_src0=
         nC = len(cand[g["j"]])
         sel = sorted(set(g["sel"]))
         levels = [g["sp"][round(z, 9)] for z in g["zs"]]
+        nf = levels[0].shape[-1]
+        fsl = [slice(int(lo * (nf - 1)), int(hi * (nf - 1)) + 1) for lo, hi in eps_bands]
         ok = set()
         while True:
             new = []
@@ -310,10 +317,11 @@ def stage01_tensor(model, h5_database_name, fk, tmax, delta_v_rec=1e-5, dz_src0=
                 worst_v = worst_s = 0.0
                 for spl in levels:
                     interp = sum(w[q] * spl[sel[idx[q]]] for q in range(len(idx)))
-                    worst_v = max(worst_v, _rel(interp, spl[m]))
                     span = spl[b] - spl[a]
-                    worst_s = max(worst_s, float(np.sqrt(np.sum(np.abs(interp - spl[m]) ** 2))
-                                                 / max(np.sqrt(np.sum(np.abs(span) ** 2)), 1e-300)))
+                    for sl in fsl:                  # every frequency range of eps_bands
+                        worst_v = max(worst_v, _rel(interp[..., sl], spl[m][..., sl]))
+                        worst_s = max(worst_s, float(np.sqrt(np.sum(np.abs(interp[..., sl] - spl[m][..., sl]) ** 2))
+                                                     / max(np.sqrt(np.sum(np.abs(span[..., sl]) ** 2)), 1e-300)))
                 if worst_v <= eps_v and worst_s <= eps_s:
                     ok.add((a, b))
                 else:
@@ -403,7 +411,8 @@ def stage01_tensor(model, h5_database_name, fk, tmax, delta_v_rec=1e-5, dz_src0=
                          decim=q, nstore=nstore, nhead=nhead, dt=dt,
                          eps_v=eps_v, eps_s=eps_s, f_err=f_err, dz_src0=dz_src0, dh0=dh0,
                          src_levels=src_levels, freq_cut=float(fk.get("freq_cut", 0.0) or 0.0),
-                         dz_src_min=dz_src_min, dh_min=dh_min, delta_v_rec=delta_v_rec, tmax=tmax)
+                         dz_src_min=dz_src_min, dh_min=dh_min, delta_v_rec=delta_v_rec, tmax=tmax,
+                         eps_bands=np.asarray(eps_bands, dtype=np.float64))
         g_m.create_dataset("zr_lev", data=zr_lev); g_m.create_dataset("r_lev", data=r_lev)
         stats["stored"] = nslot
         for k_, v_ in stats.items():
