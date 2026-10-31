@@ -126,7 +126,7 @@ class _Core:
         self.m, self.fk, self.xmax_of, self.nkeep, self.f_err = model, fk, xmax_of, nkeep, f_err
         self.q, self.nstore, self.nhead = q, nstore or nkeep, nhead
 
-    def __call__(self, zs, zr, xs):
+    def __call__(self, zs, zr, xs, xmax=None):
         from shakermaker import core
         c = copy.deepcopy(self.m._crust)
         c.split_at_depth(zs); c.split_at_depth(zr)
@@ -135,7 +135,8 @@ class _Core:
             c.nlayers, c.get_layer(zs) + 1, c.get_layer(zr) + 1, 2, 0, c.d, c.a, c.b, c.rho, c.qa, c.qb,
             fk["dt"], fk["nfft"], fk["tb"], len(xs), fk["sigma"], fk["smth"], fk["wc1"], fk["wc2"],
             fk["pmin"], fk["pmax"], fk["dk"], fk["kc"], fk["taper"], np.asarray(xs, dtype=np.float64),
-            0.0, np.pi / 2, 0.0, 0.0, 0.0, float(xs[0]), 0.0, float(self.xmax_of(zr)),
+            0.0, np.pi / 2, 0.0, 0.0, 0.0, float(xs[0]), 0.0,
+            float(self.xmax_of(zr) if xmax is None else xmax),
             float(fk.get("freq_cut", 0.0) or 0.0))
         td = np.asarray(tdata[:, :, :self.nkeep], dtype=np.float32)          # (nx, 9, nkeep)
         sp = np.fft.rfft(td[:, COMPS, :].astype(np.float64), n=2 * self.nkeep, axis=-1)
@@ -146,11 +147,44 @@ class _Core:
         return td, np.asarray(t0, dtype=np.float64), sp[..., f <= self.f_err].astype(np.complex64), head
 
 
+def _bisect(levels, sel, order, eps_v, eps_s, eps_bands):
+    """Distance nodes kept by bisection (indices of candidates): a cell is accepted when the
+    candidate at its midpoint is predicted from the nodes within eps_v (value) and eps_s
+    (relative to the change across the cell) at every level of `levels` (band spectra,
+    (ncand, 8, nf)), in every frequency range of eps_bands; otherwise its midpoint becomes a node."""
+    nf = levels[0].shape[-1]
+    fsl = [slice(int(lo * (nf - 1)), int(hi * (nf - 1)) + 1) for lo, hi in eps_bands]
+    sel = sorted(set(sel))
+    ok = set()
+    while True:
+        new = []
+        for a, b in zip(sel[:-1], sel[1:]):
+            if b - a < 2 or (a, b) in ok:
+                continue
+            m = (a + b) // 2
+            idx, w = stencil(float(m), np.array(sel, dtype=np.float64), order)
+            worst_v = worst_s = 0.0
+            for spl in levels:
+                interp = sum(w[q] * spl[sel[idx[q]]] for q in range(len(idx)))
+                span = spl[b] - spl[a]
+                for sl in fsl:
+                    worst_v = max(worst_v, _rel(interp[..., sl], spl[m][..., sl]))
+                    worst_s = max(worst_s, float(np.sqrt(np.sum(np.abs(interp[..., sl] - spl[m][..., sl]) ** 2))
+                                                 / max(np.sqrt(np.sum(np.abs(span[..., sl]) ** 2)), 1e-300)))
+            if worst_v <= eps_v and worst_s <= eps_s:
+                ok.add((a, b))
+            else:
+                new.append(m)
+        if not new:
+            return sel
+        sel = sorted(set(sel) | set(new))
+
+
 def _rel(a, b):
     return float(np.sqrt(np.sum(np.abs(a - b) ** 2)) / max(np.sqrt(np.sum(np.abs(b) ** 2)), 1e-300))
 
 
-def stage01_tensor(model, h5_database_name, fk, tmax, delta_v_rec=1e-5, dz_src0=0.32, dh0=0.16,
+def stage01_tensor(model, h5_database_name, fk, tmax, delta_v_rec=1e-5, dz_src0=0.32, dh0=0.04,
                    dz_src_min=0.04, dh_min=0.02, eps_v=0.01, eps_s=0.05, f_err=20.0, order=3,
                    store="zstd", calls_max=64, src_levels="exact", decimate=True,
                    eps_bands=((0.0, 1.0), (0.5, 1.0)), showProgress=True):
@@ -221,13 +255,19 @@ def stage01_tensor(model, h5_database_name, fk, tmax, delta_v_rec=1e-5, dz_src0=
             task = comm.recv(source=0, tag=TAG_TASK)
             if task is None:
                 break
-            tid, zs, zr, xs = task
-            comm.send((tid, core_call(zs, zr, xs)), dest=0, tag=TAG_RES)
+            tid, zs, zr, xs, *xm = task
+            comm.send((tid, core_call(zs, zr, xs, *xm)), dest=0, tag=TAG_RES)
         comm.Barrier()
         comm.Barrier()                       # rank 0 has written the database
         return
 
     # ---------------- coordinator (rank 0) --------------------------------
+    if src_levels == "exact":
+        return _stage01_exact_streamed(model, h5_database_name, sx, rx, zr_lev, r_lev, core_call, dict(
+            fk=fk, tmax=tmax, delta_v_rec=delta_v_rec, dh0=dh0, dh_min=dh_min, eps_v=eps_v, eps_s=eps_s,
+            f_err=f_err, order=order, store=store, calls_max=calls_max, eps_bands=eps_bands, nkeep=nkeep,
+            q=q, nstore=nstore, nhead=nhead, nsamp=nsamp, dz_src0=dz_src0, dz_src_min=dz_src_min,
+            showProgress=showProgress, t_begin=t_begin))
     stats = dict(calls=0, computed=0, levels_computed=0, levels_stored=0, candidates=0, dh_stored=0,
                  rounds=0, seconds_core=0.0)
     gf_file = h5_database_name.replace('.h5', '') + '_gf.h5'
@@ -430,6 +470,149 @@ def stage01_tensor(model, h5_database_name, fk, tmax, delta_v_rec=1e-5, dz_src0=
     return stats
 
 
+def _stage01_exact_streamed(model, h5_database_name, sx, rx, zr_lev, r_lev, core_call, o):
+    """Rank-0 side of Stages 0 and 1 when the source depth is exact (the production case).
+
+    No source-depth interpolation, so every (receiver depth, source depth) level is its own
+    grid with its own distance nodes: its candidates cover only the distances its sources and
+    receivers need (one wavenumber step, xmax = its last candidate), the bisection runs as
+    soon as its core calls are back, its selected nodes are appended to the database and its
+    traces and spectra are freed. Memory: the levels in flight (about one per worker), not
+    the whole model (the first version kept every level until the end: ~650 GB for N2_s2,
+    B18 coordination note). Same database layout as the tensor scheme (one grid per level).
+    """
+    from shakermaker import shakermaker as smod
+    comm, nprocs, use_mpi = getattr(smod, "comm", None), smod.nprocs, smod.use_mpi
+    dh0, dh_min, order, calls_max = o["dh0"], o["dh_min"], o["order"], o["calls_max"]
+    step = max(1, int(round(dh0 / dh_min)))
+    zs_src = np.round(sx[:, 2], 9)
+    zs_lev = np.unique(zs_src)
+
+    # levels: (j, zs) with the distance range its sources and receivers need
+    levels = []
+    for j in range(len(zr_lev)):
+        rr = rx[r_lev == j]
+        for z in zs_lev:
+            ss = sx[zs_src == z]
+            dmn, dmx = np.inf, 0.0
+            for c0 in range(0, len(ss), 256):
+                d = np.hypot(ss[c0:c0 + 256, 0][:, None] - rr[:, 0][None, :],
+                             ss[c0:c0 + 256, 1][:, None] - rr[:, 1][None, :])
+                dmn, dmx = min(dmn, d.min()), max(dmx, d.max())
+            ib = max(0, int(np.floor(dmn / dh0)) - (1 if order == 3 else 0)) * step
+            ie = (int(np.ceil(dmx / dh0)) + (2 if order == 3 else 1)) * step
+            cand = np.arange(ib, ie + 1) * dh_min
+            sel0 = list(range(0, len(cand), step)) + ([len(cand) - 1] if (len(cand) - 1) % step else [])
+            levels.append(dict(j=j, zr=float(zr_lev[j]), zs=float(z), cand=cand, sel0=sel0))
+
+    nsamp, nhead = o["nsamp"], o["nhead"]
+    kw = dict(chunks=(1, 1, nsamp), dtype=np.float32, maxshape=(None, 9, nsamp))
+    if o["store"] == "zstd":
+        import hdf5plugin
+        kw.update(shuffle=True, **hdf5plugin.Zstd(clevel=3))
+    elif o["store"].startswith("zfp"):
+        import hdf5plugin
+        kw.update(**hdf5plugin.Zfp(precision=int(o["store"][3:])))
+    gf_file = h5_database_name.replace('.h5', '') + '_gf.h5'
+    map_file = h5_database_name.replace('.h5', '') + '_map.h5'
+    hg = h5py.File(gf_file, "w", locking=False)
+    hm = h5py.File(map_file, "w", locking=False)
+    ds = hg.create_dataset("tdata", shape=(0, 9, nsamp), **kw)
+    dsh = (hg.create_dataset("thead", shape=(0, 9, nhead), **dict(kw, chunks=(1, 1, nhead), maxshape=(None, 9, nhead)))
+           if nhead else None)
+    g_m = hm.create_group("tensor")
+    t0s, nslot = [], 0
+    stats = dict(calls=0, computed=0, levels_computed=0, levels_stored=0, candidates=0, dh_stored=0,
+                 rounds=1, seconds_core=0.0)
+
+    def tasks_of(li):
+        lv = levels[li]
+        return [((li, c0), lv["zs"], lv["zr"], lv["cand"][c0:c0 + calls_max], float(lv["cand"][-1]))
+                for c0 in range(0, len(lv["cand"]), calls_max)]
+
+    def finish(li, parts):
+        nonlocal nslot
+        lv = levels[li]
+        cs = sorted(parts)
+        td = np.concatenate([parts[c][0] for c in cs]); t0 = np.concatenate([parts[c][1] for c in cs])
+        sp = np.concatenate([parts[c][2] for c in cs]); hd = np.concatenate([parts[c][3] for c in cs])
+        sel = np.array(_bisect([sp], lv["sel0"], order, o["eps_v"], o["eps_s"], o["eps_bands"]))
+        n = len(sel)
+        ds.resize(nslot + n, axis=0); ds[nslot:nslot + n] = td[sel]
+        if nhead:
+            dsh.resize(nslot + n, axis=0); dsh[nslot:nslot + n] = hd[sel]
+        t0s.extend(t0[sel].tolist())
+        gg = g_m.create_group(f"g{li}")
+        gg.create_dataset("zs", data=np.array([lv["zs"]])); gg.create_dataset("dh", data=lv["cand"][sel])
+        gg.attrs.update(zr=lv["zr"], offset=nslot, zmin=lv["zs"], zmax=lv["zs"])
+        nslot += n
+        stats["computed"] += len(td); stats["levels_computed"] += 1; stats["levels_stored"] += 1
+        stats["dh_stored"] += n; stats["candidates"] += len(lv["cand"])
+
+    t1 = perf_counter()
+    pending = {}                                   # level -> {c0: result}, levels in flight only
+    left = {}                                      # level -> calls still out
+    if use_mpi and nprocs > 1:
+        it = (t for li in range(len(levels)) for t in tasks_of(li))
+        nout = 0
+
+        def send(w):
+            nonlocal nout
+            t = next(it, None)
+            if t is None:
+                return
+            li = t[0][0]
+            if li not in left:
+                left[li] = len(tasks_of(li)); pending[li] = {}
+            comm.send(t, dest=w, tag=TAG_TASK); nout += 1
+
+        for w in range(1, nprocs):
+            send(w)
+        while nout:
+            st = smod.MPI.Status()
+            (li, c0), res = comm.recv(source=smod.MPI.ANY_SOURCE, tag=TAG_RES, status=st)
+            nout -= 1; stats["calls"] += 1
+            pending[li][c0] = res; left[li] -= 1
+            send(st.Get_source())
+            if left[li] == 0:
+                finish(li, pending.pop(li)); del left[li]
+                if o["showProgress"] and stats["levels_computed"] % 50 == 0:
+                    print(f"[Stage 1 tensor] {stats['levels_computed']}/{len(levels)} levels, {nslot} nodes, "
+                          f"{perf_counter() - o['t_begin']:.0f} s", flush=True)
+        for w in range(1, nprocs):
+            comm.send(None, dest=w, tag=TAG_TASK)
+        comm.Barrier()
+    else:
+        for li in range(len(levels)):
+            parts = {}
+            for (key, zs, zr, xs, xm) in tasks_of(li):
+                parts[key[1]] = core_call(zs, zr, xs, xm); stats["calls"] += 1
+            finish(li, parts)
+    stats["seconds_core"] = perf_counter() - t1
+
+    hg.create_dataset("t0", data=np.array(t0s))
+    g_m.attrs.update(gf_mode="tensor", order=order, ngrids=len(levels), nkeep=o["nkeep"], store=o["store"],
+                     decim=o["q"], nstore=o["nstore"], nhead=nhead, dt=o["fk"]["dt"],
+                     eps_v=o["eps_v"], eps_s=o["eps_s"], f_err=o["f_err"], dz_src0=o["dz_src0"], dh0=dh0,
+                     src_levels="exact", freq_cut=float(o["fk"].get("freq_cut", 0.0) or 0.0),
+                     dz_src_min=o["dz_src_min"], dh_min=dh_min, delta_v_rec=o["delta_v_rec"], tmax=o["tmax"],
+                     eps_bands=np.asarray(o["eps_bands"], dtype=np.float64), per_level=1)
+    g_m.create_dataset("zr_lev", data=zr_lev); g_m.create_dataset("r_lev", data=r_lev)
+    stats["stored"] = nslot
+    stats["seconds_total"] = perf_counter() - o["t_begin"]
+    for k_, v_ in stats.items():
+        g_m.attrs[f"stat_{k_}"] = v_
+    hg.close(); hm.close()
+    stats["gf_bytes"] = os.path.getsize(gf_file)
+    if use_mpi and nprocs > 1:
+        comm.Barrier()                             # the database is written
+    if o["showProgress"]:
+        print(f"[Stage 1 tensor] {nslot} nodes stored ({stats['computed']} computed, {stats['calls']} calls, "
+              f"{len(levels)} levels), {stats['gf_bytes'] / 1e6:.1f} MB ({o['store']}), "
+              f"{stats['seconds_total']:.0f} s -> {gf_file}", flush=True)
+    return stats
+
+
 def stage2_tensor(model, h5_database_name, dt=0.05, nfft=4096, tb=1000, tmin=0., tmax=100.,
                   writer=None, writer_mode='progressive', showProgress=True):
     """Stage 2 of the tensor scheme (virtual source-depth nodes, then distance per receiver)."""
@@ -474,7 +657,13 @@ def stage2_tensor(model, h5_database_name, dt=0.05, nfft=4096, tb=1000, tmin=0.,
         writer.initialize(model._receivers, 2 * nfft, tmin=tmin, tmax=tmax, dt=dt, writer_mode=writer_mode)
         writer.write_metadata(model._receivers.metadata)
 
+    by_level = {(round(g["zr"], 9), round(g["zmin"], 9)): gi for gi, g in enumerate(grids)
+                if abs(g["zmax"] - g["zmin"]) < 1e-12}
+
     def grid_of(j, zs):
+        gi = by_level.get((round(float(zr_lev[j]), 9), round(float(zs), 9)))
+        if gi is not None:
+            return gi
         for gi, g in enumerate(grids):
             if abs(g["zr"] - zr_lev[j]) < 1e-9 and g["zmin"] - 1e-9 <= zs <= g["zmax"] + 1e-9:
                 return gi

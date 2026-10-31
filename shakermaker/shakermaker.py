@@ -3257,7 +3257,7 @@ class ShakerMaker:
                   src_levels='exact',
                   freq_cut=None,
                   dz_src0=0.32,
-                  dh0=0.16,
+                  dh0=None,
                   dz_src_min=0.04,
                   dh_min=0.02,
                   eps_v=0.01,
@@ -3330,6 +3330,12 @@ class ShakerMaker:
         ``decimate`` (tensor scheme, with ``freq_cut``): the database keeps one sample
         every q dt (nothing is left above 1.4 * freq_cut) and Stage 2 rebuilds the dt
         samples; the output dt does not change (B18 E3.6). ``store`` default 'zfp20'.
+        ``dh0`` (km): initial node spacing of the bisection; None (default) = 2 * ``dh_min``.
+        Starting coarser lets the midpoint test accept cells whose interior error is larger
+        (B18 E3.6: 10 Hz band from 320 m, 4.3 % / 8.8 %; from 80 m, 0.9 % / 1.4 %).
+        With exact source depths (default) every source-depth level has its own distance
+        nodes and is written as soon as it is selected (memory of the levels in flight).
+
         ``eps_bands`` (fractions of ``f_err``): the tolerances hold in each of these
         frequency ranges, by default the whole band and its upper half (B18 E3.3).
 
@@ -3351,6 +3357,8 @@ class ShakerMaker:
             t_all = perf_counter()
             if scheme == 'tensor':
                 from shakermaker import run_inter_tensor as _rt
+                if dh0 is None:
+                    dh0 = 2.0 * dh_min
                 fk = dict(dt=dt, nfft=nfft, tb=tb, smth=smth, sigma=sigma, taper=taper, wc1=wc1, wc2=wc2,
                           pmin=pmin, pmax=pmax, dk=dk, kc=kc, freq_cut=float(freq_cut or 0.0))
                 if stage in (0, 1, 'all'):
