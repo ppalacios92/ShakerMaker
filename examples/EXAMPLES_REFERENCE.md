@@ -43,6 +43,7 @@ run manually.
 | [13_shakermaker_sw4](#13-shakermaker-sw4) | FK vs. real SW4 run, cross-validation | Recommended | SW4 output + ObsPy (included as data) | Yes |
 | [14_SFSI](#14-sfsi) | Real-site (Samoa Beach) end-to-end case study | Yes (HPC scripts) | No | Yes |
 | [15_loh1_below_source](#15-loh1-below-source) | LOH.1 with receivers above and below the source, FK vs. SW4 | No | SW4 output (included as data) | Yes (legacy path) |
+| [16_run_inter](#16-run-inter) | DRM box coherence: reused vs interpolated Green's functions | Optional | No | Yes (`run_nearest` and `run_inter`) |
 | [legacy_examples](#legacy-examples) | Original upstream regression suite | No | No | Yes (legacy path) |
 
 ---
@@ -1252,6 +1253,19 @@ with one amplitude factor fitted at the surface. Documented in its own `README.m
   `traces_o6.png`, `traces_o06.png`, `agreement_vs_depth.png`, `kc_o06_z2500.png`.
 
 ---
+
+## 16. Run Inter
+
+`examples/16_run_inter/`
+
+- **`drm_coherence.py`**: a 531-node DRM box (2.5 m elements) driven by a 2 x 2 patch of point
+  sources at ~2 km in a 4-layer crust; runs a reference (`run_nearest` with 1 cm tolerances and
+  one wavenumber step per pair of depths), `run_nearest` with reuse tolerances (40 m / 5 m /
+  200 m) and `run_inter(scheme='tensor')` (10 Hz band). Prints, per band, the median error of the
+  difference between interior and nearest exterior nodes against the reference (reuse 35-50 %,
+  `run_inter` 0.1-0.4 %), writes `run_inter_drm_coherence.png` and prints PASS. ~10 min on one
+  process (the reference dominates); runs under MPI.
+- **`README.md`**: the same table and how to run it.
 
 ## Legacy Examples
 
