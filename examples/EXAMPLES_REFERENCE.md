@@ -1264,7 +1264,7 @@ with one amplitude factor fitted at the surface. Documented in its own `README.m
   200 m) and `run_inter(scheme='tensor')` (10 Hz band). Prints, per band, the median error of the
   difference between interior and nearest exterior nodes against the reference (reuse 35-50 %,
   `run_inter` 0.1-0.4 %), writes `run_inter_drm_coherence.png` and prints PASS. ~10 min on one
-  process (the reference dominates); runs under MPI.
+  process (the reference dominates), ~3 min with 4 MPI processes.
 - **`README.md`**: the same table and how to run it.
 
 ## Legacy Examples
