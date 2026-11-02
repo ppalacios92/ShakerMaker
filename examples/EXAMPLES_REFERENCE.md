@@ -21,6 +21,11 @@ any `notebooks/` directory, and any generated `_*` output directory) and runs ea
 subprocess, classifying it PASS / SKIP (if `"SKIP"` appears in stdout/stderr — the pattern
 every gracefully-degrading script in this repo uses) / FAIL. `12_validation/` is skipped
 unless `--full` is passed, because it runs a full (non-OP) FK synthesis and is slow.
+`13_shakermaker_sw4/` runs only with `--full`, under the MPI launcher (`--np`, default 6; `SM_MPIRUN`
+selects the launcher, e.g. `srun` inside a Slurm job). `--mpi N` also runs every MPI test
+`tests/*/mpi_*.py` with N ranks, and `--pytest` the unit tests.
+Scripts and notebooks write their results to `_output/` folders, ignored by git, so running
+them leaves the tracked files untouched.
 Notebooks are **not** part of this smoke suite — they are the narrated/visual counterparts,
 run manually.
 
@@ -44,6 +49,8 @@ run manually.
 | [14_SFSI](#14-sfsi) | Real-site (Samoa Beach) end-to-end case study | Yes (HPC scripts) | No | Yes |
 | [15_loh1_below_source](#15-loh1-below-source) | LOH.1 with receivers above and below the source, FK vs. SW4 | No | SW4 output (included as data) | Yes (legacy path) |
 | [16_run_inter](#16-run-inter) | DRM box coherence: reused vs interpolated Green's functions | Optional | No | Yes (`run_nearest` and `run_inter`) |
+| [17_sw4_reference](#17-sw4-reference) | Six SW4 reference cases (two media, point sources and a fault) | Only to regenerate | SW4 output (included as data) | Only to regenerate |
+| [18_sw4_engines](#18-sw4-engines) | The five engines against SW4 and against the exact engine | No | Results of 17 (included as data) | No (reads stored results) |
 | [legacy_examples](#legacy-examples) | Original upstream regression suite | No | No | Yes (legacy path) |
 
 ---
@@ -664,8 +671,10 @@ helper anywhere in the package.
 - **Required inputs**: Identical crust/`FFSPSource` params as `ffsp_run.py` (same stale
   `example8_ffsp.py` comment). Requires h5py — soft `try/except ImportError` guard,
   prints `SKIP` and exits cleanly if missing.
-- **Outputs**: `ffsp.h5` (via `write_hdf5`, written to CWD) and a full legacy-format
-  directory `FFSP_OUTPUT/` (via `write_ffsp_format`). **Confirmed on disk**:
+- **Outputs**: written inside `_output/` (the script changes to that folder first, ignored by
+  git): `ffsp.h5` (via `write_hdf5`) and a full legacy-format directory `FFSP_OUTPUT/` (via
+  `write_ffsp_format`). `ffsp_run.py` also runs inside `_output/`. The tracked sample below
+  is no longer overwritten by the scripts. **Confirmed on disk**:
   `examples/10_ffsp/FFSP_OUTPUT/` exists with exactly the files `write_ffsp_format`
   produces: `ffsp.inp`, `FFSP_OUTPUT.001`, `FFSP_OUTPUT.bst`, `source_model.score`,
   `source_model.list`, `source_model.params`, `velocity.vel`, `calsvf.dat`,
@@ -782,8 +791,9 @@ workaround.
 - **Required inputs**: `Gaussian(t0=0.36, freq=16.6667, M0=1.0)`; two `PointSource`s at
   `[0,0,2.0]` and `[0,0,2.5]` km, strike/dip/rake `[0., 90., 0.]`. Uses
   `matplotlib.use("Agg")` before importing pyplot (headless-safe).
-- **Outputs**: `sources_plot.png`, written next to the script (path-anchored via
-  `os.path.dirname(os.path.abspath(__file__))`, not CWD-dependent). Confirmed present.
+- **Outputs**: `_output/sources_plot.png` (ignored by git; path-anchored via
+  `os.path.dirname(os.path.abspath(__file__))`, not CWD-dependent). The tracked
+  `sources_plot.png` next to the script is an older output.
 - **Dependencies**: matplotlib (Agg backend).
 
 #### `notebooks/plotting_tools.ipynb`
@@ -912,6 +922,13 @@ correlation check itself is cheap.
   intentionally kept: `LOH1_greens_functions.ipynb` as the narrated/documented version,
   `example_LOH1_gf.ipynb` as the lower-level version with full debug output and `.npz`
   side-saves.
+
+#### `notebooks/LOH1_to_LOH3_by_Q_operator.ipynb`
+- **Purpose**: Attenuates the elastic LOH.1 stations by hand with a constant-Q operator and
+  compares them with the LOH.3 stations the engine attenuated itself.
+- **Required inputs**: none. It runs LOH.1 and LOH.3 itself (about 2.5 min, the parameters of
+  `example_LOH1_gf.ipynb` and `LOH3_greens_functions.ipynb`); it no longer reads the `.npz`
+  files those notebooks write, so it runs in any order.
 
 #### `data/LOH.1_prose3`
 - Not a script — the reference data table consumed by `LOH1_check.py` and
@@ -1079,12 +1096,12 @@ comparison. Well-documented via its own `README.md`.
   time/x/y/z — both present). No user-editable parameters — `dt=0.0025, nfft=32768,
   tb=800, tmax=60, FMIN/FMAX=0.25/15 Hz` are all hardcoded. Documented as heavy
   (`nfft=32768 × 100 sources`); both the script's own comments and the folder's README
-  recommend `mpiexec -n 8 python shaker_vs_sw4.py`, though it also runs serially.
-- **Outputs**: `compare_sf00001.png`, `compare_sf00002.png` — written to the script's own
-  directory (`examples/13_shakermaker_sw4/`, **not** `notebooks/`). Neither file is
-  currently present in this repo checkout, but the script **has been run to completion**
-  (confirmed) — the PNGs simply weren't committed here, unlike the notebook's equivalent
-  outputs (see below).
+  recommend running it under MPI (`mpiexec -n 16 python shaker_vs_sw4.py`, ~30 min; 200 core
+  calls of ~2 min each, ~6.5 h on one process). Both solutions are band-passed to the same
+  band; the script fails if the correlation or the peak ratio with SW4 leaves the limits in
+  its header.
+- **Outputs**: `_output/compare_sf0000{1,2}.png` and `_output/shakermaker_sf0000{1,2}.npz`
+  (the two station responses, read by the notebook); ignored by git.
 - **Dependencies**: h5py, numpy, matplotlib, **ObsPy** (only for `bandpass()` — the
   README explicitly calls out `pip install obspy` as a non-default dependency),
   `shakermaker.stf_extensions.Discrete`.
@@ -1098,10 +1115,9 @@ comparison. Well-documented via its own `README.md`.
 #### `notebooks/shaker_vs_sw4.ipynb`
 - **Purpose**: Step-by-step notebook version of the same cross-validation (run from
   `notebooks/`, paths point to `../data`), broken into 4 documented steps: (1) rebuild
-  model from package + plot crust/sources/station map, (2) run FK engine, (3) read +
-  band-pass SW4 output, (4) overlay + compare. Only compares station 1
-  (`sf00001`) — station 2 is only handled by the standalone script (whose own output is
-  not currently present, as noted above).
+  model from package + plot crust/sources/station map, (2) read the FK responses saved by
+  the script (run it first, under MPI), (3) read + band-pass SW4 output, (4) overlay +
+  compare both stations, with correlation and peak ratio per component.
 - **Required inputs**: Same `data/model_summary.h5`, needs ObsPy.
 - **Outputs** (all confirmed present, tracked in git): `sw4_crust_layers.png`,
   `sw4_source_stfs.png`, `sw4_stations_map.png`, `shaker_seismogram.png`,
@@ -1265,7 +1281,49 @@ with one amplitude factor fitted at the surface. Documented in its own `README.m
   difference between interior and nearest exterior nodes against the reference (reuse 35-50 %,
   `run_inter` 0.1-0.4 %), writes `run_inter_drm_coherence.png` and prints PASS. ~10 min on one
   process (the reference dominates), ~3 min with 4 MPI processes.
+- **`notebooks/run_inter_drm_coherence.ipynb`**: runs the same three engines (imports
+  `drm_coherence.py`, ~10 min) and shows the model and the box, the error of the layer
+  difference per band, the traces of one pair of nodes and the spectrum of the error.
+  Outputs (tracked): `model_and_box.png`, `layer_difference_error.png`, `node_pair.png`,
+  `error_spectrum.png`.
 - **`README.md`**: the same table and how to run it.
+
+## 17. SW4 Reference
+
+`examples/17_sw4_reference/`
+
+Six cases computed once with SW4 (4th-order finite differences, elastic) and with ShakerMaker, stored in `data/`:
+SCEC LOH.1 and a layered 1D crust (200 m at Vs 0.75 km/s on top), each with a deep point source, a point source at
+0.5 km and a 4 x 4 km fault of 256 subfaults; about 100 receivers per medium on SW4 grid nodes (surface rings,
+three verticals crossing every interface and source depth, the epicentre, 24 nodes of a DRM box). Documented in
+its own `README.md`.
+
+- **`smoke_vs_sw4.py`**: LOH.1 point source, 10 receivers, `run()` against the stored SW4 in 0.1-2 Hz with
+  absolute amplitudes (~6 s); fails below correlation 0.99 or outside peak ratio 0.97-1.03.
+- **`smoke_engines.py`**: small DRM box, `nearest` and both `run_inter` schemes against the exact reference
+  (~21 s).
+- **`smoke_source_depth.py`**: receivers at and away from the source depth against SW4 (~3 s); the one at the
+  source depth is a known open finding.
+- **`run_shakermaker.py`**: regenerates `data/sm/<case>_<engine>.npz` under MPI (`exact`, `nearest`,
+  `inter_grid`, `inter_tensor`; the tensor scheme with error band 2 Hz). SKIP without arguments.
+- **`make_sw4_inputs.py`**: writes the SW4 decks and the receiver and fault tables (`--write`).
+- **`notebooks/sw4_reference.ipynb`**: model, traces, agreement per band, engines against the exact reference.
+
+## 18. SW4 Engines
+
+`examples/18_sw4_engines/`
+
+The cases of `17_sw4_reference` with the five engines (`run`, `exact`, `nearest`, `inter_grid`,
+`inter_tensor`). `data/sm/` adds the `run` and `inter_grid` results; the rest is read from
+`../17_sw4_reference/data/`.
+
+- **`compare.py`** (~25 s): every engine against SW4 per band (correlation with best lag, peak ratio, misfit),
+  every engine against the exact one, and the difference between the two layers of the DRM box faces. Writes
+  `_output/comparison_{sw4,engines,drm}.csv`. Against SW4 all engines agree at the same level (median
+  correlation 1.000 in LOH.1, 0.981-0.998 in the layered crust); DRM layer difference against the exact
+  engine: `nearest` 28-77 %, `inter_tensor` 0.5-3.3 %, `inter_grid` below 1.4 %.
+- **`notebooks/sw4_engines.ipynb`**: runs `compare.py` and plots agreement per case and engine, traces at a
+  surface receiver, the DRM layer difference, agreement against depth and the cost of each engine.
 
 ## Legacy Examples
 
