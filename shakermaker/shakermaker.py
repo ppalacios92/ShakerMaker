@@ -1671,7 +1671,7 @@ class ShakerMaker:
         # original round-robin loop.
         _dyn = use_mpi and nprocs > 1 and os.environ.get("SM_GF_STATIC", "0") != "1"
         if _dyn:
-            import zlib, threading, queue, time as _time
+            import zlib, queue, time as _time
             TAG_TASK, TAG_HDR, TAG_T0, TAG_DATA = 7101, 7102, 7103, 7104
             STOP = np.array([-1], dtype=np.int64)
 
